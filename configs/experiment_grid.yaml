@@ -1,0 +1,241 @@
+# =============================================================================
+# Experiment Grid Configuration
+# =============================================================================
+# This file defines a grid of experiments: model × task × mode × device
+# Used by scripts/run_eval_grid.py to run systematic evaluations.
+#
+# Usage:
+#   python -m scripts.run_eval_grid --config configs/experiment_grid.yaml
+#   python -m scripts.run_eval_grid --config configs/experiment_grid.yaml --dry-run
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Models to evaluate
+# -----------------------------------------------------------------------------
+models:
+  # -----------------------------------------------------------------------------
+  # Original TinyACE baselines
+  # -----------------------------------------------------------------------------
+  # Production models
+  - name: phi-3-mini
+    hf_id: microsoft/Phi-3-mini-4k-instruct
+    max_context: 4096
+    params: "3.8B"
+    family: phi
+    notes: "Good balance of size and capability"
+    precision: "fp16"  # Can be fp16, int8, int4 for quantization
+  
+  - name: tinyllama-1.1b
+    hf_id: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+    max_context: 2048
+    params: "1.1B"
+    family: llama
+    notes: "Ultra-lightweight 1.1B parameter model"
+    precision: "fp16"
+  
+  - name: mistral-7b-instruct
+    hf_id: mistralai/Mistral-7B-Instruct-v0.3
+    max_context: 8192
+    params: "7B"
+    family: mistral
+    notes: "7B parameter model (assumes 4-bit quantization handled externally)"
+    precision: "int4"  # Assume 4-bit quantization
+
+  # -----------------------------------------------------------------------------
+  # Qwen2.5 Rivals (parameter-matched for fair comparison)
+  # -----------------------------------------------------------------------------
+  - name: qwen-2.5-1.5b
+    hf_id: Qwen/Qwen2.5-1.5B-Instruct
+    max_context: 4096
+    params: "1.5B"
+    family: qwen
+    notes: "Qwen2.5 rival to TinyLlama-1.1B"
+    precision: "fp16"
+
+  - name: qwen-2.5-3b
+    hf_id: Qwen/Qwen2.5-3B-Instruct
+    max_context: 4096
+    params: "3B"
+    family: qwen
+    notes: "Qwen2.5 rival to Phi-3-mini"
+    precision: "fp16"
+
+  - name: qwen-2.5-7b
+    hf_id: Qwen/Qwen2.5-7B-Instruct
+    max_context: 8192
+    params: "7B"
+    family: qwen
+    notes: "Qwen2.5 rival to Mistral-7B"
+    precision: "fp16"
+
+# -----------------------------------------------------------------------------
+# Tasks / Datasets
+# -----------------------------------------------------------------------------
+tasks:
+  - name: medqa_train
+    task_name: medqa_train
+    domain: medical
+    description: "Medical QA training set (full MedQA dataset)"
+
+  - name: math_train
+    task_name: math_train
+    domain: math
+    description: "Math word problems training set"
+
+#  - name: sciq_train
+#    task_name: sciq_train
+#    domain: science
+#    description: "Science QA training set (11,679 examples)"
+#
+#  - name: sciq_val
+#    task_name: sciq_val
+#    domain: science
+#    description: "Science QA validation set (1,000 examples)"
+
+  - name: sciq_test
+    task_name: sciq_test
+    domain: science
+    description: "Science QA test set (1,000 examples)"
+
+# -----------------------------------------------------------------------------
+# Evaluation Modes
+# -----------------------------------------------------------------------------
+modes:
+  # Baseline: No playbook, vanilla prompting
+  - name: baseline
+    mode: baseline
+    description: "No ACE, vanilla prompting"
+    
+  # ACE Full: Top-k entries from playbook
+  - name: ace_full
+    mode: ace
+    ace_mode: ace_full
+    top_k: 5
+    prune_every_n: 10
+    max_entries_per_domain: 32
+    description: "ACE with top-k retrieval"
+    
+  # TinyACE Working Memory 256: Token-budgeted entries (256 tokens)
+  - name: tinyace_wm_256
+    mode: ace
+    ace_mode: ace_working_memory
+    working_memory_token_budget: 256
+    top_k: 5
+    prune_every_n: 10
+    max_entries_per_domain: 32
+    description: "TinyACE with 256 token working memory budget"
+    
+  # TinyACE Working Memory 512: Token-budgeted entries (512 tokens)
+  - name: tinyace_wm_512
+    mode: ace
+    ace_mode: ace_working_memory
+    working_memory_token_budget: 512
+    top_k: 5
+    prune_every_n: 10
+    max_entries_per_domain: 32
+    description: "TinyACE with 512 token working memory budget"
+    
+  # Ablation modes for retention scoring
+  - name: tinyace_ablate_no_vagueness
+    mode: ace
+    ace_mode: ace_working_memory
+    working_memory_token_budget: 256
+    top_k: 5
+    prune_every_n: 10
+    max_entries_per_domain: 32
+    disable_vagueness_penalty: true
+    description: "TinyACE without vagueness penalty (δ=0)"
+    
+  - name: tinyace_ablate_no_recency
+    mode: ace
+    ace_mode: ace_working_memory
+    working_memory_token_budget: 256
+    top_k: 5
+    prune_every_n: 10
+    max_entries_per_domain: 32
+    disable_recency_decay: true
+    description: "TinyACE without recency decay (γ=0)"
+    
+  - name: tinyace_ablate_no_failure
+    mode: ace
+    ace_mode: ace_working_memory
+    working_memory_token_budget: 256
+    top_k: 5
+    prune_every_n: 10
+    max_entries_per_domain: 32
+    disable_failure_penalty: true
+    description: "TinyACE without failure penalty (β=0)"
+    
+  - name: tinyace_fifo
+    mode: ace
+    ace_mode: ace_working_memory
+    working_memory_token_budget: 256
+    top_k: 5
+    prune_every_n: 10
+    max_entries_per_domain: 32
+    fifo_memory: true
+    description: "TinyACE with FIFO eviction (no scoring)"
+
+# -----------------------------------------------------------------------------
+# Devices
+# -----------------------------------------------------------------------------
+# Available: cpu, cuda, mps
+# The grid runner will check availability and fall back to cpu if needed
+devices:
+  - cuda
+  # Uncomment when running on GPU
+  # - cuda
+  # - mps
+
+# -----------------------------------------------------------------------------
+# Default Settings
+# -----------------------------------------------------------------------------
+defaults:
+  # Root directory for results
+  results_root: results
+  
+  # Default limit per experiment (None = all examples)
+  # Set to small number for quick smoke tests
+  #limit: 2000 # Limit to 100 examples per task for reasonable runtime
+  
+  # Generation parameters
+  max_new_tokens: 256
+  temperature: 0.0  # Use greedy decoding to avoid CUDA numerical instability
+  top_p: 1.0
+  
+  # Playbook settings
+  playbook_dir: playbooks
+
+# -----------------------------------------------------------------------------
+# Scoring Hyperparameters (for ACE modes)
+# -----------------------------------------------------------------------------
+# These match the formal retention scoring equation:
+# S(l_i, t) = α·(N_succ/N_used+ε) - β·(N_fail/N_used+ε) + γ·exp(-λ·(t-t_last)) - δ·V(l_i)
+#
+# Ablation flags (can be overridden per mode):
+#   disable_vagueness_penalty: Set δ=0 (ignore vagueness term)
+#   disable_recency_decay: Set γ=0 (ignore recency term)
+#   disable_failure_penalty: Set β=0 (ignore failure term)
+#   fifo_memory: Bypass scoring entirely, use FIFO eviction
+scoring:
+  alpha: 1.0        # Weight for success ratio
+  beta: 0.5         # Weight for failure ratio (penalty)
+  gamma: 0.3        # Weight for recency bonus
+  delta: 0.4        # Weight for vagueness penalty
+  lambda_decay: 0.05  # Decay rate for recency
+  epsilon: 1.0      # Smoothing constant
+  # Ablation flags (defaults to false, can be overridden per mode)
+  disable_vagueness_penalty: false
+  disable_recency_decay: false
+  disable_failure_penalty: false
+  fifo_memory: false
+
+# -----------------------------------------------------------------------------
+# Output Format
+# -----------------------------------------------------------------------------
+output:
+  # Directory structure: {results_root}/{model_name}/{task_name}/{mode_name}/{device}/
+  metrics_filename: metrics.json
+  predictions_filename: predictions.jsonl
+  metadata_filename: run_metadata.json
+  playbook_filename: playbook.jsonl

@@ -1,0 +1,11 @@
+# TinyACE-Nepali is stewarded by Ancoda Labs.
+
+# Every path requires review from the maintainers team.
+* @ancoda-labs
+
+# Anything touching licensing, provenance or contribution terms needs a
+# maintainer specifically: licensing affects every downstream user, and the
+# citation record is how the work is credited.
+/LICENSE @ancoda-labs
+/CITATION.cff @ancoda-labs
+/CONTRIBUTING.md @ancoda-labs
