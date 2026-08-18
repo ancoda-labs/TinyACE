@@ -42,6 +42,27 @@ from edge_slm_ace.models.model_manager import generate, count_tokens
 from edge_slm_ace.memory.playbook import Playbook
 from edge_slm_ace.memory.relevance import LessonRelevance
 
+# Columns of the per-step playbook log, in write order.
+#
+# Defined here, next to the only code that builds a row, so that adding a field
+# to the log cannot leave a consumer's header behind. scripts/run_experiment.py
+# carried its own hardcoded copy of this list; when the Curator added
+# `curator_latency_ms` and `lessons_rejected_by_curator`, csv.DictWriter began
+# raising `dict contains fields not in fieldnames` -- after the evaluation had
+# already finished, so every completed ACE run was discarded.
+PLAYBOOK_LOG_FIELDS: List[str] = [
+    "step_index",
+    "num_entries",
+    "total_tokens",
+    "num_evictions",
+    "retention_score_std",
+    "num_retrieved",
+    "num_credited",
+    "credit_mode",
+    "curator_latency_ms",
+    "lessons_rejected_by_curator",
+]
+
 
 def _index_distribution(values, n: int = 4) -> Dict[str, float]:
     """
@@ -1198,9 +1219,12 @@ def run_dataset_ace(
         # Mean spread of retention scores. Near zero means the score does not
         # distinguish between lessons.
         "use_curator": use_curator,
-        "lessons_rejected_by_curator": sum(
-            r.get("lessons_rejected_by_curator", 0) for r in results
-        ),
+        # Counted from playbook_log, which is where the Curator actually writes
+        # them. Summing over `results` -- which has no such key -- made this
+        # constant zero, so the no-curator ablation had no observable effect
+        # metric. The cost is reported next to the benefit.
+        "lessons_rejected_by_curator": sum(r["lessons_rejected_by_curator"] for r in playbook_log),
+        "total_curator_latency_ms": sum(r["curator_latency_ms"] for r in playbook_log),
         "mean_retention_score_std": (
             statistics.mean(r["retention_score_std"] for r in playbook_log) if playbook_log else 0.0
         ),

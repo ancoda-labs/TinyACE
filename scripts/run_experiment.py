@@ -46,7 +46,12 @@ from edge_slm_ace.utils.config import (
 )
 from edge_slm_ace.models.model_manager import load_model_and_tokenizer
 from edge_slm_ace.memory.playbook import Playbook, ScoringParams
-from edge_slm_ace.core.runner import run_dataset_baseline, run_dataset_ace, run_dataset_self_refine
+from edge_slm_ace.core.runner import (
+    PLAYBOOK_LOG_FIELDS,
+    run_dataset_ace,
+    run_dataset_baseline,
+    run_dataset_self_refine,
+)
 from edge_slm_ace.utils.device_utils import get_device, resolve_device_override
 from edge_slm_ace.eval.metrics import PeakMemoryTracker, SemanticEvaluator
 from edge_slm_ace.utils.repro import DEFAULT_SEED, capture_environment, set_seed
@@ -434,193 +439,187 @@ Examples:
         if not args.quiet:
             print(f"Loading model: {config.model_id}")
 
-        try:
-            with memory_tracker:
+        # Only the load itself gets the load-failure message. Everything after
+        # this point -- dataset parsing, the evaluation loop, playbook and log
+        # writes -- propagates to the handler at the bottom of main(), which
+        # prints a traceback. Wrapping the whole run in this handler reported
+        # every failure, including ones that occurred after a complete
+        # evaluation, as 'Failed to load model' and discarded the results.
+        with memory_tracker:
+            try:
                 model, tokenizer = load_model_and_tokenizer(
                     config.model_id,
                     device=device,
                     device_override=device_override_str,
                 )
+            except Exception as e:
+                print(f"Error: Failed to load model '{config.model_id}': {e}")
+                return 1
+
+            if not args.quiet:
+                print("Model loaded successfully.")
+
+            # Load dataset
+            dataset_path = Path(dataset_path_str)
+            if not dataset_path.exists():
+                print(f"Error: Dataset not found: {dataset_path}")
+                return 1
+
+            try:
+                dataset = load_dataset(dataset_path)
+            except Exception as e:
+                print(f"Error: Failed to load dataset: {e}")
+                return 1
+
+            original_size = len(dataset)
+            if args.limit is not None:
+                dataset = dataset[: args.limit]
+
+            if not args.quiet:
+                print(
+                    f"Loaded {len(dataset)} examples from {dataset_path}"
+                    + (f" (limited from {original_size})" if args.limit else "")
+                )
+
+            # Run evaluation (still within memory tracking)
+            if args.mode == "baseline":
                 if not args.quiet:
-                    print("Model loaded successfully.")
+                    print("Running baseline evaluation...")
+                results, summary = run_dataset_baseline(
+                    model=model,
+                    tokenizer=tokenizer,
+                    dataset=dataset,
+                    domain=domain,
+                    config=config,
+                    model_id=config.model_id,
+                    task_name=task_name,
+                    mode=args.mode,
+                    option_shuffle_seed=args.seed,
+                )
+                playbook_stats = None
 
-                # Load dataset
-                dataset_path = Path(dataset_path_str)
-                if not dataset_path.exists():
-                    print(f"Error: Dataset not found: {dataset_path}")
-                    return 1
-
-                try:
-                    dataset = load_dataset(dataset_path)
-                except Exception as e:
-                    print(f"Error: Failed to load dataset: {e}")
-                    return 1
-
-                original_size = len(dataset)
-                if args.limit is not None:
-                    dataset = dataset[: args.limit]
-
+            elif args.mode in ("self_refine", "self_refine_oracle"):
+                oracle = args.mode == "self_refine_oracle"
                 if not args.quiet:
-                    print(
-                        f"Loaded {len(dataset)} examples from {dataset_path}"
-                        + (f" (limited from {original_size})" if args.limit else "")
-                    )
-
-                # Run evaluation (still within memory tracking)
-                if args.mode == "baseline":
-                    if not args.quiet:
-                        print("Running baseline evaluation...")
-                    results, summary = run_dataset_baseline(
-                        model=model,
-                        tokenizer=tokenizer,
-                        dataset=dataset,
-                        domain=domain,
-                        config=config,
-                        model_id=config.model_id,
-                        task_name=task_name,
-                        mode=args.mode,
-                        option_shuffle_seed=args.seed,
-                    )
-                    playbook_stats = None
-
-                elif args.mode in ("self_refine", "self_refine_oracle"):
-                    oracle = args.mode == "self_refine_oracle"
-                    if not args.quiet:
-                        print(f"Running self-refinement evaluation (oracle={oracle})...")
-                        if oracle:
-                            print(
-                                "  NOTE: oracle mode reveals the correct answer during "
-                                "refinement. Report this as an upper bound, not a baseline."
-                            )
-                    results, summary = run_dataset_self_refine(
-                        model=model,
-                        tokenizer=tokenizer,
-                        dataset=dataset,
-                        domain=domain,
-                        config=config,
-                        model_id=config.model_id,
-                        task_name=task_name,
-                        mode=args.mode,
-                        oracle=oracle,
-                    )
-                    playbook_stats = None
-
-                else:  # ACE mode, or the prompt-matched control
-                    enable_learning = args.mode == "ace"
-                    if not args.quiet:
-                        if enable_learning:
-                            print(f"Running ACE evaluation (mode: {args.ace_mode})...")
-                        else:
-                            print(
-                                "Running CoT control: ACE prompt scaffold, empty "
-                                "playbook, no reflection or playbook writes."
-                            )
-
-                    # The control never writes, but still needs a path for the
-                    # shared code path; keep it out of the ACE playbook dir.
-                    playbook_path = Path(
-                        args.playbook_path
-                        or (Path(args.output_path).parent / "playbook_control.jsonl")
-                    )
-
-                    # Create scoring params with ablation flags
-                    scoring_params = ScoringParams(
-                        disable_vagueness_penalty=args.disable_vagueness_penalty,
-                        disable_recency_decay=args.disable_recency_decay,
-                        disable_failure_penalty=args.disable_failure_penalty,
-                        fifo_memory=args.fifo_memory,
-                        relevance_weight=args.relevance_weight,
-                    )
-
-                    # Load or create playbook. The control arm always starts
-                    # empty -- loading a previous run's lessons would defeat
-                    # the point of it being a control.
-                    if enable_learning and playbook_path.exists():
-                        if not args.quiet:
-                            print(f"Loading playbook from {playbook_path}")
-                        playbook = Playbook.load(
-                            playbook_path,
-                            token_budget=args.token_budget,
-                            tokenizer=tokenizer,
-                        )
-                        # Update scoring params
-                        playbook.scoring_params = scoring_params
-                        playbook.store_token_capacity = (
-                            args.store_token_capacity or playbook.store_token_capacity
-                        )
-                    else:
-                        if not args.quiet:
-                            print(f"Creating new playbook at {playbook_path}")
-                        playbook = Playbook(
-                            token_budget=args.token_budget,
-                            scoring_params=scoring_params,
-                            tokenizer=tokenizer,
-                            store_token_capacity=args.store_token_capacity,
-                        )
-
-                    initial_playbook_size = len(playbook.entries)
-
-                    results, summary = run_dataset_ace(
-                        model=model,
-                        tokenizer=tokenizer,
-                        dataset=dataset,
-                        domain=domain,
-                        config=config,
-                        playbook=playbook,
-                        playbook_path=playbook_path,
-                        model_id=config.model_id,
-                        task_name=task_name,
-                        mode=args.mode,
-                        ace_mode=args.ace_mode,
-                        token_budget=args.token_budget,
-                        top_k=args.top_k,
-                        prune_every_n=args.prune_every_n,
-                        max_entries_per_domain=args.max_entries_per_domain,
-                        option_shuffle_seed=args.seed,
-                        enable_learning=enable_learning,
-                        use_curator=not args.no_curator,
-                    )
-
-                    playbook_stats = {
-                        "initial_size": initial_playbook_size,
-                        "final_size": len(playbook.entries),
-                        "entries_added": len(playbook.entries) - initial_playbook_size,
-                        "domain_stats": playbook.get_stats(domain),
-                    }
-
-                    # Save playbook log if available
-                    playbook_log = summary.get("playbook_log", [])
-                    if playbook_log and args.metrics_path:
-                        playbook_log_path = Path(args.metrics_path).parent / "playbook_log.csv"
-                        with open(playbook_log_path, "w", newline="", encoding="utf-8") as f:
-                            writer = csv.DictWriter(
-                                f,
-                                fieldnames=[
-                                    "step_index",
-                                    "num_entries",
-                                    "total_tokens",
-                                    "num_evictions",
-                                    "retention_score_std",
-                                    "num_retrieved",
-                                    "num_credited",
-                                    "credit_mode",
-                                ],
-                            )
-                            writer.writeheader()
-                            writer.writerows(playbook_log)
-                        if not args.quiet:
-                            print(f"Playbook log saved to {playbook_log_path}")
-
-                    if not args.quiet:
+                    print(f"Running self-refinement evaluation (oracle={oracle})...")
+                    if oracle:
                         print(
-                            f"Playbook: {initial_playbook_size} → {len(playbook.entries)} entries"
+                            "  NOTE: oracle mode reveals the correct answer during "
+                            "refinement. Report this as an upper bound, not a baseline."
+                        )
+                results, summary = run_dataset_self_refine(
+                    model=model,
+                    tokenizer=tokenizer,
+                    dataset=dataset,
+                    domain=domain,
+                    config=config,
+                    model_id=config.model_id,
+                    task_name=task_name,
+                    mode=args.mode,
+                    oracle=oracle,
+                )
+                playbook_stats = None
+
+            else:  # ACE mode, or the prompt-matched control
+                enable_learning = args.mode == "ace"
+                if not args.quiet:
+                    if enable_learning:
+                        print(f"Running ACE evaluation (mode: {args.ace_mode})...")
+                    else:
+                        print(
+                            "Running CoT control: ACE prompt scaffold, empty "
+                            "playbook, no reflection or playbook writes."
                         )
 
-                # Update memory tracker one final time
-                memory_tracker.update()
-        except Exception as e:
-            print(f"Error: Failed to load model '{config.model_id}': {e}")
-            return 1
+                # The control never writes, but still needs a path for the
+                # shared code path; keep it out of the ACE playbook dir.
+                playbook_path = Path(
+                    args.playbook_path or (Path(args.output_path).parent / "playbook_control.jsonl")
+                )
+
+                # Create scoring params with ablation flags
+                scoring_params = ScoringParams(
+                    disable_vagueness_penalty=args.disable_vagueness_penalty,
+                    disable_recency_decay=args.disable_recency_decay,
+                    disable_failure_penalty=args.disable_failure_penalty,
+                    fifo_memory=args.fifo_memory,
+                    relevance_weight=args.relevance_weight,
+                )
+
+                # Load or create playbook. The control arm always starts
+                # empty -- loading a previous run's lessons would defeat
+                # the point of it being a control.
+                if enable_learning and playbook_path.exists():
+                    if not args.quiet:
+                        print(f"Loading playbook from {playbook_path}")
+                    playbook = Playbook.load(
+                        playbook_path,
+                        token_budget=args.token_budget,
+                        tokenizer=tokenizer,
+                    )
+                    # Update scoring params
+                    playbook.scoring_params = scoring_params
+                    playbook.store_token_capacity = (
+                        args.store_token_capacity or playbook.store_token_capacity
+                    )
+                else:
+                    if not args.quiet:
+                        print(f"Creating new playbook at {playbook_path}")
+                    playbook = Playbook(
+                        token_budget=args.token_budget,
+                        scoring_params=scoring_params,
+                        tokenizer=tokenizer,
+                        store_token_capacity=args.store_token_capacity,
+                    )
+
+                initial_playbook_size = len(playbook.entries)
+
+                results, summary = run_dataset_ace(
+                    model=model,
+                    tokenizer=tokenizer,
+                    dataset=dataset,
+                    domain=domain,
+                    config=config,
+                    playbook=playbook,
+                    playbook_path=playbook_path,
+                    model_id=config.model_id,
+                    task_name=task_name,
+                    mode=args.mode,
+                    ace_mode=args.ace_mode,
+                    token_budget=args.token_budget,
+                    top_k=args.top_k,
+                    prune_every_n=args.prune_every_n,
+                    max_entries_per_domain=args.max_entries_per_domain,
+                    option_shuffle_seed=args.seed,
+                    enable_learning=enable_learning,
+                    use_curator=not args.no_curator,
+                )
+
+                playbook_stats = {
+                    "initial_size": initial_playbook_size,
+                    "final_size": len(playbook.entries),
+                    "entries_added": len(playbook.entries) - initial_playbook_size,
+                    "domain_stats": playbook.get_stats(domain),
+                }
+
+                # Save playbook log if available
+                playbook_log = summary.get("playbook_log", [])
+                if playbook_log and args.metrics_path:
+                    playbook_log_path = Path(args.metrics_path).parent / "playbook_log.csv"
+                    with open(playbook_log_path, "w", newline="", encoding="utf-8") as f:
+                        # Header comes from the runner's own schema, so a new
+                        # log field can never outrun it.
+                        writer = csv.DictWriter(f, fieldnames=PLAYBOOK_LOG_FIELDS)
+                        writer.writeheader()
+                        writer.writerows(playbook_log)
+                    if not args.quiet:
+                        print(f"Playbook log saved to {playbook_log_path}")
+
+                if not args.quiet:
+                    print(f"Playbook: {initial_playbook_size} → {len(playbook.entries)} entries")
+
+            # Update memory tracker one final time
+            memory_tracker.update()
 
         # Calculate wall time
         wall_time_seconds = time.time() - wall_start
