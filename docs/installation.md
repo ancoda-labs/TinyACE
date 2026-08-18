@@ -97,3 +97,13 @@ pip install -e ".[dev]"
 This includes:
 - `pytest` - Testing framework
 - `black` - Code formatter
+
+## A checkout, not a library
+
+This is a research repository. The datasets in `data/tasks/` and the
+entrypoints in `scripts/` are deliberately outside the wheel, and the
+documented workflow (`make install`, `python -m scripts.*`) assumes a git
+clone. Install with `pip install -e .` from a checkout.
+
+If the package ever ends up installed away from its datasets, point
+`TINYACE_DATA_ROOT` at the directory containing `data/tasks/`.

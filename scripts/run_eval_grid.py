@@ -16,6 +16,7 @@ Usage:
 """
 
 import argparse
+import json
 import subprocess
 import sys
 import time
@@ -23,6 +24,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
+
+from edge_slm_ace.utils.repro import capture_environment
 
 try:
     import yaml
@@ -130,6 +133,41 @@ def build_output_dir(
 ) -> Path:
     """Build the output directory path for an experiment."""
     return Path(results_root) / sanitize_for_path(model_name) / task_name / mode_name / device
+
+
+def completed_cell(output_dir: Path, commit: Optional[str]) -> bool:
+    """
+    True when this cell already has a complete result from the current commit.
+
+    The grid re-ran every cell from scratch on every invocation, which combines
+    badly with a run that dies late: a sweep of 6 models x 2 tasks x 12 arms is
+    ~144 model loads, and repeating the ones that already succeeded is pure
+    GPU time. A cell counts as done only when all three artefacts are present
+    and non-empty -- a crash mid-write leaves a truncated metrics.json, which
+    must not be mistaken for a result.
+
+    Args:
+        output_dir: The cell's directory.
+        commit: Current git SHA, or None outside a repository. A cell produced
+            by different code is not a result for this one.
+
+    Returns:
+        Whether the cell can be skipped.
+    """
+    metrics_path = output_dir / "metrics.json"
+    required = [metrics_path, output_dir / "predictions.jsonl", output_dir / "results.csv"]
+    if not all(p.exists() and p.stat().st_size > 0 for p in required):
+        return False
+
+    try:
+        with open(metrics_path, "r", encoding="utf-8") as f:
+            metrics = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False  # truncated by an interrupted write
+
+    if commit is None:
+        return True
+    return metrics.get("environment", {}).get("git_commit") == commit
 
 
 def build_experiment_command(
@@ -443,6 +481,15 @@ def main() -> int:
         help="Disable live progress output (only save to logs)",
     )
     parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Re-run cells that already have a complete result from this commit. "
+            "By default they are skipped, so an interrupted sweep resumes "
+            "instead of repeating work that succeeded."
+        ),
+    )
+    parser.add_argument(
         "--skip-unavailable-devices",
         action="store_true",
         default=True,
@@ -510,6 +557,9 @@ def main() -> int:
         "failed": [],
         "skipped": [],
     }
+
+    # A cell produced by different code is not a result for this sweep.
+    commit = capture_environment().get("git_commit")
 
     start_time = time.time()
     experiment_num = 0
@@ -579,6 +629,13 @@ def main() -> int:
 
                     if args.verbose or args.dry_run:
                         print(f"  Output: {output_dir}")
+
+                    if not args.force and not args.dry_run and completed_cell(output_dir, commit):
+                        print("  = already complete for this commit, skipping (--force to re-run)")
+                        results["skipped"].append(
+                            {"experiment": experiment_id, "reason": "already complete"}
+                        )
+                        continue
 
                     # Run experiment
                     show_progress = args.show_progress and not args.no_progress

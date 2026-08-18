@@ -1,5 +1,6 @@
 """Configuration utilities for models and device settings."""
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict
@@ -133,9 +134,39 @@ def get_model_config(model_id_or_key: str) -> ModelConfig:
         return ModelConfig(model_id=model_id_or_key, temperature=0.0, top_p=1.0)
 
 
-# Repository root, so task paths resolve from anywhere rather than from the
-# caller's working directory.
-REPO_ROOT = Path(__file__).resolve().parents[3]
+# Environment override for the directory holding `data/tasks/`, for the case
+# where the package is installed away from its datasets.
+DATA_ROOT_ENV = "TINYACE_DATA_ROOT"
+
+
+def _find_repo_root() -> Path:
+    """
+    Locate the directory that holds `data/tasks/`.
+
+    This was `Path(__file__).resolve().parents[3]`, which is the repo root only
+    under an editable install. A real `pip install` puts the package in
+    site-packages, where parents[3] is an unrelated directory -- and the
+    datasets are not in the wheel either, since packages.find only takes
+    `src/`. Searching upward makes the checkout case robust to layout changes,
+    and the environment variable covers an installed package whose data lives
+    elsewhere.
+
+    Returns:
+        The directory containing `data/tasks/`, or the editable-install guess
+        when there is none, so error messages name a plausible path.
+    """
+    override = os.environ.get(DATA_ROOT_ENV)
+    if override:
+        return Path(override).expanduser().resolve()
+
+    here = Path(__file__).resolve()
+    for candidate in here.parents:
+        if (candidate / "data" / "tasks").is_dir():
+            return candidate
+    return here.parents[3]
+
+
+REPO_ROOT = _find_repo_root()
 
 # Task registry: maps task names to dataset paths and domains.
 #
@@ -207,6 +238,32 @@ def validate_task_registry() -> Dict[str, str]:
         for name in TASK_CONFIGS
         if not resolve_task_path(name).exists()
     }
+
+
+def require_task_path(task_name: str) -> Path:
+    """
+    Absolute path to a task's dataset, or a diagnosable error.
+
+    Args:
+        task_name: Task name from TASK_CONFIGS.
+
+    Returns:
+        The dataset path.
+
+    Raises:
+        FileNotFoundError: With the resolved root and the override to set, so a
+            package installed away from its datasets says so rather than
+            reporting a bare missing file.
+    """
+    path = resolve_task_path(task_name)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Dataset for task '{task_name}' not found at {path}.\n"
+            f"Data root resolved to {REPO_ROOT}. This project expects a git "
+            f"checkout; if the package is installed elsewhere, point "
+            f"{DATA_ROOT_ENV} at the directory containing data/tasks/."
+        )
+    return path
 
 
 def get_task_config(task_name: str) -> Dict[str, str]:

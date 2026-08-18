@@ -35,7 +35,7 @@ import time
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -54,6 +54,7 @@ from edge_slm_ace.core.runner import (
 )
 from edge_slm_ace.utils.device_utils import get_device, resolve_device_override
 from edge_slm_ace.eval.metrics import PeakMemoryTracker, SemanticEvaluator
+from edge_slm_ace.eval.stats import summarize_accuracy
 from edge_slm_ace.utils.repro import DEFAULT_SEED, capture_environment, set_seed
 
 
@@ -115,6 +116,38 @@ def save_predictions(results: List[Dict], path: Path) -> None:
             f.write(json.dumps(result, default=str) + "\n")
 
 
+def completed_ids(path: Optional[Path]) -> set:
+    """
+    Question ids already present in a predictions file.
+
+    Predictions were buffered in memory and written once, at the very end, so
+    an interruption at example 900 of 1000 lost all 900. With --resume the
+    finished ids are read back and their examples skipped.
+
+    Args:
+        path: A predictions.jsonl, or None.
+
+    Returns:
+        The set of completed `qid`s, empty when there is no readable file.
+    """
+    if path is None or not path.exists():
+        return set()
+
+    done = set()
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                done.add(json.loads(line)["qid"])
+            except (json.JSONDecodeError, KeyError):
+                # A row torn by an interrupted write. Everything after it is
+                # suspect too, so stop here and redo the rest.
+                break
+    return done
+
+
 def save_run_metadata(metadata: Dict[str, Any], path: Path) -> None:
     """Save run metadata to a JSON file."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -149,6 +182,48 @@ def build_scoring_params(args: argparse.Namespace) -> ScoringParams:
         relevance_weight=args.relevance_weight,
         **overrides,
     )
+
+
+def recompute_correctness(summary: Dict[str, Any], results: List[Dict], resumed: int) -> Dict:
+    """
+    Recompute the per-example aggregates over a merged row set.
+
+    A resumed run's `summary` comes from the runner, which only saw the
+    examples it actually processed. Merging in the rows an interrupted run
+    produced without recomputing would leave metrics.json reporting the
+    accuracy of the tail while results.csv held the whole dataset.
+
+    Timing and memory are deliberately *not* recomputed: they measure this
+    process, not the interrupted one, and `latency_covers_examples` records how
+    many examples they cover so the difference is visible rather than assumed.
+
+    Args:
+        summary: Summary from the runner, for this session's examples.
+        results: All rows, resumed and freshly computed.
+        resumed: How many rows came from the earlier run.
+
+    Returns:
+        A copy with the correctness aggregates recomputed.
+    """
+    merged = dict(summary)
+    merged["num_examples"] = len(results)
+    merged["resumed_examples"] = resumed
+    merged["latency_covers_examples"] = len(results) - resumed
+
+    correct = [r["is_correct"] for r in results if r.get("is_correct") is not None]
+    if correct:
+        merged["accuracy"] = sum(correct) / len(correct)
+
+    oma = [r["oma_correct"] for r in results if r.get("oma_correct") is not None]
+    if oma:
+        merged["oma_accuracy"] = sum(oma) / len(oma)
+        merged["oma_ci"] = summarize_accuracy(oma)
+
+    gom = [r["gom"] for r in results if r.get("gom") is not None]
+    if gom:
+        merged["avg_gom"] = sum(gom) / len(gom)
+
+    return merged
 
 
 def main() -> int:
@@ -433,6 +508,15 @@ Examples:
         help="Automatically regenerate plots after evaluation",
     )
     parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Skip examples already present in --predictions-path. A run that "
+            "dies at example 900 of 1000 otherwise loses all 900, since "
+            "predictions are only written once the loop finishes."
+        ),
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Suppress progress output",
@@ -553,6 +637,20 @@ Examples:
             original_size = len(dataset)
             if args.limit is not None:
                 dataset = dataset[: args.limit]
+
+            # Resume before the run, so the skipped examples never reach a
+            # model. The playbook is loaded from disk in ACE mode, so a resumed
+            # ACE run continues from the lessons the interrupted one wrote.
+            already_done = (
+                completed_ids(Path(args.predictions_path) if args.predictions_path else None)
+                if args.resume
+                else set()
+            )
+            if already_done:
+                before = len(dataset)
+                dataset = [ex for ex in dataset if ex.get("id") not in already_done]
+                if not args.quiet:
+                    print(f"Resuming: {before - len(dataset)} of {before} examples already done")
 
             if not args.quiet:
                 print(
@@ -726,6 +824,26 @@ Examples:
             # Update memory tracker one final time
             memory_tracker.update()
 
+        # Fold in the rows an interrupted run already produced, so the CSV,
+        # metrics and predictions cover the whole dataset rather than the tail.
+        if already_done and args.predictions_path:
+            previous = []
+            with open(args.predictions_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        break
+                    if row.get("qid") in already_done:
+                        previous.append(row)
+            results = previous + results
+            summary = recompute_correctness(summary, results, resumed=len(previous))
+            if not args.quiet:
+                print(f"Merged {len(previous)} example(s) from the interrupted run")
+
         # Calculate wall time
         wall_time_seconds = time.time() - wall_start
 
@@ -793,7 +911,7 @@ Examples:
                 "top_p": config.top_p,
                 "greedy": config.temperature == 0.0,
             },
-            "num_examples": len(dataset),
+            "num_examples": len(results),
             "limit_applied": args.limit,
             "peak_memory_mb": memory_tracker.peak_memory_mb,
             "peak_gpu_memory_mb": (
@@ -831,7 +949,8 @@ Examples:
             print("=" * 50)
             print(f"Task: {task_name} ({domain})")
             print(f"Mode: {args.mode}" + (f" ({args.ace_mode})" if args.mode == "ace" else ""))
-            print(f"Examples: {len(dataset)}")
+            # The merged count, not this session's, so it agrees with metrics.json.
+            print(f"Examples: {len(results)}")
             print(f"Accuracy: {summary.get('accuracy', 0):.4f}")
             print(f"Avg Latency: {summary.get('avg_latency_ms', 0):.1f}ms")
             print(f"Wall Time: {wall_time_seconds:.1f}s")

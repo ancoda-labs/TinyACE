@@ -26,10 +26,9 @@ dependencies = [
 
 [project.optional-dependencies]
 metrics = [
-    "sacrebleu>=2.3.0",
+    "sacrebleu>=2.3.1",
     "sentence-transformers>=2.2.0",
     "scikit-learn>=1.3.0",
-    "statsmodels>=0.14.0",
 ]
 plots = [
     "matplotlib>=3.7.0",
@@ -41,6 +40,13 @@ dev = [
     "black>=23.0.0",
     "flake8>=6.1.0",
 ]
+
+# This is a research repository, not a library: the datasets in data/tasks/ and
+# the entrypoints in scripts/ are deliberately outside the wheel, and the
+# documented workflow (`make install`, `python -m scripts.*`) assumes a git
+# checkout. Install with `pip install -e .` from a clone. If the package is
+# ever installed away from its datasets, point TINYACE_DATA_ROOT at the
+# directory containing data/tasks/.
 
 [project.urls]
 Homepage = "https://github.com/SirAlchemist1/edge-slm-ace"
