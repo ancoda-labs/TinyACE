@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 from datetime import datetime
 
+from edge_slm_ace.memory.relevance import LessonRelevance, blend
+
 
 # Default hyperparameters for retention scoring
 # These match the formal equation:
@@ -24,6 +26,10 @@ DEFAULT_GAMMA = 0.3      # Weight for recency bonus
 DEFAULT_DELTA = 0.4      # Weight for vagueness penalty
 DEFAULT_LAMBDA = 0.05    # Decay rate for recency (smaller = slower decay)
 DEFAULT_EPSILON = 1.0    # Smoothing constant to avoid division by zero
+
+# How much larger the store is than the prompt budget, when not set explicitly.
+# Must exceed 1 or retrieval has nothing to choose between.
+DEFAULT_STORE_CAPACITY_MULTIPLIER = 4
 
 
 @dataclass
@@ -40,6 +46,10 @@ class ScoringParams:
     disable_recency_decay: bool = False      # If True, set γ=0 (ignore recency term)
     disable_failure_penalty: bool = False   # If True, set β=0 (ignore failure term)
     fifo_memory: bool = False                # If True, evict oldest-first instead of lowest-score
+    # Weight on question-lesson relevance when ranking for retrieval. 0.0
+    # reproduces the original domain-only behaviour, where every question in a
+    # run received the identical lesson list.
+    relevance_weight: float = 0.5
 
 
 # Generic phrases that indicate vague/unhelpful lessons
@@ -353,6 +363,7 @@ class Playbook:
         token_budget: Optional[int] = None,
         scoring_params: Optional[ScoringParams] = None,
         tokenizer=None,
+        store_token_capacity: Optional[int] = None,
     ):
         """
         Initialize playbook.
@@ -365,9 +376,27 @@ class Playbook:
                 token counts come from it rather than from the words * 1.3
                 heuristic, so the token budget is denominated in the same
                 units as the prompt it is meant to bound.
+            store_token_capacity: How many tokens of lessons to KEEP. Distinct
+                from token_budget, which is how many to SHOW.
+
+                These were previously the same number, which made retrieval a
+                no-op: eviction held the store at or below the budget, and
+                retrieval then filled up to that same budget, so every
+                surviving entry was always retrieved and ranking never
+                selected anything. WM-256 versus WM-512 compared how many
+                lessons survived, not which were chosen.
+
+                Defaults to DEFAULT_STORE_CAPACITY_MULTIPLIER x token_budget so
+                that selection actually selects.
         """
         self.entries: List[PlaybookEntry] = entries or []
         self.token_budget = token_budget
+        if store_token_capacity is not None:
+            self.store_token_capacity = store_token_capacity
+        elif token_budget is not None:
+            self.store_token_capacity = DEFAULT_STORE_CAPACITY_MULTIPLIER * token_budget
+        else:
+            self.store_token_capacity = None
         self.scoring_params = scoring_params or ScoringParams()
         self.tokenizer = tokenizer
         if tokenizer is not None:
@@ -446,35 +475,78 @@ class Playbook:
             for entry in self.entries:
                 f.write(json.dumps(entry.to_dict()) + "\n")
     
+    def _rank_for_retrieval(
+        self,
+        domain: str,
+        current_step: int,
+        query: Optional[str] = None,
+    ) -> List[PlaybookEntry]:
+        """
+        Order a domain's entries by how worth showing they are.
+
+        Combines retention score with relevance to `query`. Without a query
+        this is retention-only, which is what the original code did for every
+        question in a run -- all sciq_* tasks share one domain, so the same
+        lesson list was returned regardless of what was being asked.
+
+        Args:
+            domain: Domain to rank within.
+            current_step: Step counter, for the recency term.
+            query: The question being answered, if available.
+
+        Returns:
+            Entries ordered best-first.
+        """
+        domain_entries = [e for e in self.entries if e.domain == domain]
+        if not domain_entries:
+            return []
+
+        retention = [
+            e.retrieval_key(current_step, self.scoring_params) for e in domain_entries
+        ]
+
+        relevance = None
+        weight = getattr(self.scoring_params, "relevance_weight", 0.0)
+        if query and weight > 0:
+            try:
+                relevance = LessonRelevance.get_instance().score(
+                    query, [e.text for e in domain_entries]
+                )
+            except Exception:
+                relevance = None  # fall back to retention-only ranking
+
+        keys = blend(retention, relevance, weight)
+        return [e for _, e in sorted(
+            zip(keys, domain_entries), key=lambda pair: pair[0], reverse=True
+        )]
+
     def get_top_k(
         self,
         domain: str,
         k: int = 5,
         current_step: int = 0,
+        query: Optional[str] = None,
     ) -> List[PlaybookEntry]:
         """
-        Get top-k entries for a domain, ranked by retention score.
+        Get the top-k entries for a domain.
         
         Args:
             domain: Domain name (e.g., "finance", "medical").
             k: Number of entries to return.
             current_step: Current step counter for recency calculation.
+            query: The question being answered, used to rank by relevance.
             
         Returns:
             List of top-k PlaybookEntry objects.
         """
-        domain_entries = [e for e in self.entries if e.domain == domain]
-        domain_entries.sort(
-            key=lambda e: e.retrieval_key(current_step, self.scoring_params),
-            reverse=True
-        )
-        return domain_entries[:k]
+        return self._rank_for_retrieval(domain, current_step, query)[:k]
     
     def get_top_entries_for_budget(
         self,
         domain: str,
         token_budget: int,
         current_step: int = 0,
+        query: Optional[str] = None,
     ) -> List[PlaybookEntry]:
         """
         Get top entries for a domain that fit within a token budget.
@@ -486,16 +558,13 @@ class Playbook:
             domain: Domain name (e.g., "finance", "medical").
             token_budget: Maximum number of tokens allowed.
             current_step: Current step counter for recency calculation.
-            
+            query: The question being answered, used to rank by relevance.
+
         Returns:
             List of PlaybookEntry objects that fit within the budget.
         """
-        domain_entries = [e for e in self.entries if e.domain == domain]
-        domain_entries.sort(
-            key=lambda e: e.retrieval_key(current_step, self.scoring_params),
-            reverse=True
-        )
-        
+        domain_entries = self._rank_for_retrieval(domain, current_step, query)
+
         selected_entries = []
         total_tokens = 0
         
@@ -625,8 +694,8 @@ class Playbook:
         """
         Add a new entry to the playbook, with deduplication and optional eviction.
         
-        If token_budget is set and enforce_budget is True, this will evict
-        lowest-scoring entries to make room for the new entry.
+        If store_token_capacity is set and enforce_budget is True, this will
+        evict entries (lowest-score, or oldest under FIFO) to make room.
         
         NOTE: New entries are added WITHOUT any success/failure feedback.
         Feedback should only be recorded when the entry is actually USED
@@ -665,12 +734,15 @@ class Playbook:
         if self.tokenizer is not None:
             entry.recount_tokens(self.tokenizer)
         
-        # Check token budget
-        if self.token_budget is not None and enforce_budget:
+        # Enforce the STORE capacity here. The prompt budget is applied at
+        # retrieval time instead, so that ranking has candidates to reject.
+        if self.store_token_capacity is not None and enforce_budget:
             domain_tokens = self.get_domain_tokens(domain)
-            if domain_tokens + entry.token_count > self.token_budget:
+            if domain_tokens + entry.token_count > self.store_token_capacity:
                 # Need to evict some entries
-                tokens_needed = (domain_tokens + entry.token_count) - self.token_budget
+                tokens_needed = (
+                    domain_tokens + entry.token_count
+                ) - self.store_token_capacity
                 tokens_freed = self._evict_lowest_score_entries(
                     domain, tokens_needed, step
                 )
@@ -680,10 +752,10 @@ class Playbook:
                     # enforce, so say so instead of silently exceeding it.
                     # (Happens when a single entry is larger than the budget.)
                     print(
-                        f"Warning: playbook budget exceeded for domain "
+                        f"Warning: playbook store capacity exceeded for domain "
                         f"'{domain}': needed {tokens_needed} tokens, freed "
-                        f"{tokens_freed}. Entry added anyway; the working-memory "
-                        f"budget no longer holds for this run."
+                        f"{tokens_freed}. Entry added anyway; the capacity "
+                        f"invariant no longer holds for this run."
                     )
 
         self.entries.append(entry)

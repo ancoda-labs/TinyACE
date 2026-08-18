@@ -97,10 +97,13 @@ def build_generator_prompt(
             domain=domain,
             token_budget=token_budget,
             current_step=current_step,
+            query=question,
         )
     else:
         # Use top-k for full ACE mode
-        top_strategies = playbook.get_top_k(domain, k=top_k, current_step=current_step)
+        top_strategies = playbook.get_top_k(
+            domain, k=top_k, current_step=current_step, query=question
+        )
     
     # Build domain header with domain-specific instructions
     domain_instructions = _get_domain_specific_instructions(domain)

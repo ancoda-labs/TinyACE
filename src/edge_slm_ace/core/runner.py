@@ -37,6 +37,7 @@ from edge_slm_ace.utils.mcq_eval import (
 from edge_slm_ace.utils.stats import summarize_accuracy
 from edge_slm_ace.models.model_manager import generate, count_tokens
 from edge_slm_ace.memory.playbook import Playbook
+from edge_slm_ace.memory.relevance import LessonRelevance
 
 
 def _index_distribution(values, n: int = 4) -> Dict[str, float]:
@@ -810,11 +811,14 @@ def run_dataset_ace(
                 domain=domain,
                 token_budget=token_budget,
                 current_step=step,
+                query=question,
             )
             used_entry_ids = [e.id for e in used_entries]
         else:
             # Full mode: top-k entries
-            used_entries = playbook.get_top_k(domain, k=top_k, current_step=step)
+            used_entries = playbook.get_top_k(
+                domain, k=top_k, current_step=step, query=question
+            )
             used_entry_ids = [e.id for e in used_entries]
         
         # Step 2: Generate answer
@@ -1066,6 +1070,13 @@ def run_dataset_ace(
         **_generation_health(results),
         "num_examples": len(dataset),
         "enable_learning": enable_learning,
+        # False means retrieval was not query-conditioned, whatever the config
+        # said, because no encoder was available.
+        "relevance_active": bool(
+            playbook.scoring_params.relevance_weight > 0
+            and LessonRelevance.get_instance().available
+        ),
+        "relevance_weight": playbook.scoring_params.relevance_weight,
         "playbook_size": len(playbook.entries),
         "final_playbook_num_entries": len(playbook.entries),
         "final_playbook_total_tokens": playbook.total_tokens,

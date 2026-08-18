@@ -235,7 +235,14 @@ def run_single_experiment(
             enable_learning = mode_config["mode"] == "ace"
             token_budget = mode_config.get("working_memory_token_budget", 256)
             playbook_path = output_dir / f"playbook_{model_name}_{mode_name}.jsonl"
-            playbook = Playbook(token_budget=token_budget)
+            playbook = Playbook(
+                token_budget=token_budget,
+                tokenizer=tokenizer,
+                store_token_capacity=mode_config.get("store_token_capacity"),
+                scoring_params=ScoringParams(
+                    relevance_weight=mode_config.get("relevance_weight", 0.5),
+                ),
+            )
 
             ace_mode = mode_config.get("ace_mode", "ace_working_memory")
             

@@ -235,6 +235,27 @@ Examples:
         help="Token budget for working memory mode (default: 500)",
     )
     parser.add_argument(
+        "--store-token-capacity",
+        type=int,
+        default=None,
+        help=(
+            "Tokens of lessons to KEEP, as opposed to --token-budget which is "
+            "how many to SHOW. Defaults to 4x --token-budget. Setting them "
+            "equal makes retrieval a no-op, because every surviving entry then "
+            "fits in the prompt and ranking never rejects anything."
+        ),
+    )
+    parser.add_argument(
+        "--relevance-weight",
+        type=float,
+        default=0.5,
+        help=(
+            "Weight on question-lesson relevance when ranking for retrieval "
+            "(default: 0.5). 0.0 restores domain-only ranking, where every "
+            "question in a run receives the identical lesson list."
+        ),
+    )
+    parser.add_argument(
         "--top-k",
         type=int,
         default=5,
@@ -497,6 +518,7 @@ Examples:
                         disable_recency_decay=args.disable_recency_decay,
                         disable_failure_penalty=args.disable_failure_penalty,
                         fifo_memory=args.fifo_memory,
+                        relevance_weight=args.relevance_weight,
                     )
                     
                     # Load or create playbook. The control arm always starts
@@ -505,13 +527,26 @@ Examples:
                     if enable_learning and playbook_path.exists():
                         if not args.quiet:
                             print(f"Loading playbook from {playbook_path}")
-                        playbook = Playbook.load(playbook_path, token_budget=args.token_budget)
+                        playbook = Playbook.load(
+                            playbook_path,
+                            token_budget=args.token_budget,
+                            tokenizer=tokenizer,
+                        )
                         # Update scoring params
                         playbook.scoring_params = scoring_params
+                        playbook.store_token_capacity = (
+                            args.store_token_capacity
+                            or playbook.store_token_capacity
+                        )
                     else:
                         if not args.quiet:
                             print(f"Creating new playbook at {playbook_path}")
-                        playbook = Playbook(token_budget=args.token_budget, scoring_params=scoring_params)
+                        playbook = Playbook(
+                            token_budget=args.token_budget,
+                            scoring_params=scoring_params,
+                            tokenizer=tokenizer,
+                            store_token_capacity=args.store_token_capacity,
+                        )
                     
                     initial_playbook_size = len(playbook.entries)
                     

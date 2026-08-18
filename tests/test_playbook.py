@@ -501,6 +501,7 @@ class TestAblationFlags:
         """End-to-end: adding over budget under FIFO drops the oldest entry."""
         playbook = Playbook(
             token_budget=25,
+            store_token_capacity=25,
             scoring_params=ScoringParams(fifo_memory=True),
         )
         first = playbook.add_entry("test", "First lesson about acceleration " * 2, step=1)
@@ -606,3 +607,40 @@ class TestEntrySerialisation:
 
         assert restored.vagueness_score == original.vagueness_score
         assert restored.token_count == original.token_count
+
+
+class TestStoreCapacityVsPromptBudget:
+    """Keeping and showing are different budgets, or ranking cannot select."""
+
+    def _entry_text(self, i):
+        return f"Lesson number {i} explains how to convert unit {i} into unit {i + 1}."
+
+    def test_store_capacity_defaults_larger_than_prompt_budget(self):
+        playbook = Playbook(token_budget=256)
+        assert playbook.store_token_capacity > playbook.token_budget
+
+    def test_explicit_capacity_is_respected(self):
+        playbook = Playbook(token_budget=256, store_token_capacity=300)
+        assert playbook.store_token_capacity == 300
+
+    def test_retrieval_actually_selects_a_subset(self):
+        """With a larger store than budget, some entries must be left out."""
+        playbook = Playbook(token_budget=40, store_token_capacity=400)
+        for i in range(12):
+            playbook.add_entry("science", self._entry_text(i), step=i + 1)
+
+        stored = playbook.get_domain_tokens("science")
+        retrieved = playbook.get_top_entries_for_budget("science", token_budget=40)
+        retrieved_tokens = sum(e.token_count for e in retrieved)
+
+        assert stored > 40, "The store should hold more than one promptful"
+        assert retrieved_tokens <= 40
+        assert len(retrieved) < len(playbook.entries), \
+            "Retrieval returned everything, so ranking selected nothing"
+
+    def test_no_capacity_means_unbounded(self):
+        playbook = Playbook()
+        assert playbook.store_token_capacity is None
+        for i in range(20):
+            playbook.add_entry("science", self._entry_text(i), step=i + 1)
+        assert len(playbook.entries) == 20
