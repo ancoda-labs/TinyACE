@@ -9,8 +9,15 @@ import numpy as np
 from unittest.mock import MagicMock, patch
 
 from edge_slm_ace.utils.mcq_eval import (
+    TIER_EMBEDDING,
+    TIER_LETTER,
+    TIER_NONE,
+    TIER_OPTION_TEXT,
+    TIER_WEAK_LETTER,
+    compute_mapping_tier_distribution,
     extract_mcq_options,
     extract_mcq_options_with_indices,
+    map_prediction_to_option,
 )
 
 
@@ -219,8 +226,10 @@ class TestMCQEvaluator:
             "D": "vapor",
         }
         
+        # Deliberately avoids quoting any option verbatim, so the mapping
+        # falls through to the embedding tier that this test mocks.
         result = evaluator.evaluate_mcq(
-            prediction="I think it's frozen water",
+            prediction="I think it is the frozen solid form",
             options=options,
             gold_option="A",  # Gold is A, but prediction maps to B
         )
@@ -539,3 +548,66 @@ class TestOptionPermutation:
                 self._example(i), shuffle_seed=42
             )
             assert options[gold_letter] == gold_text == "gold"
+
+
+class TestMapPredictionToOption:
+    """Predictions must be mapped by what the model actually said."""
+
+    OPTIONS = ["coriolis effect", "muon effect", "centrifugal effect", "tropical effect"]
+
+    def test_explicit_letter_wins(self):
+        """A labelled letter is unambiguous and must be used directly."""
+        idx, tier = map_prediction_to_option("Answer: C", self.OPTIONS)
+        assert (idx, tier) == (2, TIER_LETTER)
+
+    def test_bare_letter_is_resolved_without_embeddings(self):
+        """A bare letter used to be unscorable; it must not need a model."""
+        idx, tier = map_prediction_to_option("(B)", self.OPTIONS)
+        assert (idx, tier) == (1, TIER_WEAK_LETTER)
+
+    def test_verbatim_option_text_is_matched(self):
+        """Quoting the option text is the other format the prompt allows."""
+        idx, tier = map_prediction_to_option(
+            "The phenomenon responsible is the centrifugal effect.", self.OPTIONS
+        )
+        assert (idx, tier) == (2, TIER_OPTION_TEXT)
+
+    def test_option_text_beats_a_trailing_bare_letter(self):
+        """A stray trailing letter must not override an explicit option."""
+        idx, tier = map_prediction_to_option(
+            "This is caused by the muon effect, as shown in figure A",
+            self.OPTIONS,
+        )
+        assert (idx, tier) == (1, TIER_OPTION_TEXT)
+
+    def test_longest_option_match_wins(self):
+        """When one option contains another, the specific one must win."""
+        options = ["oxygen", "liquid oxygen", "nitrogen", "helium"]
+        idx, tier = map_prediction_to_option("It is liquid oxygen.", options)
+        assert (idx, tier) == (1, TIER_OPTION_TEXT)
+
+    def test_option_text_matches_on_word_boundaries(self):
+        """A short option must not match inside a longer word."""
+        options = ["ice", "steam", "water", "vapor"]
+        idx, tier = map_prediction_to_option(
+            "The price of the reaction is high.", options, similarities=np.array([0, 0, 0, 1.0])
+        )
+        assert tier == TIER_EMBEDDING, "'ice' should not have matched inside 'price'"
+
+    def test_falls_back_to_embeddings(self):
+        """Unparseable text still gets mapped, but is labelled as such."""
+        idx, tier = map_prediction_to_option(
+            "some rambling text", self.OPTIONS, similarities=np.array([0.1, 0.2, 0.9, 0.3])
+        )
+        assert (idx, tier) == (2, TIER_EMBEDDING)
+
+    def test_empty_prediction(self):
+        idx, tier = map_prediction_to_option("", self.OPTIONS)
+        assert (idx, tier) == (None, TIER_NONE)
+
+    def test_tier_distribution_reports_weak_evidence(self):
+        """A run resting on embeddings must be visible in the summary."""
+        dist = compute_mapping_tier_distribution(
+            [{"mapping_tier": TIER_EMBEDDING}] * 3 + [{"mapping_tier": TIER_LETTER}]
+        )
+        assert dist == {TIER_EMBEDDING: 0.75, TIER_LETTER: 0.25}

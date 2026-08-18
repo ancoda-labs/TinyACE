@@ -236,7 +236,9 @@ def extract_mcq_options_with_indices(
 #   - "Option B" or "option C"
 #   - Just "B" or "C" at word boundary near end of text
 #   - "(A)" or "(B)" style markers
-_ACR_PATTERNS = [
+# Strong patterns: the letter is explicitly labelled as the answer. A match
+# here is unambiguous.
+_STRONG_CHOICE_PATTERNS = [
     # "Answer: X" or "answer: X"
     re.compile(r'\banswer\s*[:=]\s*\(?([ABCD])\)?', re.IGNORECASE),
     # "The answer is X"
@@ -247,11 +249,19 @@ _ACR_PATTERNS = [
     re.compile(r'\boption\s+\(?([ABCD])\)?', re.IGNORECASE),
     # "I choose X" or "I select X"
     re.compile(r'\b(?:choose|select)\s+\(?([ABCD])\)?', re.IGNORECASE),
+]
+
+# Weak patterns: a bare letter that *might* be a choice. "(A)" also matches a
+# restated choice list, and a trailing "A" matches answers like "vitamin A",
+# so these rank below an exact option-text match when mapping predictions.
+_WEAK_CHOICE_PATTERNS = [
     # "(X)" anywhere
     re.compile(r'\(([ABCD])\)', re.IGNORECASE),
-    # Standalone letter at end of text (within last 20 chars)
+    # Standalone letter at end of text
     re.compile(r'\b([ABCD])\b\s*[.!?\s]*$', re.IGNORECASE),
 ]
+
+_ACR_PATTERNS = _STRONG_CHOICE_PATTERNS + _WEAK_CHOICE_PATTERNS
 
 
 def detect_choice_marker(text: str) -> Optional[str]:
@@ -279,6 +289,112 @@ def detect_choice_marker(text: str) -> Optional[str]:
             return match.group(1).upper()
     
     return None
+
+
+# Tiers used to map a free-text prediction onto an option, in decreasing
+# order of trustworthiness. Recorded per example so a run whose OMA rests
+# mostly on TIER_EMBEDDING can be spotted rather than silently believed.
+TIER_LETTER = "letter"
+TIER_OPTION_TEXT = "option_text"
+TIER_WEAK_LETTER = "weak_letter"
+TIER_EMBEDDING = "embedding"
+TIER_NONE = "none"
+
+
+def _match_option_text(prediction: str, options: Sequence[str]) -> Optional[int]:
+    """
+    Find the option whose text appears verbatim in the prediction.
+
+    Matches on word boundaries, not raw substrings, so a short option like
+    "ice" does not match inside "price". Prefers the longest match so that an
+    option which is a substring of another ("oxygen" vs "liquid oxygen") does
+    not win spuriously. Returns None when nothing matches or when the longest
+    match is ambiguous.
+    """
+    pred_lower = prediction.lower()
+    hits = []
+    for i, opt in enumerate(options):
+        text = (opt or "").strip().lower()
+        if not text:
+            continue
+        if re.search(rf"(?<!\w){re.escape(text)}(?!\w)", pred_lower):
+            hits.append((len(text), i))
+    if not hits:
+        return None
+    hits.sort(reverse=True)
+    if len(hits) > 1 and hits[0][0] == hits[1][0]:
+        return None  # ambiguous: two equally long matches
+    return hits[0][1]
+
+
+def _match_letter(prediction: str, patterns, n_options: int) -> Optional[int]:
+    """Return the option index named by an explicit choice letter, if any."""
+    for pattern in patterns:
+        match = pattern.search(prediction)
+        if match:
+            idx = "ABCD".index(match.group(1).upper())
+            if idx < n_options:
+                return idx
+    return None
+
+
+def map_prediction_to_option(
+    prediction: str,
+    options: Sequence[str],
+    similarities: Optional[np.ndarray] = None,
+    evaluator: Optional["MCQEvaluator"] = None,
+) -> Tuple[Optional[int], str]:
+    """
+    Map a free-text prediction onto one of the options.
+
+    The prompt asks the model to answer "with the exact choice text or the
+    letter (A, B, C, or D)". Mapping by embedding similarity alone -- as this
+    module previously did -- cannot honour the second half: the embedding of
+    the string "B" bears no relation to the option texts, so argmax over
+    those similarities is close to a coin flip. detect_choice_marker() had
+    already parsed the letter, but its result was only used for the ACR
+    metric and was discarded when computing OMA.
+
+    Cascade, most to least trustworthy:
+      1. An explicitly labelled letter ("Answer: B").
+      2. An option's text appearing verbatim in the prediction.
+      3. A bare letter ("(B)", or a trailing "B").
+      4. Embedding similarity.
+
+    Args:
+        prediction: Raw model output.
+        options: Option texts in presentation order.
+        similarities: Precomputed similarities, to avoid re-encoding.
+        evaluator: Used to compute similarities if not supplied.
+
+    Returns:
+        Tuple of (chosen_index, tier). chosen_index is None only when the
+        prediction is empty and no embedding backend is available.
+    """
+    if not prediction or not prediction.strip():
+        return None, TIER_NONE
+
+    n = len(options)
+
+    idx = _match_letter(prediction, _STRONG_CHOICE_PATTERNS, n)
+    if idx is not None:
+        return idx, TIER_LETTER
+
+    idx = _match_option_text(prediction, options)
+    if idx is not None:
+        return idx, TIER_OPTION_TEXT
+
+    idx = _match_letter(prediction, _WEAK_CHOICE_PATTERNS, n)
+    if idx is not None:
+        return idx, TIER_WEAK_LETTER
+
+    if similarities is None:
+        if evaluator is None:
+            return None, TIER_NONE
+        similarities = evaluator.compute_similarities(prediction, list(options))
+    if similarities is None or len(similarities) == 0:
+        return None, TIER_NONE
+    return int(np.argmax(similarities)), TIER_EMBEDDING
 
 
 class MCQEvaluator:
@@ -403,12 +519,16 @@ class MCQEvaluator:
         option_letters = ["A", "B", "C", "D"]
         option_texts = [options.get(letter, "") for letter in option_letters]
         
-        # Compute similarities
+        # Compute similarities (needed for GOM and as the mapping fallback)
         sims = self.compute_similarities(prediction, option_texts)
         sim_dict = {letter: float(sims[i]) for i, letter in enumerate(option_letters)}
-        
-        # Determine predicted option (argmax of similarities)
-        pred_idx = int(np.argmax(sims))
+
+        # Determine predicted option via the mapping cascade
+        pred_idx, mapping_tier = map_prediction_to_option(
+            prediction, option_texts, similarities=sims
+        )
+        if pred_idx is None:
+            pred_idx = int(np.argmax(sims))
         pred_option = option_letters[pred_idx]
         
         # OMA: Option-Mapped Accuracy
@@ -432,6 +552,7 @@ class MCQEvaluator:
             "gom": gom,
             "acr_hit": acr_hit,
             "detected_marker": detected_marker,
+            "mapping_tier": mapping_tier,
             "similarities": sim_dict,
         }
 
@@ -513,26 +634,33 @@ def evaluate_mcq_with_indices(
     if not (0 <= gold_option_idx < 4):
         raise ValueError(f"gold_option_idx must be 0-3, got {gold_option_idx}")
     
-    # Compute similarities between prediction and each option
+    # Similarities are still needed for GOM, which is defined in embedding
+    # space, so compute them once and reuse for the mapping fallback.
     similarities = evaluator.compute_similarities(prediction, options)
-    
-    # Find option with highest similarity
-    chosen_option_idx = int(np.argmax(similarities))
-    
+
+    # Map the prediction onto an option via the cascade rather than by
+    # embedding argmax alone.
+    chosen_option_idx, mapping_tier = map_prediction_to_option(
+        prediction, options, similarities=similarities
+    )
+
     # OMA: Option-Mapped Accuracy
-    oma_correct = 1 if chosen_option_idx == gold_option_idx else 0
-    
+    oma_correct = (
+        1 if (chosen_option_idx is not None and chosen_option_idx == gold_option_idx) else 0
+    )
+
     # GOM: Gold Option Margin
     gold_sim = similarities[gold_option_idx]
     distractor_indices = [i for i in range(4) if i != gold_option_idx]
     distractor_sims = [similarities[i] for i in distractor_indices]
     mean_distractor_sim = np.mean(distractor_sims) if distractor_sims else 0.0
     gom = float(gold_sim - mean_distractor_sim)
-    
+
     return {
         "chosen_option_idx": chosen_option_idx,
         "oma_correct": oma_correct,
         "gom": gom,
+        "mapping_tier": mapping_tier,
     }
 
 
@@ -579,4 +707,20 @@ def compute_mcq_aggregate_metrics(
         "oma_accuracy": sum(oma_vals) / len(oma_vals) if oma_vals else None,
         "avg_gom": sum(gom_vals) / len(gom_vals) if gom_vals else None,
         "acr_rate": sum(acr_vals) / len(acr_vals) if acr_vals else None,
+        "mapping_tier_distribution": compute_mapping_tier_distribution(mcq_results),
     }
+
+
+def compute_mapping_tier_distribution(results: List[Dict]) -> Dict[str, float]:
+    """
+    Fraction of predictions resolved at each mapping tier.
+
+    A run dominated by TIER_EMBEDDING is one where the models mostly failed
+    to answer in a parseable form, so its OMA rests on embedding argmax over
+    free text and should be treated as weak evidence.
+    """
+    tiers = [r.get("mapping_tier") for r in results if r.get("mapping_tier")]
+    if not tiers:
+        return {}
+    total = len(tiers)
+    return {tier: tiers.count(tier) / total for tier in sorted(set(tiers))}

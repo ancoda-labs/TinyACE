@@ -32,6 +32,7 @@ from edge_slm_ace.utils.mcq_eval import (
     evaluate_mcq_with_indices,
     MCQEvaluator,
     compute_mcq_aggregate_metrics,
+    compute_mapping_tier_distribution,
 )
 from edge_slm_ace.models.model_manager import generate, count_tokens
 from edge_slm_ace.memory.playbook import Playbook
@@ -265,6 +266,7 @@ def run_dataset_baseline(
                 result["oma_correct"] = mcq_metrics["oma_correct"]
                 result["gom"] = mcq_metrics["gom"]
                 result["gold_option_idx"] = gold_option_idx
+                result["mapping_tier"] = mcq_metrics.get("mapping_tier")
             except Exception as e:
                 # Log but don't fail - MCQ metrics are optional
                 print(f"Warning: MCQ evaluation failed for {example_id}: {e}")
@@ -272,6 +274,7 @@ def run_dataset_baseline(
                 result["oma_correct"] = None
                 result["gom"] = None
                 result["gold_option_idx"] = gold_option_idx
+                result["mapping_tier"] = None
         
         # Legacy format support (for backward compatibility)
         elif is_mcq_task and mcq_options_dict and gold_option and mcq_evaluator:
@@ -351,6 +354,7 @@ def run_dataset_baseline(
             summary["gold_option_distribution"] = _index_distribution(
                 r.get("gold_option_idx") for r in results
             )
+            summary["mapping_tier_distribution"] = compute_mapping_tier_distribution(results)
         
         if has_legacy_format:
             # Compute legacy format metrics (including acr_rate)
@@ -922,6 +926,7 @@ def run_dataset_ace(
                 result["oma_correct"] = mcq_metrics["oma_correct"]
                 result["gom"] = mcq_metrics["gom"]
                 result["gold_option_idx"] = gold_option_idx
+                result["mapping_tier"] = mcq_metrics.get("mapping_tier")
             except Exception as e:
                 # Log but don't fail - MCQ metrics are optional
                 print(f"Warning: MCQ evaluation failed for {example_id}: {e}")
@@ -929,6 +934,7 @@ def run_dataset_ace(
                 result["oma_correct"] = None
                 result["gom"] = None
                 result["gold_option_idx"] = gold_option_idx
+                result["mapping_tier"] = None
         
         # Legacy format support (for backward compatibility)
         elif is_mcq_task and mcq_options_dict and gold_option and mcq_evaluator:
@@ -1015,6 +1021,7 @@ def run_dataset_ace(
             summary["gold_option_distribution"] = _index_distribution(
                 r.get("gold_option_idx") for r in results
             )
+            summary["mapping_tier_distribution"] = compute_mapping_tier_distribution(results)
         
         if has_legacy_format:
             # Compute legacy format metrics (including acr_rate)
