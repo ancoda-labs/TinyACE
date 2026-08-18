@@ -432,8 +432,7 @@ class MCQEvaluator:
         try:
             from edge_slm_ace.eval.metrics import SemanticEvaluator
 
-            se = SemanticEvaluator.get_instance()
-            # Access the class-level model
+            SemanticEvaluator.get_instance()  # loads the shared model, if it can
             if SemanticEvaluator._model is not None:
                 MCQEvaluator._semantic_model = SemanticEvaluator._model
                 return

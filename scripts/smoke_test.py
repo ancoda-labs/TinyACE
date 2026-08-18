@@ -24,7 +24,6 @@ Usage:
 import argparse
 import json
 import sys
-from pathlib import Path
 
 from edge_slm_ace.core.runner import run_dataset_baseline
 from edge_slm_ace.models.model_manager import load_model_and_tokenizer

@@ -30,12 +30,9 @@ Usage:
 """
 
 import argparse
-import csv
 import json
-import os
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -53,19 +50,18 @@ try:
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import seaborn as sns
 
     PLOTTING_AVAILABLE = True
 except ImportError:
     PLOTTING_AVAILABLE = False
     print("Warning: matplotlib/seaborn not available. Figures will not be generated.")
 
-from edge_slm_ace.utils.config import get_model_config, get_task_config, ModelConfig
+from edge_slm_ace.utils.config import get_task_config, ModelConfig
 from edge_slm_ace.models.model_manager import load_model_and_tokenizer, count_tokens
 from edge_slm_ace.memory.playbook import Playbook, ScoringParams
 from edge_slm_ace.core.runner import run_dataset_baseline, run_dataset_ace
-from edge_slm_ace.utils.device_utils import get_device, resolve_device_override
-from edge_slm_ace.eval.metrics import PeakMemoryTracker, SemanticEvaluator
+from edge_slm_ace.utils.device_utils import resolve_device_override
+from edge_slm_ace.eval.metrics import PeakMemoryTracker
 from edge_slm_ace.utils.repro import DEFAULT_SEED, capture_environment, set_seed
 from edge_slm_ace.eval.stats import wilson_interval
 
@@ -705,8 +701,8 @@ def generate_latex_summary_text(summaries: List[Dict], output_path: Path):
                 f"{abs(diff) * 100:.1f} percentage point {direction} "
                 f"(baseline: {baseline_oma * 100:.1f}\\%, "
                 f"TinyACE: {wm512_oma * 100:.1f}\\%{interval}, n={n}). "
-                f"Run scripts/compare_arms.py for the paired significance test "
-                f"before treating this as a result."
+                "Run scripts/compare_arms.py for the paired significance test "
+                "before treating this as a result."
             )
 
     text_content = "\n".join(text_lines)
@@ -971,9 +967,7 @@ def main():
 
     # 4. Generate LaTeX snippets
     latex_table = generate_latex_table(all_summaries, paper_snippets_dir / "qwen_rivals_table.tex")
-    latex_summary = generate_latex_summary_text(
-        all_summaries, paper_snippets_dir / "qwen_rivals_summary.tex"
-    )
+    generate_latex_summary_text(all_summaries, paper_snippets_dir / "qwen_rivals_summary.tex")
 
     # Print final summary
     print("\n" + "=" * 70)
@@ -981,7 +975,7 @@ def main():
     print("=" * 70)
     print(f"Total time: {total_time:.1f}s ({total_time/60:.1f} min)")
     print(f"Experiments run: {len(all_summaries)}")
-    print(f"\nOutputs:")
+    print("\nOutputs:")
     print(f"  - Results JSON: {results_json_path}")
     print(f"  - Stability CSV: {stability_csv_path}")
     print(f"  - Figures: {figures_dir}/")

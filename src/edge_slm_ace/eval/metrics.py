@@ -1,7 +1,6 @@
 """Evaluation metrics for model performance."""
 
 from typing import List, Optional, Tuple, Dict
-from contextlib import contextmanager
 import re
 import math
 import sys

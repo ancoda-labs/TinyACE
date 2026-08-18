@@ -11,16 +11,15 @@ Usage:
 
 import argparse
 import csv
-import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from edge_slm_ace.reporting import ARMS, arm_label, arm_order, model_label
+from edge_slm_ace.reporting import ARMS, arm_label
 
 # Display order for arms, derived from the shared registry rather than
 # maintained as a second list that can drift out of sync with it.
@@ -322,7 +321,7 @@ Examples:
     if not summary_csv.exists():
         print(f"Error: Summary CSV not found: {summary_csv}", file=sys.stderr)
         print(
-            f"Hint: Run `python -m scripts.aggregate_results` first to generate the summary CSV.",
+            "Hint: Run `python -m scripts.aggregate_results` first to generate the summary CSV.",
             file=sys.stderr,
         )
         return 1

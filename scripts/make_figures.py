@@ -12,7 +12,9 @@ Each CSV under results/ should have at least:
 - "model" or "model_id"     : model name (e.g., phi3mini, llama1b)
 - "mode"                    : one of ["zero_shot", "baseline", "ace_full", "ace_working_memory", "tinyace", "self_refine"]
 - "is_correct" or "correct" : 0/1 or boolean
-- "context_tokens"          : integer, total tokens fed into model (optional)
+- "prompt_tokens"           : integer, total tokens fed into model
+- "context_tokens"          : integer, task context only (optional)
+- "playbook_tokens"         : integer, retrieved lessons, ACE arms only (optional)
 - "latency_ms"              : float, end-to-end response time (optional)
 
 Usage:
@@ -35,7 +37,6 @@ LaTeX Figure Mapping:
 import argparse
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import matplotlib
 
@@ -44,7 +45,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from edge_slm_ace.reporting import arm_label, model_label
+from edge_slm_ace.reporting import model_label
 import seaborn as sns
 
 # Set style
@@ -214,7 +215,7 @@ def compute_summary(df: pd.DataFrame) -> pd.DataFrame:
         Summary DataFrame with columns:
         - task, model, mode
         - accuracy (mean of is_correct)
-        - avg_context_tokens (mean when available)
+        - avg_prompt_tokens, avg_context_tokens, avg_playbook_tokens (when available)
         - avg_latency_ms (mean when available)
         - num_samples
     """
@@ -234,10 +235,11 @@ def compute_summary(df: pd.DataFrame) -> pd.DataFrame:
             "num_samples": len(group_df),
         }
 
-        if "context_tokens" in group_df.columns:
-            row["avg_context_tokens"] = group_df["context_tokens"].mean()
-        else:
-            row["avg_context_tokens"] = np.nan
+        # prompt_tokens is the only token count defined identically in every
+        # arm; context_tokens and playbook_tokens are kept for the per-arm
+        # breakdown, not for cross-arm comparison.
+        for column in ("prompt_tokens", "context_tokens", "playbook_tokens"):
+            row[f"avg_{column}"] = group_df[column].mean() if column in group_df.columns else np.nan
 
         if "latency_ms" in group_df.columns:
             row["avg_latency_ms"] = group_df["latency_ms"].mean()
@@ -350,7 +352,13 @@ def plot_memory_cliff(df: pd.DataFrame, output_path: Path, task: str = None, mod
 
 def plot_token_efficiency(df: pd.DataFrame, output_path: Path):
     """
-    Plot token efficiency comparison (accuracy vs context tokens).
+    Plot token cost per arm against accuracy.
+
+    Measured on `prompt_tokens`, the total fed to the model, which is the one
+    token count defined identically in every arm. This plotted
+    `context_tokens` until that column meant the retrieved lessons in the ACE
+    arm and the SciQ support passage in the baseline arm -- two different
+    quantities in the same bar chart.
 
     Args:
         df: Combined results DataFrame.
@@ -363,8 +371,8 @@ def plot_token_efficiency(df: pd.DataFrame, output_path: Path):
     # Compute summary
     summary = compute_summary(df)
 
-    if summary.empty or "avg_context_tokens" not in summary.columns:
-        logger.warning("No context_tokens data available for token efficiency plot")
+    if summary.empty or "avg_prompt_tokens" not in summary.columns:
+        logger.warning("No prompt_tokens data available for token efficiency plot")
         return
 
     # Filter to relevant modes
@@ -376,7 +384,7 @@ def plot_token_efficiency(df: pd.DataFrame, output_path: Path):
         return
 
     # Remove rows with missing token data
-    plot_df = plot_df.dropna(subset=["avg_context_tokens"])
+    plot_df = plot_df.dropna(subset=["avg_prompt_tokens"])
 
     if plot_df.empty:
         logger.warning("No valid token data after filtering")
@@ -386,22 +394,20 @@ def plot_token_efficiency(df: pd.DataFrame, output_path: Path):
 
     # Group by mode and compute averages
     mode_stats = (
-        plot_df.groupby("mode")
-        .agg({"accuracy": "mean", "avg_context_tokens": "mean"})
-        .reset_index()
+        plot_df.groupby("mode").agg({"accuracy": "mean", "avg_prompt_tokens": "mean"}).reset_index()
     )
 
     # Create bar plot
     x_pos = np.arange(len(mode_stats))
-    bars = ax.bar(
-        x_pos, mode_stats["avg_context_tokens"], alpha=0.7, color=["#1f77b4", "#ff7f0e", "#2ca02c"]
+    ax.bar(
+        x_pos, mode_stats["avg_prompt_tokens"], alpha=0.7, color=["#1f77b4", "#ff7f0e", "#2ca02c"]
     )
 
     # Add accuracy as text on bars
     for i, (idx, row) in enumerate(mode_stats.iterrows()):
         ax.text(
             i,
-            row["avg_context_tokens"] + max(mode_stats["avg_context_tokens"]) * 0.02,
+            row["avg_prompt_tokens"] + max(mode_stats["avg_prompt_tokens"]) * 0.02,
             f"Acc: {row['accuracy']:.2f}",
             ha="center",
             va="bottom",
@@ -409,8 +415,8 @@ def plot_token_efficiency(df: pd.DataFrame, output_path: Path):
         )
 
     ax.set_xlabel("Mode", fontsize=12)
-    ax.set_ylabel("Average Context Tokens", fontsize=12)
-    ax.set_title("Token Efficiency Comparison", fontsize=14, fontweight="bold")
+    ax.set_ylabel("Mean prompt tokens", fontsize=12)
+    ax.set_title("Token cost per arm", fontsize=14, fontweight="bold")
     ax.set_xticks(x_pos)
     ax.set_xticklabels([m.replace("_", " ").title() for m in mode_stats["mode"]])
     ax.grid(True, alpha=0.3, axis="y")
@@ -489,7 +495,7 @@ def plot_ablation(df: pd.DataFrame, output_path: Path):
 
     x_pos = np.arange(len(ablation_summary))
     colors = ["red" if drop > 0 else "green" for drop in ablation_summary["accuracy_drop"]]
-    bars = ax.bar(x_pos, ablation_summary["accuracy_drop"], alpha=0.7, color=colors)
+    ax.bar(x_pos, ablation_summary["accuracy_drop"], alpha=0.7, color=colors)
 
     ax.axhline(y=0, color="black", linestyle="--", linewidth=1)
     ax.set_xlabel("Ablation Variant", fontsize=12)
@@ -593,7 +599,7 @@ def main(results_dir: str = "results", output_dir: str = "tinyace_plots"):
         logger.error("No results loaded. Check that CSV files exist in results directory.")
         return
 
-    logger.info(f"Computing summary statistics...")
+    logger.info("Computing summary statistics...")
     summary = compute_summary(df)
 
     # Save summary CSV

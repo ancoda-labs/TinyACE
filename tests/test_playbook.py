@@ -1,7 +1,5 @@
 """Tests for playbook functionality."""
 
-import json
-import math
 import tempfile
 from pathlib import Path
 
@@ -12,11 +10,6 @@ from edge_slm_ace.memory.playbook import (
     PlaybookEntry,
     ScoringParams,
     compute_vagueness_score,
-    DEFAULT_ALPHA,
-    DEFAULT_BETA,
-    DEFAULT_GAMMA,
-    DEFAULT_DELTA,
-    DEFAULT_LAMBDA,
 )
 
 

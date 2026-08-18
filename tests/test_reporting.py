@@ -1,7 +1,6 @@
 """Tests for the results-reporting layer: schema, loading and aggregation."""
 
 import json
-from pathlib import Path
 
 import pandas as pd
 import pytest

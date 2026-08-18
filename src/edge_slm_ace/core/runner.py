@@ -293,6 +293,7 @@ def run_dataset_baseline(
             "mode": mode,  # Already canonical
             "is_correct": 1 if correct else 0,  # Canonical correctness
             "context_tokens": context_tokens,  # For token efficiency plots
+            "playbook_tokens": 0,  # No playbook in this arm; column stays present
             "latency_ms": latency_ms,  # For latency plots
             "latency_sec": end_to_end_latency_sec,  # End-to-end latency in seconds
             # Legacy columns (for backward compatibility)
@@ -381,8 +382,6 @@ def run_dataset_baseline(
     avg_latency = compute_average_latency(latencies)
 
     # Compute latency statistics
-    import statistics
-
     avg_latency_sec = statistics.mean(end_to_end_latencies) if end_to_end_latencies else 0.0
     median_latency_sec = statistics.median(end_to_end_latencies) if end_to_end_latencies else 0.0
 
@@ -630,6 +629,7 @@ def run_dataset_self_refine(
             "mode": mode,
             "is_correct": 1 if correct else 0,
             "context_tokens": context_tokens,
+            "playbook_tokens": 0,  # No playbook in this arm; column stays present
             "latency_ms": total_latency_ms,
             # Legacy columns (for backward compatibility)
             "model_id": model_id,
@@ -907,17 +907,19 @@ def run_dataset_ace(
         # Set result_mode based on ace_mode
         result_mode = ace_mode  # Use ace_mode directly (ace_full or ace_working_memory)
 
-        # Count tokens
+        # Count tokens.
+        #
+        # `context_tokens` is the task context, defined identically in every
+        # arm. It used to hold the retrieved lessons here and the support
+        # passage in the baseline arm, so the "token efficiency" figure -- which
+        # plots that column across arms -- was comparing playbook tokens against
+        # SciQ support passages as though they were the same quantity. The
+        # playbook's contribution is now its own column.
         prompt_tokens = count_tokens(tokenizer, generator_prompt)
         output_tokens = count_tokens(tokenizer, answer)
-        # Count playbook context tokens (strategies section)
-        playbook_context_text = ""
-        if used_entries:
-            for entry in used_entries:
-                playbook_context_text += entry.text + "\n"
-        context_tokens = count_tokens(tokenizer, playbook_context_text)
-        # Also count original context if provided
-        original_context_tokens = count_tokens(tokenizer, context or "")
+        playbook_context_text = "".join(entry.text + "\n" for entry in used_entries)
+        playbook_tokens = count_tokens(tokenizer, playbook_context_text)
+        context_tokens = count_tokens(tokenizer, context or "")
 
         # Step 4: Reflector - generate lessons.
         # The control arm never reflects, so its playbook stays empty and the
@@ -1089,7 +1091,8 @@ def run_dataset_ace(
             "model": model_id,
             "mode": result_mode,
             "is_correct": 1 if correct else 0,
-            "context_tokens": context_tokens,  # Playbook context tokens
+            "context_tokens": context_tokens,  # Task context, as in every arm
+            "playbook_tokens": playbook_tokens,  # Retrieved lessons, ACE only
             "latency_ms": latency_ms,
             "latency_sec": end_to_end_latency_sec,  # End-to-end latency in seconds
             # Legacy columns (for backward compatibility)
@@ -1188,8 +1191,6 @@ def run_dataset_ace(
     avg_latency = compute_average_latency(latencies)
 
     # Compute latency statistics
-    import statistics
-
     avg_latency_sec = statistics.mean(end_to_end_latencies) if end_to_end_latencies else 0.0
     median_latency_sec = statistics.median(end_to_end_latencies) if end_to_end_latencies else 0.0
 

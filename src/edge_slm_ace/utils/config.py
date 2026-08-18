@@ -2,9 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
-
-import torch
+from typing import Dict
 
 # ACE mode constants
 ACE_MODE_FULL = "ace_full"

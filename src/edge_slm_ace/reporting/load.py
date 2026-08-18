@@ -193,7 +193,13 @@ def summarize_predictions(
                 "ci_halfwidth": stats["ci_halfwidth"],
             }
         )
-        for optional in ("latency_ms", "prompt_tokens", "output_tokens", "context_tokens"):
+        for optional in (
+            "latency_ms",
+            "prompt_tokens",
+            "output_tokens",
+            "context_tokens",
+            "playbook_tokens",
+        ):
             if optional in group.columns:
                 row[f"mean_{optional}"] = group[optional].mean()
         rows.append(row)

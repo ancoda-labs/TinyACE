@@ -9,9 +9,9 @@ This module implements the TinyACE working memory system with:
 import json
 import math
 import re
-from dataclasses import dataclass, asdict, field, fields
+from dataclasses import dataclass, asdict, fields
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional
 from datetime import datetime
 
 from edge_slm_ace.memory.relevance import LessonRelevance, blend

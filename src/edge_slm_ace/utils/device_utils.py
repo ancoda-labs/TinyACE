@@ -53,7 +53,7 @@ def resolve_device_override(
     if model_id and ("tiny-gpt2" in model_id.lower()):
         if device_override and device_override.lower() == "cuda":
             print(
-                f"[tiny-gpt2] CUDA requested → forcing CPU (this model cannot run on CUDA on Torch >= 2.6)"
+                "[tiny-gpt2] CUDA requested → forcing CPU (this model cannot run on CUDA on Torch >= 2.6)"
             )
         return torch.device("cpu"), "forced"
 
