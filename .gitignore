@@ -221,10 +221,16 @@ results_models/
 results_ablation/
 paper_snippets/
 *.csv
+# Generated run artifacts. Datasets are re-included below -- a blanket
+# *.jsonl silently swallowed any new dataset file added to data/tasks/.
 *.jsonl
 playbook.jsonl
 playbook_log.csv
 predictions.jsonl
+
+# Datasets are inputs, not artifacts: always tracked.
+!data/**/*.jsonl
+!data/**/*.json
 
 # Virtual environments
 .venv/

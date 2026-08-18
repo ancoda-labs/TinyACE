@@ -1,65 +1,66 @@
-# Contributing to TinyACE
+# Contributing
 
-Thank you for your interest in contributing to TinyACE! This document provides guidelines for contributing to the project.
+## Setup
 
-## Development Setup
+```bash
+git clone https://github.com/SirAlchemist1/edge-slm-ace.git
+cd edge-slm-ace
+python -m venv .venv && source .venv/bin/activate
+make install          # editable install with dev, metrics and plots extras
+make check            # tests + lint + format check, same as CI
+```
 
-1. **Fork and Clone**
-   ```bash
-   git clone https://github.com/your-username/edge-slm-ace.git
-   cd edge-slm-ace
-   ```
+## Before opening a PR
 
-2. **Create Virtual Environment**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+```bash
+make check
+```
 
-3. **Install Dependencies**
-   ```bash
-   pip install -r requirements.txt
-   pip install -e ".[dev]"  # Install with dev dependencies
-   ```
+CI runs exactly this and it can fail — it is a real gate, not decoration.
 
-4. **Run Tests**
-   ```bash
-   pytest tests/
-   ```
+## Changing anything that affects a number
 
-## Code Style
+This is a research repository, so the bar for the measurement path is higher
+than for the rest of the code. If your change touches prompting, parsing,
+metrics, retrieval or scoring:
 
-- Follow PEP 8 style guidelines
-- Use `black` for code formatting: `black src/ scripts/`
-- Maximum line length: 100 characters
-- Type hints are encouraged but not required
+1. **Add a test that fails without the change.** Every blocker in
+   [docs/code-review.md](docs/code-review.md) was invisible for months because
+   nothing asserted the intended behaviour — including one that *did* have a
+   failing test, which nobody saw because CI could not fail.
+2. **Say what it does to existing results** in the PR description. A change to
+   answer extraction or option handling invalidates prior runs; say so.
+3. **Do not report a delta without a significance test.** See below.
 
-## Pull Request Process
+## Reporting results
 
-1. Create a feature branch from `main`
-2. Make your changes
-3. Add tests if applicable
-4. Ensure all tests pass
-5. Update documentation if needed
-6. Submit a pull request with a clear description
+Read [docs/evaluation.md](docs/evaluation.md) first. The three rules that
+previously went wrong:
 
-## Project Structure
+- **Compare against the right arm.** `ace` belongs against `cot_control`, not
+  `baseline` — otherwise the delta also contains the chain-of-thought
+  instruction and the domain hints. Ablations belong against `tinyace_wm_256`.
+  `scripts/compare_arms.py` picks the correct reference automatically.
+- **Use enough data.** At n=50 the 95% interval spans about ±12 percentage
+  points, which is wider than any effect this project has reported. Use n ≥ 500
+  and at least three seeds.
+- **Run the test.** A difference is a result only if it survives
+  `python -m scripts.compare_arms`. If it does not, write "no detectable
+  difference" — that is a finding, not a failure.
 
-- `src/edge_slm_ace/` - Core package code
-- `scripts/` - CLI scripts and utilities
-- `tests/` - Test suite
-- `docs/` - Documentation
-- `configs/` - Configuration files
+Check the run-health fields (`truncation_rate`, `chat_template_rate`,
+`relevance_active`) before trusting any run. `make report` surfaces them.
 
-## Reporting Issues
+## Style
 
-When reporting issues, please include:
-- Python version
-- Operating system
-- Error messages and stack traces
-- Steps to reproduce
-- Expected vs. actual behavior
+- `black`, line length 100. `make format`.
+- Docstrings on public functions: what it does, `Args`, `Returns`.
+- Comments explain *why*, especially where the obvious implementation is wrong.
+  Several bugs here were introduced by code that looked correct.
+- Match the surrounding file.
 
-## Questions?
+## Commits
 
-Open an issue on GitHub for questions or discussions.
+`type(scope): subject` — `fix`, `feat`, `refactor`, `docs`, `test`, `chore`,
+`style`. Explain in the body what was wrong and why the fix is right; if it
+changes a measurement, say that prior results need regenerating.
