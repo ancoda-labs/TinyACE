@@ -379,18 +379,29 @@ def run_dataset_self_refine(
     model_id: str,
     task_name: str,
     mode: str = "self_refine",
+    oracle: bool = False,
 ) -> tuple[List[Dict], Dict]:
     """
     Run self-refinement evaluation on a dataset (SEAL/SPICE-lite baseline).
-    
+
     For each sample:
-    1. Generate initial answer (Generator-like prompt)
-    2. If ground-truth is available:
-       - Ask model to critique its own answer
-       - Ask model to rewrite answer after seeing critique and correct answer
-    3. Use the final rewritten answer as prediction
-    
+    1. Generate an initial answer.
+    2. Ask the model to critique its own answer.
+    3. Ask the model to rewrite the answer given that critique.
+    4. Use the rewritten answer as the prediction.
+
     No persistent playbook; this is all per-sample.
+
+    Oracle mode
+    -----------
+    With `oracle=True` the correct answer is revealed to the model during
+    critique and rewrite. This measures whether the model can restate a label
+    it was just handed, so it is an upper bound, NOT a baseline comparable to
+    `baseline` or `ace`. It is reported under the mode name
+    "self_refine_oracle" so it cannot be mistaken for one.
+
+    Self-Refine (Madaan et al.) and SEAL do not reveal the label at
+    refinement time; that is the point of the method.
     
     Args:
         model: Loaded language model.
@@ -401,7 +412,9 @@ def run_dataset_self_refine(
         model_id: HuggingFace model ID (for result tracking).
         task_name: Task name for result tracking.
         mode: Evaluation mode (default: "self_refine").
-        
+        oracle: If True, reveal the correct answer during critique/rewrite.
+            Produces an upper bound rather than a baseline.
+
     Returns:
         Tuple of (results, summary) with same schema as baseline.
     """
@@ -435,15 +448,19 @@ def run_dataset_self_refine(
         )
         initial_latency_ms = (time.time() - start_time) * 1000
         
-        # Step 2: Self-refinement (critique + rewrite)
-        if ground_truth:
+        # Step 2: Self-refinement (critique + rewrite).
+        # `oracle_answer` is None in the honest setting, so neither prompt can
+        # contain the label that the rewritten answer will be scored against.
+        oracle_answer = ground_truth if oracle else None
+
+        if initial_answer:
             # Generate critique
             critique_prompt = build_self_refine_critique_prompt(
                 domain=domain,
                 question=question,
                 context=context,
                 initial_answer=initial_answer,
-                ground_truth=ground_truth,
+                ground_truth=oracle_answer,
             )
             
             critique_start = time.time()
@@ -464,7 +481,7 @@ def run_dataset_self_refine(
                 context=context,
                 initial_answer=initial_answer,
                 critique=critique,
-                ground_truth=ground_truth,
+                ground_truth=oracle_answer,
             )
             
             rewrite_start = time.time()
@@ -480,13 +497,13 @@ def run_dataset_self_refine(
             
             total_latency_ms = initial_latency_ms + critique_latency_ms + rewrite_latency_ms
         else:
-            # No ground truth available, use initial answer
+            # Nothing to refine
             final_answer = initial_answer
             critique = ""
             total_latency_ms = initial_latency_ms
         
         # Count tokens
-        if ground_truth:
+        if initial_answer:
             # Count tokens for all prompts
             initial_prompt_tokens = count_tokens(tokenizer, initial_prompt)
             critique_prompt_tokens = count_tokens(tokenizer, critique_prompt)

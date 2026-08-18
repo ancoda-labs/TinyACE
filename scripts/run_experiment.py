@@ -153,9 +153,14 @@ Examples:
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["baseline", "ace", "self_refine"],
+        choices=["baseline", "ace", "self_refine", "self_refine_oracle"],
         required=True,
-        help="Run mode: 'baseline', 'ace', or 'self_refine'",
+        help=(
+            "Run mode. 'self_refine' critiques and rewrites using only the "
+            "model's own output. 'self_refine_oracle' additionally reveals the "
+            "correct answer during refinement, which makes it an upper bound "
+            "rather than a comparable baseline."
+        ),
     )
     parser.add_argument(
         "--output-path",
@@ -443,9 +448,15 @@ Examples:
                     )
                     playbook_stats = None
                     
-                elif args.mode == "self_refine":
+                elif args.mode in ("self_refine", "self_refine_oracle"):
+                    oracle = args.mode == "self_refine_oracle"
                     if not args.quiet:
-                        print("Running self-refinement evaluation...")
+                        print(f"Running self-refinement evaluation (oracle={oracle})...")
+                        if oracle:
+                            print(
+                                "  NOTE: oracle mode reveals the correct answer during "
+                                "refinement. Report this as an upper bound, not a baseline."
+                            )
                     results, summary = run_dataset_self_refine(
                         model=model,
                         tokenizer=tokenizer,
@@ -455,6 +466,7 @@ Examples:
                         model_id=config.model_id,
                         task_name=task_name,
                         mode=args.mode,
+                        oracle=oracle,
                     )
                     playbook_stats = None
                     

@@ -3,6 +3,11 @@
 import pytest
 
 from edge_slm_ace.core.ace_roles import (
+    build_self_refine_critique_prompt,
+    build_self_refine_rewrite_prompt,
+)
+
+from edge_slm_ace.core.ace_roles import (
     parse_generator_output,
     parse_reflector_output_to_lessons,
     choose_lessons_for_playbook,
@@ -210,3 +215,39 @@ class TestChooseLessonsForPlaybook:
 # Run basic tests when executing this file directly
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestSelfRefinePrompts:
+    """The scored prediction must never be generated from the label."""
+
+    def test_critique_prompt_excludes_ground_truth_by_default(self):
+        prompt = build_self_refine_critique_prompt(
+            domain="science",
+            question="What gas do plants absorb?",
+            context=None,
+            initial_answer="oxygen",
+        )
+        assert "carbon dioxide" not in prompt
+        assert "Correct Answer" not in prompt
+
+    def test_rewrite_prompt_excludes_ground_truth_by_default(self):
+        prompt = build_self_refine_rewrite_prompt(
+            domain="science",
+            question="What gas do plants absorb?",
+            context=None,
+            initial_answer="oxygen",
+            critique="I confused absorption with release.",
+        )
+        assert "carbon dioxide" not in prompt
+        assert "Correct Answer" not in prompt
+
+    def test_oracle_mode_is_opt_in_and_explicit(self):
+        prompt = build_self_refine_rewrite_prompt(
+            domain="science",
+            question="What gas do plants absorb?",
+            context=None,
+            initial_answer="oxygen",
+            critique="I confused absorption with release.",
+            ground_truth="carbon dioxide",
+        )
+        assert "Correct Answer: carbon dioxide" in prompt
