@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+title: "TinyACE: Agentic Context Engineering for Small Language Models"
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - family-names: Shahi
+    given-names: Suryodaya
+  - name: Sathwik
+  - name: Archit
+repository-code: "https://github.com/SirAlchemist1/edge-slm-ace"
+license: Apache-2.0
+version: 0.1.0
+abstract: >-
+  A framework for evaluating whether small language models can self-improve
+  without fine-tuning, by maintaining a token-budgeted playbook of
+  domain-specific strategies that is retrieved, scored and evicted across a
+  Generate-Reflect-Curate-Memorize loop.
+keywords:
+  - small language models
+  - edge inference
+  - context engineering
+  - agentic memory

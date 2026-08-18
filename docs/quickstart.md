@@ -72,5 +72,5 @@ Results are saved to:
 
 - Read [ARCHITECTURE.md](ARCHITECTURE.md) to understand the system
 - Check [RESULTS.md](RESULTS.md) for experimental findings
-- See [PLOTTING_GUIDE.md](../PLOTTING_GUIDE.md) for visualization
+- See [docs/figures.md](../docs/figures.md) for visualization
 - Review [configs/experiment_grid.yaml](../configs/experiment_grid.yaml) for configuration options

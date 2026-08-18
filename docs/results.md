@@ -4,7 +4,7 @@
 >
 > Every number below was produced by a pipeline with defects that change the
 > measurements themselves. They are retained for provenance only and must not
-> be cited, quoted or carried into the paper. See `CODE_REVIEW.md` for the
+> be cited, quoted or carried into the paper. See `docs/code-review.md` for the
 > full analysis; the short version:
 >
 > 1. **The gold answer sat at option (A) in 100% of examples.** Verified:

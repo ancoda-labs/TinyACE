@@ -51,8 +51,8 @@ Instead of updating model weights, TinyACE evolves the prompt context through a 
 > | 7 | n=50, no confidence intervals, no significance test | Every reported delta was 1-3 questions, inside a +/-12pp noise floor |
 > | 8 | Ablations compared against **baseline** instead of full TinyACE | Under the correct reference, two of the four ablations changed *nothing* |
 >
-> See [CODE_REVIEW.md](CODE_REVIEW.md) for the full analysis and
-> [docs/RESULTS.md](docs/RESULTS.md) for the withdrawn tables.
+> See [docs/code-review.md](docs/code-review.md) for the full analysis and
+> [docs/results.md](docs/results.md) for the withdrawn tables.
 
 ### Re-running the evaluation
 
@@ -121,29 +121,39 @@ Where:
 ## 📂 Repository Structure
 
 ```
-TINY ACE/
-├── src/edge_slm_ace/          # Core package
-│   ├── core/                  # ACE loop implementation
-│   │   ├── ace_roles.py      # Generator, Reflector, Curator
-│   │   └── runner.py          # Main evaluation loop
-│   ├── memory/                # Playbook system
-│   │   ├── playbook.py       # Retention scoring & eviction
-│   │   └── relevance.py      # Query-conditioned retrieval
-│   ├── models/                # Model management
-│   └── utils/                  # Metrics, stats, config, seeding
-├── scripts/                    # CLI tools
-│   ├── run_experiment.py     # Single experiment runner
-│   ├── run_eval_grid.py      # Grid experiment runner
-│   ├── compare_arms.py       # CIs + paired significance testing
-│   └── make_figures.py      # Visualization pipeline
-├── configs/                    # Configuration files
-│   └── experiment_grid.yaml   # Experiment configuration
-├── docs/                       # Documentation
-│   ├── ARCHITECTURE.md        # System design details
-│   ├── RESULTS.md             # Withdrawn results, kept for provenance
-│   └── guides/                # User guides
-├── data/                       # Datasets
-└── tests/                      # Test suite
+edge-slm-ace/
+├── src/edge_slm_ace/
+│   ├── core/              ACE loop
+│   │   ├── ace_roles.py     Generator, Reflector, Curator prompts + parsers
+│   │   └── runner.py        Baseline / control / ACE / self-refine loops
+│   ├── memory/            Playbook
+│   │   ├── playbook.py      Retention scoring, eviction, token budgets
+│   │   └── relevance.py     Query-conditioned retrieval
+│   ├── eval/              Measurement layer
+│   │   ├── metrics.py       Answer scoring
+│   │   ├── mcq.py           Option handling, OMA / GOM / ACR
+│   │   └── stats.py         Wilson intervals, exact McNemar
+│   ├── reporting/         Results vocabulary
+│   │   ├── schema.py        Arm registry + which arm to compare against
+│   │   └── load.py          One reader for metrics / predictions
+│   ├── models/            Model loading and generation
+│   └── utils/             Config, device selection, seeding
+├── scripts/               CLIs (thin wrappers over the package)
+│   ├── run_experiment.py    One run
+│   ├── run_eval_grid.py     model × task × arm × device
+│   ├── run_qwen_rivals.py   Parameter-matched Qwen2.5 comparison
+│   ├── run_ace_epoch.py     Multi-epoch playbook evolution
+│   ├── compare_arms.py      CIs + paired significance
+│   ├── aggregate_results.py Summary tables + run-health warnings
+│   ├── make_figures.py      Paper figures
+│   ├── make_diagnostics.py  Diagnostic plots
+│   └── smoke_test.py        End-to-end pipeline check
+├── configs/               Experiment grids and contracts
+├── data/tasks/            Datasets
+├── docs/                  See docs/README.md
+├── paper/                 tinyace.pdf
+├── tests/                 175 tests
+└── Makefile               make check | smoke | grid | report | figures
 ```
 
 ---
@@ -276,7 +286,7 @@ the defective measurements listed under [Status of Results](#-status-of-results)
 above. Reproducing them here, even hedged, would keep numbers in circulation
 that should not be cited.
 
-The withdrawn tables remain in [docs/RESULTS.md](docs/RESULTS.md), annotated
+The withdrawn tables remain in [docs/results.md](docs/results.md), annotated
 in place with what was wrong with each.
 
 To generate replacements, see [Re-running the evaluation](#re-running-the-evaluation).
@@ -285,9 +295,9 @@ To generate replacements, see [Re-running the evaluation](#re-running-the-evalua
 
 ## 📚 Documentation
 
-- **[Architecture Guide](docs/ARCHITECTURE.md)** - Complete system design and implementation
-- **[Results Analysis](docs/RESULTS.md)** - Detailed experimental findings
-- **[Plotting Guide](PLOTTING_GUIDE.md)** - Visualization instructions
+- **[Architecture Guide](docs/architecture.md)** - Complete system design and implementation
+- **[Results Analysis](docs/results.md)** - Detailed experimental findings
+- **[Figures Guide](docs/figures.md)** - Visualization instructions
 - **[Documentation Index](docs/README.md)** - Full documentation index
 
 ---
@@ -318,7 +328,7 @@ If you use this codebase in your research, please cite:
 }
 ```
 
-**Paper**: See `TinyAce Paper.pdf` for the full technical report.
+**Paper**: See `paper/tinyace.pdf` for the full technical report.
 
 ---
 
@@ -343,7 +353,7 @@ For questions or issues, please open an issue on GitHub or contact the maintaine
 
 ## 📖 Paper
 
-The full technical report is available as `TinyAce Paper.pdf` in the repository root.
+The full technical report is available as `paper/tinyace.pdf` in the repository root.
 
 **Paper Title**: "Domain-Specific Benchmarking of Small Language Models for Edge Devices with Agentic Context Engineering (ACE)"
 

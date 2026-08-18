@@ -311,6 +311,6 @@ src/edge_slm_ace/
 
 ## References
 
-- See `docs/RESULTS.md` for detailed experimental results
+- See `docs/results.md` for detailed experimental results
 - See `README.md` for quick start guide
 - See `configs/experiment_grid.yaml` for configuration options

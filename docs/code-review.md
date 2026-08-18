@@ -1,12 +1,27 @@
 # TinyACE — Codebase Review: Flaws and Improvements
 
+> **Historical document.** This audit was performed against commit `306655b`
+> and describes the codebase *before* the fixes. Every blocker it identifies
+> has since been addressed — see `git log --oneline` for the commit series, and
+> [evaluation.md](evaluation.md) for the protocol that replaced the practices
+> criticised here.
+>
+> File and line references below point at the audited commit. They are not
+> linked, because the line numbers no longer correspond to current code. Use
+> `git show 306655b:<path>` to see what is being described.
+>
+> It is kept because the current design is only legible as a response to these
+> defects: it explains why option order is permuted, why `cot_control` exists,
+> why ablations resolve to `tinyace_wm_256`, and why the published results were
+> withdrawn.
+
 **Reviewed commit:** `306655b` (branch `main`)
 **Date:** 2026-08-18
 **Scope:** `src/edge_slm_ace/`, `scripts/`, `configs/`, `data/tasks/`, `tests/`, `.github/`, top-level docs (~10.8k LOC of Python)
 
 This document is a technical review of the repository as it currently stands. It is organised by
 severity, because the most important problems here are **not** style issues — several of them
-invalidate the headline numbers reported in `README.md` and `docs/RESULTS.md`.
+invalidate the headline numbers reported in `README.md` and `docs/results.md`.
 
 Every claim below was verified against the code or by running it. Where a fix is cheap, a concrete
 patch is given.
@@ -54,8 +69,8 @@ credible paper.
 `extract_mcq_options()` and the legacy branch of `extract_mcq_options_with_indices()` place the
 gold answer at a fixed position:
 
-- [mcq_eval.py:106](src/edge_slm_ace/utils/mcq_eval.py#L106) — `"A": correct,`
-- [mcq_eval.py:149-150](src/edge_slm_ace/utils/mcq_eval.py#L149-L150) — `options = [correct, d1, d2, d3]; return options, 0`
+- `mcq_eval.py:106` — `"A": correct,`
+- `mcq_eval.py:149-150` — `options = [correct, d1, d2, d3]; return options, 0`
 
 Verified against the data:
 
@@ -90,7 +105,7 @@ def extract_mcq_options_with_indices(example, seed: int = 0):
 
 ### S2. OMA is measured by embedding similarity over free text, and ignores the letter it already parsed 🔴
 
-[mcq_eval.py:444](src/edge_slm_ace/utils/mcq_eval.py#L444):
+`mcq_eval.py:444`:
 
 ```python
 similarities = evaluator.compute_similarities(prediction, options)
@@ -141,10 +156,10 @@ The two arms differ in at least four ways that have nothing to do with the playb
 
 | | Baseline | ACE |
 |---|---|---|
-| Prompt | `Context: … Question: … Answer:` ([runner.py:161](src/edge_slm_ace/core/runner.py#L161)) | Role preamble + strategies + **"You MUST show your step-by-step reasoning"** + `Reasoning:/Answer:` schema ([ace_roles.py:110-125](src/edge_slm_ace/core/ace_roles.py#L110-L125)) |
-| Choices block | `build_prompt_with_choices()` | different hand-rolled block ([runner.py:677-685](src/edge_slm_ace/core/runner.py#L677-L685)) |
-| Domain instructions | none | injected ([ace_roles.py:10-36](src/edge_slm_ace/core/ace_roles.py#L10-L36)) |
-| Answer extraction | raw generation used as-is ([runner.py:184](src/edge_slm_ace/core/runner.py#L184)) | `parse_generator_output()` ([runner.py:715](src/edge_slm_ace/core/runner.py#L715)) |
+| Prompt | `Context: … Question: … Answer:` (`runner.py:161`) | Role preamble + strategies + **"You MUST show your step-by-step reasoning"** + `Reasoning:/Answer:` schema (`ace_roles.py:110-125`) |
+| Choices block | `build_prompt_with_choices()` | different hand-rolled block (`runner.py:677-685`) |
+| Domain instructions | none | injected (`ace_roles.py:10-36`) |
+| Answer extraction | raw generation used as-is (`runner.py:184`) | `parse_generator_output()` (`runner.py:715`) |
 
 So "ACE vs baseline" actually measures *playbook + CoT instruction + domain hints + a different
 choices block + a different parser*. There is no way to attribute the observed delta to the
@@ -172,9 +187,9 @@ publishable negative result, and a much stronger paper than the current one.
 
 ### S4. The ACE arm consumes test-set gold answers; the baseline does not 🔴
 
-[ace_roles.py:175](src/edge_slm_ace/core/ace_roles.py#L175) — the reflector prompt contains
+`ace_roles.py:175` — the reflector prompt contains
 `Correct Answer: {ground_truth}`. Its free-text output becomes playbook entries
-([runner.py:786-793](src/edge_slm_ace/core/runner.py#L786-L793)) that are prepended to the prompt
+(`runner.py:786-793`) that are prepended to the prompt
 for every subsequent question in the same run.
 
 This is defensible as *online continual learning* — item *i* only sees gold from items *< i* — but
@@ -202,7 +217,7 @@ it must be argued explicitly, and two things here make it worse:
 
 ### S5. Every reported difference is inside the noise floor 🔴
 
-`docs/RESULTS.md` states n=50 per configuration. At n=50 and p≈0.74, the 95% CI on a single
+`docs/results.md` states n=50 per configuration. At n=50 and p≈0.74, the 95% CI on a single
 accuracy is roughly **±12pp**. The paper's headline deltas:
 
 - Phi-3 "+4% with FIFO" = **2 questions**
@@ -210,7 +225,7 @@ accuracy is roughly **±12pp**. The paper's headline deltas:
 - "No Recency / No Vagueness, −2%" = **1 question**
 
 There is no seed, no repeated run, no confidence interval, and no significance test anywhere in the
-repo. The Component Importance Ranking in `docs/RESULTS.md` orders five configurations that span a
+repo. The Component Importance Ranking in `docs/results.md` orders five configurations that span a
 total of 8pp — i.e. 4 questions — and then draws five causal conclusions from that ordering.
 
 **Fix:**
@@ -238,7 +253,7 @@ p = mcnemar([[0, b], [c, 0]], exact=True).pvalue
 
 ### S6. Ablations are compared against the wrong reference arm 🔴
 
-`docs/RESULTS.md` §Ablation Study reports each `tinyace_ablate_no_X` against **baseline** (74%):
+`docs/results.md` §Ablation Study reports each `tinyace_ablate_no_X` against **baseline** (74%):
 
 > `tinyace_ablate_no_failure` — OMA: 70% (−4% vs baseline) — **Conclusion: Failure tracking is critical**
 
@@ -266,7 +281,7 @@ interesting result.
 
 ### B1. `fifo_memory` implements LIFO — the repo's own test fails 🔴
 
-[playbook.py:202-203](src/edge_slm_ace/memory/playbook.py#L202-L203):
+`playbook.py:202-203`:
 
 ```python
 if params.fifo_memory:
@@ -314,8 +329,8 @@ def retrieval_key(self, current_step, params):
 
 ### B2. `self_refine` writes the gold answer into the generation prompt 🔴
 
-[ace_roles.py:617](src/edge_slm_ace/core/ace_roles.py#L617), used at
-[runner.py:419-435](src/edge_slm_ace/core/runner.py#L419-L435):
+`ace_roles.py:617`, used at
+`runner.py:419-435`:
 
 ```
 Your Initial Answer: {initial_answer}
@@ -326,7 +341,7 @@ Your task: Provide a corrected answer …
 ```
 
 The `final_answer` generated from this prompt is what gets scored
-([runner.py:460](src/edge_slm_ace/core/runner.py#L460)). The model is being asked to restate an
+(`runner.py:460`). The model is being asked to restate an
 answer it was just handed. This arm's accuracy measures **instruction-following, not reasoning**,
 and its ceiling is 100% for any model that can copy.
 
@@ -348,7 +363,7 @@ ceiling**, never as a comparable baseline.
 Every model in `MODEL_CONFIGS` is an instruction-tuned checkpoint —
 `Phi-3-mini-4k-instruct`, `Mistral-7B-Instruct-v0.3`, `Qwen2.5-*-Instruct`,
 `TinyLlama-1.1B-Chat-v1.0` — and every one is prompted as a raw completion at
-[model_manager.py:288](src/edge_slm_ace/models/model_manager.py#L288).
+`model_manager.py:288`.
 
 These models are trained to respond only inside their own turn markers (`<|user|>…<|assistant|>`,
 `[INST]…[/INST]`, ChatML). Prompting them raw produces continuation-style behaviour: rambling,
@@ -380,7 +395,7 @@ Record `used_chat_template` in run metadata so the ablation is auditable.
 
 ### B4. `truncation=True` with no `max_length` silently truncates prompts 🟠
 
-[model_manager.py:288](src/edge_slm_ace/models/model_manager.py#L288):
+`model_manager.py:288`:
 
 ```python
 inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
@@ -409,7 +424,7 @@ Emit a `prompt_truncated` flag per example and **fail the run** if it exceeds a 
 
 ### B5. The α (success) and β (failure) terms carry no discriminative signal 🟠
 
-At [runner.py:800-803](src/edge_slm_ace/core/runner.py#L800-L803):
+At `runner.py:800-803`:
 
 ```python
 for entry_id in used_entry_ids:
@@ -447,9 +462,9 @@ score across entries. If it is ~0, the scoring is decorative and the paper shoul
 ### B6. In working-memory mode, retrieval selection is a no-op 🟠
 
 - Eviction keeps *per-domain* tokens ≤ `token_budget`
-  ([playbook.py:411-424](src/edge_slm_ace/memory/playbook.py#L411-L424))
+  (`playbook.py:411-424`)
 - Retrieval greedily fills up to the *same* `token_budget`
-  ([playbook.py:330-355](src/edge_slm_ace/memory/playbook.py#L330-L355))
+  (`playbook.py:330-355`)
 
 Since total ≤ budget by construction, **every surviving entry is always retrieved**. Ranking is
 irrelevant; only eviction order matters. So `tinyace_wm_256` vs `tinyace_wm_512` is not comparing
@@ -486,14 +501,14 @@ TinyLlama result.
 
 ### B8. The paper-ready LaTeX table emits a column of zeros 🟠
 
-[run_qwen_rivals.py:513](scripts/run_qwen_rivals.py#L513):
+`run_qwen_rivals.py:513`:
 
 ```python
 semsim = row.get("avg_semantic_similarity", 0) or 0
 ```
 
 `avg_semantic_similarity` is computed **only** in `scripts/run_experiment.py`
-([run_experiment.py:530-545](scripts/run_experiment.py#L530-L545)). `run_qwen_rivals.py` calls
+(`run_experiment.py:530-545`). `run_qwen_rivals.py` calls
 `run_dataset_baseline`/`run_dataset_ace` directly and never computes it, so the key is never in
 `summary`. Every `SemSim` cell in `paper_snippets/qwen_rivals_table.tex` is `0.000` — silently,
 because of the `or 0` fallback.
@@ -513,8 +528,8 @@ in the LaTeX/plot generators for the same pattern.
 
 ### B9. Deduplication systematically discards specific lessons 🟡
 
-[playbook.py:361-373](src/edge_slm_ace/memory/playbook.py#L361-L373) and the near-duplicate logic in
-[ace_roles.py:452-460](src/edge_slm_ace/core/ace_roles.py#L452-L460) both test **substring
+`playbook.py:361-373` and the near-duplicate logic in
+`ace_roles.py:452-460` both test **substring
 containment in either direction**:
 
 ```python
@@ -536,26 +551,26 @@ collision **keep the entry with the lower vagueness score** rather than always k
 
 | Location | Issue |
 |---|---|
-| [playbook.py:294-305](src/edge_slm_ace/memory/playbook.py#L294-L305) | `_next_id` reconstruction ignores non-numeric ids → reloading a playbook with any non-int id resets `_next_id` to 1 → **duplicate ids** → `record_feedback` silently updates the wrong entry (it `return`s on first match). |
-| [playbook.py:246-263](src/edge_slm_ace/memory/playbook.py#L246-L263) | `from_dict` **mutates the caller's dict** in place while filling defaults. |
-| [playbook.py:157-166](src/edge_slm_ace/memory/playbook.py#L157-L166) | `__post_init__` treats `vagueness_score == 0.0` and `token_count == 0` as "unset" → a legitimately non-vague entry is silently rescored on every load. Use `None` sentinels. |
-| [playbook.py:449-456](src/edge_slm_ace/memory/playbook.py#L449-L456) | When eviction cannot free enough tokens, the entry is added anyway with a `pass` where the warning should be — **the budget is silently violated**, which is the exact invariant the paper claims to enforce. |
-| [playbook.py:428](src/edge_slm_ace/memory/playbook.py#L428) | `e.id not in entries_to_remove` over a list → O(n²). Use a set. |
-| [playbook.py:126-129](src/edge_slm_ace/memory/playbook.py#L126-L129) | `_estimate_tokens` uses `words × 1.3` while everything else uses the real tokenizer (`count_tokens`). The "256-token budget" is therefore not 256 tokens. Pass the tokenizer in. |
-| [ace_roles.py:249-320](src/edge_slm_ace/core/ace_roles.py#L249-L320) | `parse_generator_output` comments jump from "Strategy 1" to "Strategy 3" — Strategy 2 was deleted. The Strategy-3 block has dead control flow (`for prefix … break` then `if not answer` then unconditional `break`). This function needs a rewrite and a table-driven test suite. |
-| [ace_roles.py:88](src/edge_slm_ace/core/ace_roles.py#L88) | `from …config import ACE_MODE_WORKING` imported inside the function and never used. |
-| [ace_roles.py:161](src/edge_slm_ace/core/ace_roles.py#L161) | The reflector computes `correct` by exact string match — inconsistent with OMA, so on MCQ tasks it reports `Status: incorrect` for answers OMA counts as correct, and reflects on the wrong examples. |
-| [runner.py:184](src/edge_slm_ace/core/runner.py#L184), [:460](src/edge_slm_ace/core/runner.py#L460), [:722](src/edge_slm_ace/core/runner.py#L722) | `correct = answer.strip().lower() == ground_truth.strip().lower()` — exact match on a generative model's output is ≈0 for every verbose model, yet `is_correct` is what `plot_results.py` and `aggregate_results.py` chart by default for non-SciQ tasks. **`medqa_tiny` and `iot_tiny` have no working metric at all.** |
-| [runner.py:816-820](src/edge_slm_ace/core/runner.py#L816-L820) | `evictions_during_add` is inferred by differencing entry counts — comment admits "This is approximate". Have `add_entry` return the eviction count. |
-| [metrics.py:196-216](src/edge_slm_ace/utils/metrics.py#L196-L216) | `semantic_answer_score` averages token-F1 with `SequenceMatcher.ratio()`, both **length-penalised**. A correct verbose answer scores lower than a wrong terse one. This is the metric behind the README's "semantic similarity" column, so that column largely measures brevity. Phi-3 baseline 0.385 vs Mistral 0.823 is consistent with a verbosity difference, not a quality difference. |
-| [metrics.py:236](src/edge_slm_ace/utils/metrics.py#L236) | `sentence_bleu` on 1–3 word gold answers — BLEU-4 is 0 or undefined for references shorter than 4 tokens. `bleu_score` is noise for this task; drop it or use chrF. |
-| [metrics.py:602](src/edge_slm_ace/utils/metrics.py#L602), [mcq_eval.py:272](src/edge_slm_ace/utils/mcq_eval.py#L272) | `np.clip(sim, 0, 1)` destroys the sign of genuinely dissimilar pairs and compresses GOM. |
-| [metrics.py:461-500](src/edge_slm_ace/utils/metrics.py#L461-L500) | `PeakMemoryTracker` samples RSS at **enter, exit, and manual `update()` only** — it cannot observe a peak that occurs between samples. `peak_memory_mb` for CPU is not a peak. Use `resource.getrusage(RUSAGE_SELF).ru_maxrss` or a sampling thread. |
-| [run_experiment.py:373-378](scripts/run_experiment.py#L373-L378) | The entire eval is wrapped in a `try` whose handler prints `"Failed to load model"` — a mid-run OOM, a dataset error, or a metric crash is all reported as a model-loading failure. |
-| [run_experiment.py:520-522](scripts/run_experiment.py#L520-L522) | `avg_latency_sec or summary.get("avg_latency_sec")` — `0.0` is falsy, so a genuine zero silently falls through. |
-| [model_manager.py:304](src/edge_slm_ace/models/model_manager.py#L304) | `temperature` is still passed when `do_sample=False`; HF warns, and it obscures which decoding actually ran. Branch explicitly. |
-| [model_manager.py:5-10](src/edge_slm_ace/models/model_manager.py#L5-L10) | Module-import-time monkey-patch of `DynamicCache.seen_tokens`. Pin `transformers` instead. |
-| [model_manager.py:60-77](src/edge_slm_ace/models/model_manager.py#L60-L77) | On any tokenizer/model load failure the code **automatically retries with `trust_remote_code=True`** — silently executing arbitrary code from the Hub. Make this an explicit opt-in flag. |
+| `playbook.py:294-305` | `_next_id` reconstruction ignores non-numeric ids → reloading a playbook with any non-int id resets `_next_id` to 1 → **duplicate ids** → `record_feedback` silently updates the wrong entry (it `return`s on first match). |
+| `playbook.py:246-263` | `from_dict` **mutates the caller's dict** in place while filling defaults. |
+| `playbook.py:157-166` | `__post_init__` treats `vagueness_score == 0.0` and `token_count == 0` as "unset" → a legitimately non-vague entry is silently rescored on every load. Use `None` sentinels. |
+| `playbook.py:449-456` | When eviction cannot free enough tokens, the entry is added anyway with a `pass` where the warning should be — **the budget is silently violated**, which is the exact invariant the paper claims to enforce. |
+| `playbook.py:428` | `e.id not in entries_to_remove` over a list → O(n²). Use a set. |
+| `playbook.py:126-129` | `_estimate_tokens` uses `words × 1.3` while everything else uses the real tokenizer (`count_tokens`). The "256-token budget" is therefore not 256 tokens. Pass the tokenizer in. |
+| `ace_roles.py:249-320` | `parse_generator_output` comments jump from "Strategy 1" to "Strategy 3" — Strategy 2 was deleted. The Strategy-3 block has dead control flow (`for prefix … break` then `if not answer` then unconditional `break`). This function needs a rewrite and a table-driven test suite. |
+| `ace_roles.py:88` | `from …config import ACE_MODE_WORKING` imported inside the function and never used. |
+| `ace_roles.py:161` | The reflector computes `correct` by exact string match — inconsistent with OMA, so on MCQ tasks it reports `Status: incorrect` for answers OMA counts as correct, and reflects on the wrong examples. |
+| `runner.py:184`, `:460`, `:722` | `correct = answer.strip().lower() == ground_truth.strip().lower()` — exact match on a generative model's output is ≈0 for every verbose model, yet `is_correct` is what `plot_results.py` and `aggregate_results.py` chart by default for non-SciQ tasks. **`medqa_tiny` and `iot_tiny` have no working metric at all.** |
+| `runner.py:816-820` | `evictions_during_add` is inferred by differencing entry counts — comment admits "This is approximate". Have `add_entry` return the eviction count. |
+| `metrics.py:196-216` | `semantic_answer_score` averages token-F1 with `SequenceMatcher.ratio()`, both **length-penalised**. A correct verbose answer scores lower than a wrong terse one. This is the metric behind the README's "semantic similarity" column, so that column largely measures brevity. Phi-3 baseline 0.385 vs Mistral 0.823 is consistent with a verbosity difference, not a quality difference. |
+| `metrics.py:236` | `sentence_bleu` on 1–3 word gold answers — BLEU-4 is 0 or undefined for references shorter than 4 tokens. `bleu_score` is noise for this task; drop it or use chrF. |
+| `metrics.py:602`, `mcq_eval.py:272` | `np.clip(sim, 0, 1)` destroys the sign of genuinely dissimilar pairs and compresses GOM. |
+| `metrics.py:461-500` | `PeakMemoryTracker` samples RSS at **enter, exit, and manual `update()` only** — it cannot observe a peak that occurs between samples. `peak_memory_mb` for CPU is not a peak. Use `resource.getrusage(RUSAGE_SELF).ru_maxrss` or a sampling thread. |
+| `run_experiment.py:373-378` | The entire eval is wrapped in a `try` whose handler prints `"Failed to load model"` — a mid-run OOM, a dataset error, or a metric crash is all reported as a model-loading failure. |
+| `run_experiment.py:520-522` | `avg_latency_sec or summary.get("avg_latency_sec")` — `0.0` is falsy, so a genuine zero silently falls through. |
+| `model_manager.py:304` | `temperature` is still passed when `do_sample=False`; HF warns, and it obscures which decoding actually ran. Branch explicitly. |
+| `model_manager.py:5-10` | Module-import-time monkey-patch of `DynamicCache.seen_tokens`. Pin `transformers` instead. |
+| `model_manager.py:60-77` | On any tokenizer/model load failure the code **automatically retries with `trust_remote_code=True`** — silently executing arbitrary code from the Hub. Make this an explicit opt-in flag. |
 
 ---
 
@@ -575,7 +590,7 @@ Those two lines write `42` into a metadata dict. **No `torch.manual_seed`, no `r
 across all models."
 
 `MODEL_CONFIGS` also uses **`temperature=0.7` for `mistral-7b` and `llama-3.2-1b`** but `0.0` for
-Phi-3, Qwen and TinyLlama ([config.py:29-100](src/edge_slm_ace/utils/config.py#L29-L100)) — so the
+Phi-3, Qwen and TinyLlama (`config.py:29-100`) — so the
 cross-model comparison in the README mixes sampled and greedy decoding, unseeded.
 
 **Fix:** a single `set_seed(seed)` called at the top of every entrypoint, `seed` as a required CLI
@@ -649,7 +664,7 @@ where = ["src"]
 ### R4. Dependencies are unpinned, one is missing, four are unused 🟡
 
 - **Missing:** `accelerate` — required by `device_map="auto"`
-  ([model_manager.py:89](src/edge_slm_ace/models/model_manager.py#L89)) but only present as a
+  (`model_manager.py:89`) but only present as a
   *commented-out* line in `requirements.txt`. Every CUDA run depends on it being installed by luck.
 - **Unused:** `datasets`, `jsonlines`, `rouge-score`, `tqdm` (verified — zero imports).
 - **Unpinned:** everything is `>=`. The `DynamicCache` monkey-patch is direct evidence of a
@@ -661,7 +676,7 @@ where = ["src"]
 
 ### R5. Configs reference datasets that do not exist 🟡
 
-`TASK_CONFIGS` ([config.py:132-180](src/edge_slm_ace/utils/config.py#L132-L180)) registers
+`TASK_CONFIGS` (`config.py:132-180`) registers
 `tatqa_tiny`, `medqa_train`, `math_train`, `sciq_train` — **none of these files are in
 `data/tasks/`**. `configs/experiment_grid.yaml` lists `medqa_train` and `math_train` as active
 tasks, so the documented `run_eval_grid` invocation fails on two of its three tasks. The README's
@@ -679,7 +694,7 @@ the repo root, but any other consumer of `get_task_config()` breaks outside the 
 
 `.gitignore` excludes `results/`, `results_models/`, `results_ablation/`, `playbook.jsonl`,
 `playbook_log.csv`. So none of the raw predictions, playbooks, metrics files, or figures behind
-`docs/RESULTS.md` are in the repository. There is also no `run_all.sh` reproducing the exact
+`docs/results.md` are in the repository. There is also no `run_all.sh` reproducing the exact
 commands that produced them.
 
 **Fix:** commit the final `metrics.json`, `predictions.jsonl`, `playbook.jsonl` and
@@ -738,7 +753,7 @@ new-format path never sets `acr_hit`, so ACR is silently unavailable for `sciq_t
 ### Q5. Curator role is built but never invoked
 
 `build_curator_prompt()` and `parse_curator_output()`
-([ace_roles.py:377-448](src/edge_slm_ace/core/ace_roles.py#L377-L448)) are fully implemented and
+(`ace_roles.py:377-448`) are fully implemented and
 **never called from `runner.py`**. The README and the architecture diagram both present
 Generate→Reflect→**Curate**→Memorize as the core loop; what actually runs is
 `choose_lessons_for_playbook()`, a hardcoded keyword filter. The paper describes a component that
@@ -762,7 +777,7 @@ the block. Add a test that a non-default α in YAML changes eviction behaviour.
 
 ### Q7. Ownership TODOs in the core loop
 
-[runner.py:546-558](src/edge_slm_ace/core/runner.py#L546-L558) contains `TODO(Sathwik)` and
+`runner.py:546-558` contains `TODO(Sathwik)` and
 `TODO(Archit)` blocks describing unimplemented work ("Improve ACE logic", "Track playbook evolution
 over time") in the docstring of the paper's central function. Move to issues before publication.
 
@@ -790,13 +805,13 @@ describing the directory layout**, which git already describes.
 
 | File | Issue |
 |---|---|
-| `README.md` | References `TinyAce-3.pdf` twice; the actual file is `TinyAce Paper.pdf` (with a space). |
+| `README.md` | References `TinyAce-3.pdf` twice; the actual file is `paper/tinyace.pdf` (with a space). |
 | `README.md` citation | `author={Shahi, Suryodaya and Collaborators}`, `year={2024}` — placeholder authorship on a paper submission. |
 | `pyproject.toml` / `setup.py` | `suryodaya@example.com`, `sathwik@example.com`, `archit@example.com`, `team@example.com`. |
-| `README.md` vs `docs/RESULTS.md` | Contradict each other: README says Phi-3's best ACE arm is **FIFO (78%)**, `RESULTS.md` model table says **`tinyace_wm_512` (78%)** while listing `ace_full` at 60%; README says ACE overhead is **~1.4s**, `RESULTS.md` says **~2.4–2.9s**. |
-| `docs/RESULTS.md` | Reports Phi-3 (3.8B) baseline latency **6.43s** but Mistral-7B (7B) baseline latency **0.408s** — a 7B model 15× faster than a 3.8B model on the same task. This is internally impossible and indicates the two rows were produced under different hardware/decoding/output-length conditions. **The cross-model comparison table should not be published until this is explained.** |
+| `README.md` vs `docs/results.md` | Contradict each other: README says Phi-3's best ACE arm is **FIFO (78%)**, `RESULTS.md` model table says **`tinyace_wm_512` (78%)** while listing `ace_full` at 60%; README says ACE overhead is **~1.4s**, `RESULTS.md` says **~2.4–2.9s**. |
+| `docs/results.md` | Reports Phi-3 (3.8B) baseline latency **6.43s** but Mistral-7B (7B) baseline latency **0.408s** — a 7B model 15× faster than a 3.8B model on the same task. This is internally impossible and indicates the two rows were produced under different hardware/decoding/output-length conditions. **The cross-model comparison table should not be published until this is explained.** |
 | `PUBLICATION_CHECKLIST.md` | Declares `Status: ✅ Ready for Publication` and checks off "Verify all code examples work" adjacent to a broken README example, a failing test, and a CI job that cannot fail. |
-| `CHANGELOG.md`, `docs/RESULTS.md` | Dated "December 2024"; `results_*` HTML artefacts are timestamped 12/14/25. |
+| `CHANGELOG.md`, `docs/results.md` | Dated "December 2024"; `results_*` HTML artefacts are timestamped 12/14/25. |
 | `config.py:64-70` | `medqa_finetuned_small` maps to **`microsoft/DialoGPT-small`** — a chit-chat model — while the comment calls it *"our fine-tuned small upper bound"*. If this ever reaches a results table it is a misrepresentation. Remove it or actually fine-tune something. |
 
 ---
@@ -830,7 +845,7 @@ describing the directory layout**, which git already describes.
 13. Re-run everything at **n≥500**, ≥3 seeds, identical decoding across models.
 14. Report Wilson CIs + McNemar for every comparison; regenerate all tables (**S5**).
 15. Re-tabulate ablations against `tinyace_wm_256`, not baseline (**S6**).
-16. **Rewrite `docs/RESULTS.md` and the README results section from the new numbers.** Expect the
+16. **Rewrite `docs/results.md` and the README results section from the new numbers.** Expect the
     ablation conclusions to disappear; that is a finding, not a failure. Explain the Phi-3/Mistral
     latency inversion or drop the latency comparison.
 
@@ -860,7 +875,7 @@ the refactor:
 - **Result schema discipline.** Emitting per-example rows with a documented schema, plus
   `metrics.json` + `predictions.jsonl` + `run_metadata.json` per run, is exactly right and made this
   review possible.
-- **`docs/RESULTS.md` reports negative results honestly** ("Baseline preferred", "ACE degrades
+- **`docs/results.md` reports negative results honestly** ("Baseline preferred", "ACE degrades
   performance") rather than burying them. The analysis needs fixing, but the disposition is right.
 - **The test suite is real** — 79 tests with meaningful assertions, including the one that caught
   the FIFO bug. It only needs to be *run*.
