@@ -111,10 +111,7 @@ class TestAlignment:
 
 class TestCompareArms:
     def _rows(self, n_correct, n=50):
-        return [
-            {"qid": f"q{i}", "oma_correct": 1 if i < n_correct else 0}
-            for i in range(n)
-        ]
+        return [{"qid": f"q{i}", "oma_correct": 1 if i < n_correct else 0} for i in range(n)]
 
     def test_verdict_refuses_to_rank_noise(self):
         comparison = compare_arms(

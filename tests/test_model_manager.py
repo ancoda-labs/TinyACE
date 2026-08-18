@@ -11,14 +11,14 @@ def test_load_model_and_tokenizer():
     """Test loading a tiny model."""
     # Use tiny-gpt2 for fast testing
     model_id = "sshleifer/tiny-gpt2"
-    
+
     device = get_device()
     model, tokenizer = load_model_and_tokenizer(model_id, device=device)
-    
+
     assert model is not None
     assert tokenizer is not None
     assert tokenizer.pad_token is not None  # Should be set
-    
+
     # Check model is on correct device
     # Note: tiny-gpt2 is always forced to CPU on Torch >= 2.6 due to security restrictions
     model_device = next(model.parameters()).device
@@ -29,10 +29,10 @@ def test_load_model_and_tokenizer():
 def test_generate():
     """Test text generation."""
     model_id = "sshleifer/tiny-gpt2"
-    
+
     device = get_device()
     model, tokenizer = load_model_and_tokenizer(model_id, device=device)
-    
+
     prompt = "Hello"
     output = generate(
         model,
@@ -42,10 +42,9 @@ def test_generate():
         temperature=0.7,
         top_p=0.95,
     )
-    
+
     assert isinstance(output, str)
     assert len(output) > 0  # Should produce some output
-
 
 
 def test_render_prompt_without_chat_template():
@@ -111,9 +110,7 @@ def test_max_prompt_tokens_rejects_sentinel_model_max_length():
     class _Sentinel:
         model_max_length = 1000000000000000019884624838656
 
-    assert max_prompt_tokens(_NoPositions(), _Sentinel(), 256) == (
-        _FALLBACK_CONTEXT_TOKENS - 256
-    )
+    assert max_prompt_tokens(_NoPositions(), _Sentinel(), 256) == (_FALLBACK_CONTEXT_TOKENS - 256)
 
 
 def test_generate_reports_metadata():

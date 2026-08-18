@@ -115,16 +115,22 @@ def main():
             group_dict = {group_cols[0]: group_key}
 
         # Base metrics
-        accuracy_exact = group_df["correct"].mean() if "correct" in group_df.columns else float("nan")
-        avg_latency_ms = group_df["latency_ms"].mean() if "latency_ms" in group_df.columns else float("nan")
+        accuracy_exact = (
+            group_df["correct"].mean() if "correct" in group_df.columns else float("nan")
+        )
+        avg_latency_ms = (
+            group_df["latency_ms"].mean() if "latency_ms" in group_df.columns else float("nan")
+        )
         num_samples = len(group_df)
-        
-        group_dict.update({
-            "accuracy_exact": accuracy_exact,
-            "avg_latency_ms": avg_latency_ms,
-            "num_samples": num_samples,
-        })
-        
+
+        group_dict.update(
+            {
+                "accuracy_exact": accuracy_exact,
+                "avg_latency_ms": avg_latency_ms,
+                "num_samples": num_samples,
+            }
+        )
+
         # Compute semantic accuracy if pred/gold available
         if "pred" in group_df.columns and "gold" in group_df.columns:
             try:
@@ -139,23 +145,23 @@ def main():
             except Exception as e:
                 # If semantic accuracy fails, skip it
                 print(f"Warning: Could not compute semantic accuracy: {e}")
-        
+
         # Token metrics (support both naming conventions)
         if "prompt_tokens" in group_df.columns:
             group_dict["avg_prompt_tokens"] = group_df["prompt_tokens"].mean()
             group_dict["mean_prompt_tokens"] = group_df["prompt_tokens"].mean()  # Alias
         elif "mean_prompt_tokens" in group_df.columns:
             group_dict["mean_prompt_tokens"] = group_df["mean_prompt_tokens"].mean()
-        
+
         if "context_tokens" in group_df.columns:
             group_dict["avg_context_tokens"] = group_df["context_tokens"].mean()
-        
+
         if "output_tokens" in group_df.columns:
             group_dict["avg_output_tokens"] = group_df["output_tokens"].mean()
             group_dict["mean_output_tokens"] = group_df["output_tokens"].mean()  # Alias
         elif "mean_output_tokens" in group_df.columns:
             group_dict["mean_output_tokens"] = group_df["mean_output_tokens"].mean()
-        
+
         # Optional metrics
         if "reflection_latency_ms" in group_df.columns:
             group_dict["avg_reflection_latency_ms"] = group_df["reflection_latency_ms"].mean()
@@ -198,16 +204,16 @@ def main():
     header_cols = ["Model", "Task", "Mode"]
     if "epoch" in summary_df.columns:
         header_cols.append("Epoch")
-    
+
     header_cols.append("Exact Acc")
-    
+
     if "accuracy_semantic" in summary_df.columns:
         header_cols.append("Semantic Acc")
     if "mean_semantic_score" in summary_df.columns:
         header_cols.append("Mean Semantic")
     if "mean_semantic_accuracy" in summary_df.columns:
         header_cols.append(f"Semantic@{args.semantic_threshold:g}")
-    
+
     # Token columns (support both naming conventions)
     if "avg_prompt_tokens" in summary_df.columns or "mean_prompt_tokens" in summary_df.columns:
         header_cols.append("Prompt Tokens")
@@ -215,10 +221,10 @@ def main():
         header_cols.append("Context Tokens")
     if "avg_output_tokens" in summary_df.columns or "mean_output_tokens" in summary_df.columns:
         header_cols.append("Output Tokens")
-    
+
     header_cols.append("Latency (ms)")
     header_cols.append("Samples")
-    
+
     if "avg_reflection_latency_ms" in summary_df.columns:
         header_cols.append("Reflection Latency (ms)")
 
@@ -237,19 +243,21 @@ def main():
             row_values.append(str(int(epoch_val)) if pd.notna(epoch_val) else "")
 
         # Accuracy metrics
-        row_values.append(f"{row.get('accuracy_exact', 0):.3f}" if pd.notna(row.get("accuracy_exact")) else "")
-        
+        row_values.append(
+            f"{row.get('accuracy_exact', 0):.3f}" if pd.notna(row.get("accuracy_exact")) else ""
+        )
+
         if "accuracy_semantic" in summary_df.columns:
             val = row.get("accuracy_semantic")
             row_values.append(f"{val:.3f}" if pd.notna(val) else "N/A")
-        
+
         if "mean_semantic_score" in summary_df.columns:
             val = row.get("mean_semantic_score")
             row_values.append(f"{val:.3f}" if pd.notna(val) else "")
         if "mean_semantic_accuracy" in summary_df.columns:
             val = row.get("mean_semantic_accuracy")
             row_values.append(f"{val:.3f}" if pd.notna(val) else "")
-        
+
         # Token metrics (support both naming conventions)
         if "avg_prompt_tokens" in summary_df.columns or "mean_prompt_tokens" in summary_df.columns:
             val = row.get("avg_prompt_tokens") or row.get("mean_prompt_tokens")
@@ -260,12 +268,18 @@ def main():
         if "avg_output_tokens" in summary_df.columns or "mean_output_tokens" in summary_df.columns:
             val = row.get("avg_output_tokens") or row.get("mean_output_tokens")
             row_values.append(f"{val:.1f}" if pd.notna(val) else "")
-        
-        row_values.extend([
-            f"{row.get('avg_latency_ms', 0):.2f}" if pd.notna(row.get("avg_latency_ms")) else "",
-            str(int(row.get("num_samples", 0))),
-        ])
-        
+
+        row_values.extend(
+            [
+                (
+                    f"{row.get('avg_latency_ms', 0):.2f}"
+                    if pd.notna(row.get("avg_latency_ms"))
+                    else ""
+                ),
+                str(int(row.get("num_samples", 0))),
+            ]
+        )
+
         if "avg_reflection_latency_ms" in summary_df.columns:
             val = row.get("avg_reflection_latency_ms")
             row_values.append(f"{val:.2f}" if pd.notna(val) else "")

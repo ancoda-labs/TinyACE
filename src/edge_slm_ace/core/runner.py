@@ -104,18 +104,18 @@ def run_dataset_baseline(
 ) -> tuple[List[Dict], Dict]:
     """
     Run baseline evaluation (no ACE) on a dataset.
-    
+
     This function processes each example in the dataset by:
     1. Building a simple prompt (question + optional context)
     2. Generating an answer using the model
     3. Comparing answer to ground truth (exact match)
     4. Recording results with consistent schema
-    
+
     For SciQ tasks, also computes MCQ-aware metrics:
     - Option-Mapped Accuracy (OMA)
     - Gold Option Margin (GOM)
     - Answerable Choice Rate (ACR)
-    
+
     Args:
         model: Loaded language model (from model_manager.load_model_and_tokenizer).
         tokenizer: Loaded tokenizer (from model_manager.load_model_and_tokenizer).
@@ -134,7 +134,7 @@ def run_dataset_baseline(
         model_id: HuggingFace model ID (for result tracking).
         task_name: Task name (e.g., "tatqa_tiny", "medqa_tiny", "iot_tiny") for result tracking.
         mode: Evaluation mode (default: "baseline").
-    
+
     Returns:
         Tuple of (results, summary):
         - results: List[Dict] with consistent schema. Each dict contains:
@@ -172,7 +172,7 @@ def run_dataset_baseline(
     end_to_end_latencies = []  # Full query processing time
     prompt_tokens_list = []
     prompt_output_tokens_list = []
-    
+
     # Check if this is a SciQ task for MCQ-aware evaluation
     is_mcq_task = is_sciq_task(task_name)
     mcq_evaluator = None
@@ -182,25 +182,25 @@ def run_dataset_baseline(
         except Exception as e:
             print(f"Warning: Failed to initialize MCQEvaluator: {e}")
             is_mcq_task = False
-    
+
     total_examples = len(dataset)
-    
+
     for idx, example in enumerate(dataset, start=1):
         # Track end-to-end latency (entire query processing)
         query_start_time = time.time()
-        
+
         example_id = example.get("id", "unknown")
         question = example.get("question", "")
         # For SciQ, use "support" as context if "context" not present
         context = example.get("context") or example.get("support")
         ground_truth = example.get("answer", "")
-        
+
         # Extract MCQ options if this is a SciQ task (supports both formats)
         mcq_options_list = None
         gold_option_idx = None
         mcq_options_dict = None
         gold_option = None
-        
+
         if is_mcq_task and has_mcq_options(example):
             # Try new format first (options list + gold_option_idx)
             try:
@@ -212,7 +212,7 @@ def run_dataset_baseline(
                 mcq_options_dict, gold_option, _ = extract_mcq_options(
                     example, shuffle_seed=option_shuffle_seed
                 )
-        
+
         # Build prompt (with choices if options exist)
         if mcq_options_list:
             prompt = build_prompt_with_choices(question, context, mcq_options_list)
@@ -220,7 +220,7 @@ def run_dataset_baseline(
             prompt = f"Context: {context}\n\nQuestion: {question}\n\nAnswer:"
         else:
             prompt = f"Question: {question}\n\nAnswer:"
-        
+
         # Generate answer
         start_time = time.time()
         answer, gen_meta = generate(
@@ -243,7 +243,7 @@ def run_dataset_baseline(
         prompt_tokens = count_tokens(tokenizer, prompt)
         output_tokens = count_tokens(tokenizer, answer)
         context_tokens = count_tokens(tokenizer, context or "")
-        
+
         # Check correctness
         correct = answer.strip().lower() == ground_truth.strip().lower()
 
@@ -295,9 +295,14 @@ def run_dataset_baseline(
             "prompt_truncated": gen_meta["prompt_truncated"],
             "used_chat_template": gen_meta["used_chat_template"],
         }
-        
+
         # Compute MCQ metrics for SciQ tasks (new format with indices)
-        if is_mcq_task and mcq_options_list is not None and gold_option_idx is not None and mcq_evaluator:
+        if (
+            is_mcq_task
+            and mcq_options_list is not None
+            and gold_option_idx is not None
+            and mcq_evaluator
+        ):
             try:
                 mcq_metrics = evaluate_mcq_with_indices(
                     prediction=answer,
@@ -318,7 +323,7 @@ def run_dataset_baseline(
                 result["gom"] = None
                 result["gold_option_idx"] = gold_option_idx
                 result["mapping_tier"] = None
-        
+
         # Legacy format support (for backward compatibility)
         elif is_mcq_task and mcq_options_dict and gold_option and mcq_evaluator:
             try:
@@ -340,25 +345,26 @@ def run_dataset_baseline(
                 result["oma_correct"] = None
                 result["gom"] = None
                 result["acr_hit"] = None
-        
+
         results.append(result)
-        
+
         predictions.append(answer)
         labels.append(ground_truth)
         latencies.append(latency_ms)
         end_to_end_latencies.append(end_to_end_latency_sec)
         prompt_tokens_list.append(prompt_tokens)
         prompt_output_tokens_list.append(output_tokens)
-    
+
     # Compute summary
     accuracy = compute_accuracy(predictions, labels)
     avg_latency = compute_average_latency(latencies)
-    
+
     # Compute latency statistics
     import statistics
+
     avg_latency_sec = statistics.mean(end_to_end_latencies) if end_to_end_latencies else 0.0
     median_latency_sec = statistics.median(end_to_end_latencies) if end_to_end_latencies else 0.0
-    
+
     summary = {
         "accuracy": accuracy,
         "avg_latency_ms": avg_latency,
@@ -366,22 +372,36 @@ def run_dataset_baseline(
         "median_latency_sec": median_latency_sec,
         **_generation_health(results),
         "num_examples": len(dataset),
-        "mean_prompt_token": sum(prompt_tokens_list) / len(prompt_tokens_list) if prompt_tokens_list else 0.0,
-        "mean_output_token": sum(prompt_output_tokens_list) / len(prompt_output_tokens_list) if prompt_output_tokens_list else 0.0,
+        "mean_prompt_token": (
+            sum(prompt_tokens_list) / len(prompt_tokens_list) if prompt_tokens_list else 0.0
+        ),
+        "mean_output_token": (
+            sum(prompt_output_tokens_list) / len(prompt_output_tokens_list)
+            if prompt_output_tokens_list
+            else 0.0
+        ),
     }
-    
+
     # Add MCQ aggregate metrics for SciQ tasks
     if is_mcq_task:
         # Check if we have new format metrics (chosen_option_idx) or legacy format (pred_option)
-        has_new_format = any("chosen_option_idx" in r and r.get("chosen_option_idx") is not None for r in results)
-        has_legacy_format = any("pred_option" in r and r.get("pred_option") is not None for r in results)
-        
+        has_new_format = any(
+            "chosen_option_idx" in r and r.get("chosen_option_idx") is not None for r in results
+        )
+        has_legacy_format = any(
+            "pred_option" in r and r.get("pred_option") is not None for r in results
+        )
+
         # Handle both formats: compute metrics for whichever format(s) are present
         if has_new_format:
             # Compute aggregates for new format
-            oma_values = [r["oma_correct"] for r in results if "oma_correct" in r and r["oma_correct"] is not None]
+            oma_values = [
+                r["oma_correct"]
+                for r in results
+                if "oma_correct" in r and r["oma_correct"] is not None
+            ]
             gom_values = [r["gom"] for r in results if "gom" in r and r["gom"] is not None]
-            
+
             if oma_values:
                 summary["oma_accuracy"] = sum(oma_values) / len(oma_values)
                 # Ship the interval next to the point estimate so a delta is
@@ -402,7 +422,7 @@ def run_dataset_baseline(
                 r.get("gold_option_idx") for r in results
             )
             summary["mapping_tier_distribution"] = compute_mapping_tier_distribution(results)
-        
+
         if has_legacy_format:
             # Compute legacy format metrics (including acr_rate)
             mcq_agg = compute_mcq_aggregate_metrics(results)
@@ -413,7 +433,7 @@ def run_dataset_baseline(
                 summary["avg_gom"] = mcq_agg["avg_gom"]
             # acr_rate only exists in legacy format
             summary["acr_rate"] = mcq_agg["acr_rate"]
-    
+
     return results, summary
 
 
@@ -449,7 +469,7 @@ def run_dataset_self_refine(
 
     Self-Refine (Madaan et al.) and SEAL do not reveal the label at
     refinement time; that is the point of the method.
-    
+
     Args:
         model: Loaded language model.
         tokenizer: Loaded tokenizer.
@@ -477,13 +497,13 @@ def run_dataset_self_refine(
         question = example.get("question", "")
         context = example.get("context")
         ground_truth = example.get("answer", "")
-        
+
         # Step 1: Generate initial answer
         if context:
             initial_prompt = f"Context: {context}\n\nQuestion: {question}\n\nAnswer:"
         else:
             initial_prompt = f"Question: {question}\n\nAnswer:"
-        
+
         start_time = time.time()
         initial_answer = generate(
             model,
@@ -494,7 +514,7 @@ def run_dataset_self_refine(
             top_p=config.top_p,
         )
         initial_latency_ms = (time.time() - start_time) * 1000
-        
+
         # Step 2: Self-refinement (critique + rewrite).
         # `oracle_answer` is None in the honest setting, so neither prompt can
         # contain the label that the rewritten answer will be scored against.
@@ -509,7 +529,7 @@ def run_dataset_self_refine(
                 initial_answer=initial_answer,
                 ground_truth=oracle_answer,
             )
-            
+
             critique_start = time.time()
             critique = generate(
                 model,
@@ -520,7 +540,7 @@ def run_dataset_self_refine(
                 top_p=config.top_p,
             )
             critique_latency_ms = (time.time() - critique_start) * 1000
-            
+
             # Generate rewritten answer
             rewrite_prompt = build_self_refine_rewrite_prompt(
                 domain=domain,
@@ -530,7 +550,7 @@ def run_dataset_self_refine(
                 critique=critique,
                 ground_truth=oracle_answer,
             )
-            
+
             rewrite_start = time.time()
             final_answer = generate(
                 model,
@@ -549,7 +569,7 @@ def run_dataset_self_refine(
             final_answer = initial_answer
             critique = ""
             total_latency_ms = initial_latency_ms
-        
+
         # Count tokens
         if initial_answer:
             # Count tokens for all prompts
@@ -559,10 +579,10 @@ def run_dataset_self_refine(
             prompt_tokens = initial_prompt_tokens + critique_prompt_tokens + rewrite_prompt_tokens
         else:
             prompt_tokens = count_tokens(tokenizer, initial_prompt)
-        
+
         output_tokens = count_tokens(tokenizer, final_answer)
         context_tokens = count_tokens(tokenizer, context or "")
-        
+
         # Check correctness
         correct = final_answer.strip().lower() == ground_truth.strip().lower()
 
@@ -611,17 +631,17 @@ def run_dataset_self_refine(
         predictions.append(final_answer)
         labels.append(ground_truth)
         latencies.append(total_latency_ms)
-    
+
     # Compute summary
     accuracy = compute_accuracy(predictions, labels)
     avg_latency = compute_average_latency(latencies)
-    
+
     summary = {
         "accuracy": accuracy,
         "avg_latency_ms": avg_latency,
         "num_examples": len(dataset),
     }
-    
+
     return results, summary
 
 
@@ -648,16 +668,16 @@ def run_dataset_ace(
 ) -> tuple[List[Dict], Dict]:
     """
     Run ACE-style adaptive evaluation on a dataset.
-    
+
     This is ACE-inspired and not a full reproduction of the original ACE, SEAL, or SPICE algorithms.
-    
+
     For each example, the ACE pipeline:
     1. Generator: Build prompt with playbook context → generate answer
     2. Check correctness against ground truth
     3. Reflector: If incorrect (or periodically if correct), generate lessons
     4. Curator: Add filtered lessons to playbook, record feedback
     5. Periodically prune playbook to keep top entries
-    
+
     ACE modes:
     - ace_full: Uses top-k entries (unbounded playbook)
     - ace_working_memory: Uses token-budgeted entries (limited playbook)
@@ -675,19 +695,19 @@ def run_dataset_ace(
     `ace - cot_control`, not `ace - baseline`. If `ace - cot_control` is flat
     while `cot_control - baseline` is large, the finding is that chain-of-
     thought prompting helps and the playbook does not.
-    
+
     TODO(Sathwik): Improve ACE logic in ace_roles.py:
     - Refine generator prompts to better incorporate playbook strategies
     - Improve reflector prompts to generate more specific, actionable lessons
     - Enhance lesson filtering and deduplication
     - Consider multi-turn reflection for complex errors
-    
+
     TODO(Archit): Extend metrics and logging:
     - Track playbook evolution over time (size, quality metrics)
     - Measure impact of playbook on accuracy improvement
     - Add per-step latency breakdown (generation vs reflection)
     - Log playbook entries added/removed during pruning
-    
+
     Args:
         model: Loaded language model (used for both generation and reflection).
         tokenizer: Loaded tokenizer.
@@ -747,10 +767,10 @@ def run_dataset_ace(
     labels = []
     latencies = []
     end_to_end_latencies = []  # Full query processing time
-    prompt_tokens_list=[]
+    prompt_tokens_list = []
     prompt_output_tokens_list = []
     playbook_log = []  # Per-step playbook stats
-    
+
     # Check if this is a SciQ task for MCQ-aware evaluation
     is_mcq_task = is_sciq_task(task_name)
     mcq_evaluator = None
@@ -760,23 +780,23 @@ def run_dataset_ace(
         except Exception as e:
             print(f"Warning: Failed to initialize MCQEvaluator: {e}")
             is_mcq_task = False
-    
+
     for step, example in enumerate(dataset, start=1):
         # Track end-to-end latency (entire query processing)
         query_start_time = time.time()
-        
+
         example_id = example.get("id", "unknown")
         question = example.get("question", "")
         # For SciQ, use "support" as context if "context" not present
         context = example.get("context") or example.get("support")
         ground_truth = example.get("answer", "")
-        
+
         # Extract MCQ options if this is a SciQ task (supports both formats)
         mcq_options_list = None
         gold_option_idx = None
         mcq_options_dict = None
         gold_option = None
-        
+
         if is_mcq_task and has_mcq_options(example):
             # Try new format first (options list + gold_option_idx)
             try:
@@ -788,13 +808,13 @@ def run_dataset_ace(
                 mcq_options_dict, gold_option, _ = extract_mcq_options(
                     example, shuffle_seed=option_shuffle_seed
                 )
-        
+
         # Capture playbook state before processing
         playbook_before = {
             "num_entries": len(playbook.entries),
             "total_tokens": playbook.total_tokens,
         }
-        
+
         # Step 1: Generator - build prompt with playbook context.
         # Choices are rendered by build_generator_prompt via the same shared
         # block the baseline arm uses, rather than appended here with
@@ -810,7 +830,7 @@ def run_dataset_ace(
             current_step=step,
             options=mcq_options_list,
         )
-        
+
         # Track which entries were used (retrieved and included in prompt)
         # This is done BEFORE generation so we know exactly which lessons were used
         used_entry_ids = []
@@ -825,11 +845,9 @@ def run_dataset_ace(
             used_entry_ids = [e.id for e in used_entries]
         else:
             # Full mode: top-k entries
-            used_entries = playbook.get_top_k(
-                domain, k=top_k, current_step=step, query=question
-            )
+            used_entries = playbook.get_top_k(domain, k=top_k, current_step=step, query=question)
             used_entry_ids = [e.id for e in used_entries]
-        
+
         # Step 2: Generate answer
         start_time = time.time()
         raw_answer, gen_meta = generate(
@@ -842,10 +860,10 @@ def run_dataset_ace(
             return_meta=True,
         )
         latency_ms = (time.time() - start_time) * 1000
-        
+
         # Extract reasoning and answer from generator output
         answer, reasoning = extract_answer(raw_answer)
-        
+
         # Step 3: Check correctness
         correct = answer.strip().lower() == ground_truth.strip().lower()
 
@@ -857,17 +875,17 @@ def run_dataset_ace(
             score = semantic_answer_score(answer, ground_truth)
         except Exception:
             score = None
-        
+
         try:
             bleu_score = compute_bleu_score(answer, ground_truth)
         except Exception:
             # None, not 0.0: a missing sacrebleu is "not measured", and
             # recording it as a real zero would drag any average down.
             bleu_score = None
-        
+
         # Set result_mode based on ace_mode
         result_mode = ace_mode  # Use ace_mode directly (ace_full or ace_working_memory)
-        
+
         # Count tokens
         prompt_tokens = count_tokens(tokenizer, generator_prompt)
         output_tokens = count_tokens(tokenizer, answer)
@@ -879,14 +897,14 @@ def run_dataset_ace(
         context_tokens = count_tokens(tokenizer, playbook_context_text)
         # Also count original context if provided
         original_context_tokens = count_tokens(tokenizer, context or "")
-        
+
         # Step 4: Reflector - generate lessons.
         # The control arm never reflects, so its playbook stays empty and the
         # only difference from the ACE arm is the absence of learned content.
         should_reflect = enable_learning and (
             not correct or (step % reflect_on_correct_every_n == 0)
         )
-        
+
         if should_reflect:
             reflector_prompt = build_reflector_prompt(
                 domain=domain,
@@ -896,7 +914,7 @@ def run_dataset_ace(
                 ground_truth=ground_truth,
                 reasoning=reasoning,  # Use extracted reasoning from generator output
             )
-            
+
             # Generate reflection
             reflection_start = time.time()
             reflection_text = generate(
@@ -908,7 +926,7 @@ def run_dataset_ace(
                 top_p=config.top_p,
             )
             reflection_latency_ms = (time.time() - reflection_start) * 1000
-            
+
             # Parse lessons
             raw_lessons = parse_reflector_output_to_lessons(reflection_text)
             filtered_lessons = choose_lessons_for_playbook(
@@ -916,7 +934,7 @@ def run_dataset_ace(
                 lessons=raw_lessons,
                 existing_playbook=playbook,
             )
-            
+
             # Step 5: Curator - screen candidate lessons, then add them.
             #
             # This pass was implemented but never invoked, while the README and
@@ -965,7 +983,7 @@ def run_dataset_ace(
             curated_lessons = []
             num_rejected_by_curator = 0
             curator_latency_ms = 0.0
-        
+
         # Credit assignment.
         #
         # Crediting every retrieved entry equally means each live entry gets
@@ -992,54 +1010,56 @@ def run_dataset_ace(
                 playbook.mark_entry_used(entry_id, step)
             for entry_id in credited_ids:
                 playbook.record_feedback(entry_id, helpful=correct)
-        
+
         # Step 6: Occasional pruning
         num_evictions = 0
         if enable_learning and step % prune_every_n == 0:
             entries_before_prune = len(playbook.entries)
             playbook.prune(max_entries_per_domain=max_entries_per_domain)
             num_evictions = entries_before_prune - len(playbook.entries)
-        
+
         # Capture playbook state after processing
         playbook_after = {
             "num_entries": len(playbook.entries),
             "total_tokens": playbook.total_tokens,
         }
-        
+
         # Track evictions that happened during add_entry (working memory mode)
         # This is approximate - we track the difference in entry count
         entries_added = len(curated_lessons) if should_reflect else 0
-        evictions_during_add = max(0, playbook_before["num_entries"] + entries_added - playbook_after["num_entries"])
+        evictions_during_add = max(
+            0, playbook_before["num_entries"] + entries_added - playbook_after["num_entries"]
+        )
         total_evictions = num_evictions + evictions_during_add
-        
+
         # Log playbook stats for this step
         # Spread of retention scores across live entries. If this stays near
         # zero the score is not discriminating between lessons and the
         # "retention scoring" contribution is decorative, whatever the
         # ablation table says.
         live_scores = [
-            e.score(step, playbook.scoring_params)
-            for e in playbook.entries
-            if e.domain == domain
+            e.score(step, playbook.scoring_params) for e in playbook.entries if e.domain == domain
         ]
         score_std = statistics.pstdev(live_scores) if len(live_scores) > 1 else 0.0
 
-        playbook_log.append({
-            "step_index": step,
-            "num_entries": playbook_after["num_entries"],
-            "total_tokens": playbook_after["total_tokens"],
-            "num_evictions": total_evictions,
-            "retention_score_std": score_std,
-            "num_retrieved": len(used_entry_ids),
-            "num_credited": len(credited_ids),
-            "credit_mode": credit_mode,
-            "curator_latency_ms": curator_latency_ms,
-            "lessons_rejected_by_curator": num_rejected_by_curator,
-        })
-        
+        playbook_log.append(
+            {
+                "step_index": step,
+                "num_entries": playbook_after["num_entries"],
+                "total_tokens": playbook_after["total_tokens"],
+                "num_evictions": total_evictions,
+                "retention_score_std": score_std,
+                "num_retrieved": len(used_entry_ids),
+                "num_credited": len(credited_ids),
+                "credit_mode": credit_mode,
+                "curator_latency_ms": curator_latency_ms,
+                "lessons_rejected_by_curator": num_rejected_by_curator,
+            }
+        )
+
         # Calculate end-to-end latency
         end_to_end_latency_sec = time.time() - query_start_time
-        
+
         # Record result with consistent schema
         result = {
             # Canonical columns (for plotting pipeline)
@@ -1077,9 +1097,14 @@ def run_dataset_ace(
             "prompt_truncated": gen_meta["prompt_truncated"],
             "used_chat_template": gen_meta["used_chat_template"],
         }
-        
+
         # Compute MCQ metrics for SciQ tasks (new format with indices)
-        if is_mcq_task and mcq_options_list is not None and gold_option_idx is not None and mcq_evaluator:
+        if (
+            is_mcq_task
+            and mcq_options_list is not None
+            and gold_option_idx is not None
+            and mcq_evaluator
+        ):
             try:
                 mcq_metrics = evaluate_mcq_with_indices(
                     prediction=answer,
@@ -1100,7 +1125,7 @@ def run_dataset_ace(
                 result["gom"] = None
                 result["gold_option_idx"] = gold_option_idx
                 result["mapping_tier"] = None
-        
+
         # Legacy format support (for backward compatibility)
         elif is_mcq_task and mcq_options_dict and gold_option and mcq_evaluator:
             try:
@@ -1122,30 +1147,31 @@ def run_dataset_ace(
                 result["oma_correct"] = None
                 result["gom"] = None
                 result["acr_hit"] = None
-        
+
         results.append(result)
-        
+
         predictions.append(answer)
         labels.append(ground_truth)
         latencies.append(latency_ms)
         end_to_end_latencies.append(end_to_end_latency_sec)
         prompt_tokens_list.append(prompt_tokens)
         prompt_output_tokens_list.append(output_tokens)
-    
+
     # Save playbook after run. The control arm learns nothing, so writing its
     # empty playbook would only risk clobbering a real one.
     if enable_learning:
         playbook.save(playbook_path)
-    
+
     # Compute summary
     accuracy = compute_accuracy(predictions, labels)
     avg_latency = compute_average_latency(latencies)
-    
+
     # Compute latency statistics
     import statistics
+
     avg_latency_sec = statistics.mean(end_to_end_latencies) if end_to_end_latencies else 0.0
     median_latency_sec = statistics.median(end_to_end_latencies) if end_to_end_latencies else 0.0
-    
+
     summary = {
         "accuracy": accuracy,
         "avg_latency_ms": avg_latency,
@@ -1166,7 +1192,8 @@ def run_dataset_ace(
         # success/failure terms should not be read as per-lesson evidence.
         "citation_rate": (
             sum(1 for r in playbook_log if r["credit_mode"] == "cited") / len(playbook_log)
-            if playbook_log else 0.0
+            if playbook_log
+            else 0.0
         ),
         # Mean spread of retention scores. Near zero means the score does not
         # distinguish between lessons.
@@ -1175,29 +1202,42 @@ def run_dataset_ace(
             r.get("lessons_rejected_by_curator", 0) for r in results
         ),
         "mean_retention_score_std": (
-            statistics.mean(r["retention_score_std"] for r in playbook_log)
-            if playbook_log else 0.0
+            statistics.mean(r["retention_score_std"] for r in playbook_log) if playbook_log else 0.0
         ),
         "playbook_size": len(playbook.entries),
         "final_playbook_num_entries": len(playbook.entries),
         "final_playbook_total_tokens": playbook.total_tokens,
-        "mean_prompt_token": sum(prompt_tokens_list) / len(prompt_tokens_list) if prompt_tokens_list else 0.0,
-        "mean_output_token": sum(prompt_output_tokens_list) / len(prompt_output_tokens_list) if prompt_output_tokens_list else 0.0,
+        "mean_prompt_token": (
+            sum(prompt_tokens_list) / len(prompt_tokens_list) if prompt_tokens_list else 0.0
+        ),
+        "mean_output_token": (
+            sum(prompt_output_tokens_list) / len(prompt_output_tokens_list)
+            if prompt_output_tokens_list
+            else 0.0
+        ),
         "playbook_log": playbook_log,  # Include playbook log in summary for saving
     }
-    
+
     # Add MCQ aggregate metrics for SciQ tasks
     if is_mcq_task:
         # Check if we have new format metrics (chosen_option_idx) or legacy format (pred_option)
-        has_new_format = any("chosen_option_idx" in r and r.get("chosen_option_idx") is not None for r in results)
-        has_legacy_format = any("pred_option" in r and r.get("pred_option") is not None for r in results)
-        
+        has_new_format = any(
+            "chosen_option_idx" in r and r.get("chosen_option_idx") is not None for r in results
+        )
+        has_legacy_format = any(
+            "pred_option" in r and r.get("pred_option") is not None for r in results
+        )
+
         # Handle both formats: compute metrics for whichever format(s) are present
         if has_new_format:
             # Compute aggregates for new format
-            oma_values = [r["oma_correct"] for r in results if "oma_correct" in r and r["oma_correct"] is not None]
+            oma_values = [
+                r["oma_correct"]
+                for r in results
+                if "oma_correct" in r and r["oma_correct"] is not None
+            ]
             gom_values = [r["gom"] for r in results if "gom" in r and r["gom"] is not None]
-            
+
             if oma_values:
                 summary["oma_accuracy"] = sum(oma_values) / len(oma_values)
                 # Ship the interval next to the point estimate so a delta is
@@ -1218,7 +1258,7 @@ def run_dataset_ace(
                 r.get("gold_option_idx") for r in results
             )
             summary["mapping_tier_distribution"] = compute_mapping_tier_distribution(results)
-        
+
         if has_legacy_format:
             # Compute legacy format metrics (including acr_rate)
             mcq_agg = compute_mcq_aggregate_metrics(results)
@@ -1229,6 +1269,5 @@ def run_dataset_ace(
                 summary["avg_gom"] = mcq_agg["avg_gom"]
             # acr_rate only exists in legacy format
             summary["acr_rate"] = mcq_agg["acr_rate"]
-    
-    return results, summary
 
+    return results, summary

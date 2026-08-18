@@ -57,7 +57,7 @@ def wilson_interval(
 
 def _binom_cdf(k: int, n: int, p: float = 0.5) -> float:
     """P(X <= k) for X ~ Binomial(n, p)."""
-    return sum(math.comb(n, i) * (p ** i) * ((1 - p) ** (n - i)) for i in range(k + 1))
+    return sum(math.comb(n, i) * (p**i) * ((1 - p) ** (n - i)) for i in range(k + 1))
 
 
 def mcnemar_exact(arm_a: Sequence[int], arm_b: Sequence[int]) -> Dict:
@@ -94,9 +94,15 @@ def mcnemar_exact(arm_a: Sequence[int], arm_b: Sequence[int]) -> Dict:
     n = len(arm_a)
     if n == 0:
         return {
-            "n": 0, "acc_a": 0.0, "acc_b": 0.0, "delta": 0.0,
-            "b": 0, "c": 0, "n_discordant": 0,
-            "p_value": 1.0, "significant_05": False,
+            "n": 0,
+            "acc_a": 0.0,
+            "acc_b": 0.0,
+            "delta": 0.0,
+            "b": 0,
+            "c": 0,
+            "n_discordant": 0,
+            "p_value": 1.0,
+            "significant_05": False,
         }
 
     b = sum(1 for x, y in zip(arm_a, arm_b) if x and not y)
@@ -257,13 +263,14 @@ def compare_arms(
 def format_comparison(comparison: Dict) -> str:
     """Render `compare_arms` output as a short human-readable block."""
     a, b, t = comparison["arm_a"], comparison["arm_b"], comparison["mcnemar"]
-    return "\n".join([
-        f"{comparison['name_a']:<28} {a['accuracy']:6.1%}  "
-        f"[{a['ci_low']:.1%}, {a['ci_high']:.1%}]  (n={a['n']})",
-        f"{comparison['name_b']:<28} {b['accuracy']:6.1%}  "
-        f"[{b['ci_low']:.1%}, {b['ci_high']:.1%}]  (n={b['n']})",
-        f"{'delta':<28} {t['delta']:+6.1%}  "
-        f"({t['delta'] * t['n']:+.0f} of {t['n']} items)",
-        f"{'McNemar':<28} b={t['b']} c={t['c']} p={t['p_value']:.4f}",
-        f"  -> {comparison['verdict']}",
-    ])
+    return "\n".join(
+        [
+            f"{comparison['name_a']:<28} {a['accuracy']:6.1%}  "
+            f"[{a['ci_low']:.1%}, {a['ci_high']:.1%}]  (n={a['n']})",
+            f"{comparison['name_b']:<28} {b['accuracy']:6.1%}  "
+            f"[{b['ci_low']:.1%}, {b['ci_high']:.1%}]  (n={b['n']})",
+            f"{'delta':<28} {t['delta']:+6.1%}  " f"({t['delta'] * t['n']:+.0f} of {t['n']} items)",
+            f"{'McNemar':<28} b={t['b']} c={t['c']} p={t['p_value']:.4f}",
+            f"  -> {comparison['verdict']}",
+        ]
+    )

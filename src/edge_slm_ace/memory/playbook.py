@@ -16,16 +16,15 @@ from datetime import datetime
 
 from edge_slm_ace.memory.relevance import LessonRelevance, blend
 
-
 # Default hyperparameters for retention scoring
 # These match the formal equation:
 # S(l_i, t) = α·(N_succ/N_used+ε) - β·(N_fail/N_used+ε) + γ·exp(-λ·(t-t_last)) - δ·V(l_i)
-DEFAULT_ALPHA = 1.0      # Weight for success ratio
-DEFAULT_BETA = 0.5       # Weight for failure ratio (penalty)
-DEFAULT_GAMMA = 0.3      # Weight for recency bonus
-DEFAULT_DELTA = 0.4      # Weight for vagueness penalty
-DEFAULT_LAMBDA = 0.05    # Decay rate for recency (smaller = slower decay)
-DEFAULT_EPSILON = 1.0    # Smoothing constant to avoid division by zero
+DEFAULT_ALPHA = 1.0  # Weight for success ratio
+DEFAULT_BETA = 0.5  # Weight for failure ratio (penalty)
+DEFAULT_GAMMA = 0.3  # Weight for recency bonus
+DEFAULT_DELTA = 0.4  # Weight for vagueness penalty
+DEFAULT_LAMBDA = 0.05  # Decay rate for recency (smaller = slower decay)
+DEFAULT_EPSILON = 1.0  # Smoothing constant to avoid division by zero
 
 # How much larger the store is than the prompt budget, when not set explicitly.
 # Must exceed 1 or retrieval has nothing to choose between.
@@ -35,17 +34,18 @@ DEFAULT_STORE_CAPACITY_MULTIPLIER = 4
 @dataclass
 class ScoringParams:
     """Hyperparameters for the retention scoring formula."""
-    alpha: float = DEFAULT_ALPHA      # Success ratio weight
-    beta: float = DEFAULT_BETA        # Failure ratio weight (penalty)
-    gamma: float = DEFAULT_GAMMA      # Recency bonus weight
-    delta: float = DEFAULT_DELTA      # Vagueness penalty weight
+
+    alpha: float = DEFAULT_ALPHA  # Success ratio weight
+    beta: float = DEFAULT_BETA  # Failure ratio weight (penalty)
+    gamma: float = DEFAULT_GAMMA  # Recency bonus weight
+    delta: float = DEFAULT_DELTA  # Vagueness penalty weight
     lambda_decay: float = DEFAULT_LAMBDA  # Recency decay rate
     epsilon: float = DEFAULT_EPSILON  # Smoothing constant
     # Ablation flags
     disable_vagueness_penalty: bool = False  # If True, set δ=0 (ignore vagueness term)
-    disable_recency_decay: bool = False      # If True, set γ=0 (ignore recency term)
-    disable_failure_penalty: bool = False   # If True, set β=0 (ignore failure term)
-    fifo_memory: bool = False                # If True, evict oldest-first instead of lowest-score
+    disable_recency_decay: bool = False  # If True, set γ=0 (ignore recency term)
+    disable_failure_penalty: bool = False  # If True, set β=0 (ignore failure term)
+    fifo_memory: bool = False  # If True, evict oldest-first instead of lowest-score
     # Weight on question-lesson relevance when ranking for retrieval. 0.0
     # reproduces the original domain-only behaviour, where every question in a
     # run received the identical lesson list.
@@ -84,47 +84,60 @@ def _normalize_for_comparison(text: str) -> str:
 def compute_vagueness_score(text: str) -> float:
     """
     Compute a vagueness/genericness score for a lesson.
-    
+
     Returns a score in [0, 1] where:
     - 0.0 = specific, actionable lesson
     - 1.0 = very vague/generic lesson
-    
+
     Heuristics used:
     - Presence of generic phrases
     - Very short text (< 5 words)
     - Low specificity (no numbers, formulas, or domain terms)
-    
+
     Args:
         text: The lesson text to score.
-        
+
     Returns:
         Vagueness score between 0 and 1.
     """
     text_lower = text.lower().strip()
     word_count = len(text.split())
-    
+
     score = 0.0
-    
+
     # Very short text is likely generic
     if word_count < 5:
         score += 0.5
     elif word_count < 10:
         score += 0.2
-    
+
     # Check for generic phrases
     generic_count = sum(1 for phrase in GENERIC_PHRASES if phrase in text_lower)
     if generic_count > 0:
         # More generic phrases = higher vagueness
         score += min(0.5, generic_count * 0.2)
-    
+
     # Check for specificity indicators (formulas, numbers, specific terms)
     has_numbers = any(c.isdigit() for c in text)
-    has_formula = any(sym in text for sym in ['=', '+', '-', '*', '/', '%', '^'])
-    has_specific_terms = any(term in text_lower for term in [
-        'formula', 'equation', 'calculate', 'multiply', 'divide', 
-        'subtract', 'add', 'percentage', 'ratio', 'if', 'when', 'then'
-    ])
-    
+    has_formula = any(sym in text for sym in ["=", "+", "-", "*", "/", "%", "^"])
+    has_specific_terms = any(
+        term in text_lower
+        for term in [
+            "formula",
+            "equation",
+            "calculate",
+            "multiply",
+            "divide",
+            "subtract",
+            "add",
+            "percentage",
+            "ratio",
+            "if",
+            "when",
+            "then",
+        ]
+    )
+
     # Reduce score for specific content
     if has_numbers:
         score -= 0.15
@@ -132,7 +145,7 @@ def compute_vagueness_score(text: str) -> float:
         score -= 0.15
     if has_specific_terms:
         score -= 0.1
-    
+
     # Clamp to [0, 1]
     return max(0.0, min(1.0, score))
 
@@ -140,7 +153,7 @@ def compute_vagueness_score(text: str) -> float:
 @dataclass
 class PlaybookEntry:
     """A single entry in the ACE playbook.
-    
+
     Attributes:
         id: Unique identifier for this entry.
         domain: Domain/task this lesson applies to (e.g., "finance", "medical").
@@ -152,6 +165,7 @@ class PlaybookEntry:
         token_count: Estimated token count for this entry's text.
         vagueness_score: Cached vagueness score (0=specific, 1=vague).
     """
+
     id: str
     domain: str
     text: str
@@ -166,7 +180,7 @@ class PlaybookEntry:
     harmful_count: int = 0
     last_seen_step: int = 0
     is_generic: bool = False
-    
+
     def __post_init__(self):
         """Initialize computed fields."""
         if self.created_at == 0.0:
@@ -183,7 +197,7 @@ class PlaybookEntry:
 
         # Update legacy field
         self.is_generic = self.vagueness_score > 0.5
-    
+
     def _estimate_tokens(self, tokens_per_word: float = 1.3) -> int:
         """
         Approximate the token count from the word count.
@@ -211,11 +225,11 @@ class PlaybookEntry:
         except Exception:
             self.token_count = self._estimate_tokens()
         return self.token_count
-    
+
     def total_uses(self) -> int:
         """Return total number of times this entry was used."""
         return self.success_count + self.failure_count
-    
+
     def score(
         self,
         current_step: int = 0,
@@ -223,11 +237,11 @@ class PlaybookEntry:
     ) -> float:
         """
         Compute the retention score for this entry.
-        
+
         Formula:
-        S(l_i, t) = α·(N_succ/(N_used+ε)) - β·(N_fail/(N_used+ε)) 
+        S(l_i, t) = α·(N_succ/(N_used+ε)) - β·(N_fail/(N_used+ε))
                   + γ·exp(-λ·(t - t_last)) - δ·V(l_i)
-        
+
         Ablation flags can disable individual terms:
         - disable_vagueness_penalty: Set δ=0
         - disable_recency_decay: Set γ=0
@@ -241,25 +255,25 @@ class PlaybookEntry:
         Args:
             current_step: Current step counter for recency calculation.
             params: Scoring hyperparameters (uses defaults if None).
-            
+
         Returns:
             Retention score (higher = better, should be retained).
         """
         if params is None:
             params = ScoringParams()
-        
+
         n_used = self.total_uses()
-        
+
         # Success ratio term: α · (N_succ / (N_used + ε))
         success_term = params.alpha * (self.success_count / (n_used + params.epsilon))
-        
+
         # Failure ratio term: β · (N_fail / (N_used + ε))
         # Disabled if disable_failure_penalty is True
         if params.disable_failure_penalty:
             failure_term = 0.0
         else:
             failure_term = params.beta * (self.failure_count / (n_used + params.epsilon))
-        
+
         # Recency term: γ · exp(-λ · (t - t_last))
         # Disabled if disable_recency_decay is True
         if params.disable_recency_decay:
@@ -267,14 +281,14 @@ class PlaybookEntry:
         else:
             age = max(0, current_step - self.last_used_at) if current_step > 0 else 0
             recency_term = params.gamma * math.exp(-params.lambda_decay * age)
-        
+
         # Vagueness penalty: δ · V(l_i)
         # Disabled if disable_vagueness_penalty is True
         if params.disable_vagueness_penalty:
             vagueness_term = 0.0
         else:
             vagueness_term = params.delta * self.vagueness_score
-        
+
         # Final score
         return success_term - failure_term + recency_term - vagueness_term
 
@@ -313,7 +327,7 @@ class PlaybookEntry:
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return asdict(self)
-    
+
     @classmethod
     def from_dict(cls, d: dict) -> "PlaybookEntry":
         """
@@ -347,16 +361,16 @@ class PlaybookEntry:
 
 class Playbook:
     """ACE-style playbook storing domain-specific strategies.
-    
+
     Supports two modes:
     - ace_full: Top-k entries per query (unbounded playbook size)
     - ace_working_memory: Token-budgeted entries (limited context window)
-    
+
     The playbook implements strategic forgetting via:
     - Retention scoring (success rate, recency, vagueness)
     - Token-budget eviction (remove lowest-score entries when over budget)
     """
-    
+
     def __init__(
         self,
         entries: Optional[List[PlaybookEntry]] = None,
@@ -367,7 +381,7 @@ class Playbook:
     ):
         """
         Initialize playbook.
-        
+
         Args:
             entries: Initial entries (optional).
             token_budget: Maximum total tokens for working memory mode (None = unlimited).
@@ -403,7 +417,7 @@ class Playbook:
             for entry in self.entries:
                 entry.recount_tokens(tokenizer)
         self._next_id = self._compute_next_id()
-    
+
     def _compute_next_id(self) -> int:
         """Return an id one past the highest numeric id currently in use."""
         max_id = 0
@@ -420,16 +434,16 @@ class Playbook:
     def total_tokens(self) -> int:
         """Return total token count across all entries."""
         return sum(e.token_count for e in self.entries)
-    
+
     def get_domain_tokens(self, domain: str) -> int:
         """Return total token count for a specific domain."""
         return sum(e.token_count for e in self.entries if e.domain == domain)
-    
+
     @classmethod
     def load(cls, path: Path, token_budget: Optional[int] = None, tokenizer=None) -> "Playbook":
         """
         Load playbook from a JSONL file.
-        
+
         Args:
             path: Path to JSONL file.
             token_budget: Token budget for working memory mode.
@@ -451,9 +465,9 @@ class Playbook:
                             # Skip malformed entries
                             print(f"Warning: Skipping malformed playbook entry: {e}")
                             continue
-        
+
         playbook = cls(entries, token_budget=token_budget, tokenizer=tokenizer)
-        
+
         # Set next_id past every existing id. Non-numeric ids used to be
         # skipped entirely, so a playbook containing any of them reset the
         # counter to 1 and minted duplicates on the next add. record_feedback
@@ -462,11 +476,11 @@ class Playbook:
         playbook._next_id = playbook._compute_next_id()
 
         return playbook
-    
+
     def save(self, path: Path) -> None:
         """
         Save playbook to a JSONL file.
-        
+
         Args:
             path: Path to save JSONL file.
         """
@@ -474,7 +488,7 @@ class Playbook:
         with open(path, "w", encoding="utf-8") as f:
             for entry in self.entries:
                 f.write(json.dumps(entry.to_dict()) + "\n")
-    
+
     def _rank_for_retrieval(
         self,
         domain: str,
@@ -501,9 +515,7 @@ class Playbook:
         if not domain_entries:
             return []
 
-        retention = [
-            e.retrieval_key(current_step, self.scoring_params) for e in domain_entries
-        ]
+        retention = [e.retrieval_key(current_step, self.scoring_params) for e in domain_entries]
 
         relevance = None
         weight = getattr(self.scoring_params, "relevance_weight", 0.0)
@@ -516,9 +528,9 @@ class Playbook:
                 relevance = None  # fall back to retention-only ranking
 
         keys = blend(retention, relevance, weight)
-        return [e for _, e in sorted(
-            zip(keys, domain_entries), key=lambda pair: pair[0], reverse=True
-        )]
+        return [
+            e for _, e in sorted(zip(keys, domain_entries), key=lambda pair: pair[0], reverse=True)
+        ]
 
     def get_top_k(
         self,
@@ -529,18 +541,18 @@ class Playbook:
     ) -> List[PlaybookEntry]:
         """
         Get the top-k entries for a domain.
-        
+
         Args:
             domain: Domain name (e.g., "finance", "medical").
             k: Number of entries to return.
             current_step: Current step counter for recency calculation.
             query: The question being answered, used to rank by relevance.
-            
+
         Returns:
             List of top-k PlaybookEntry objects.
         """
         return self._rank_for_retrieval(domain, current_step, query)[:k]
-    
+
     def get_top_entries_for_budget(
         self,
         domain: str,
@@ -550,10 +562,10 @@ class Playbook:
     ) -> List[PlaybookEntry]:
         """
         Get top entries for a domain that fit within a token budget.
-        
+
         Entries are sorted by retention score (descending) and greedily included
         until the estimated total token count <= token_budget.
-        
+
         Args:
             domain: Domain name (e.g., "finance", "medical").
             token_budget: Maximum number of tokens allowed.
@@ -567,16 +579,16 @@ class Playbook:
 
         selected_entries = []
         total_tokens = 0
-        
+
         for entry in domain_entries:
             if total_tokens + entry.token_count <= token_budget:
                 selected_entries.append(entry)
                 total_tokens += entry.token_count
             else:
                 break
-        
+
         return selected_entries
-    
+
     def _find_duplicate(self, domain: str, text: str) -> Optional[PlaybookEntry]:
         """
         Find an existing entry that duplicates `text`.
@@ -644,7 +656,7 @@ class Playbook:
                 existing.token_count = existing._estimate_tokens()
 
         return existing
-    
+
     def _evict_lowest_score_entries(
         self,
         domain: str,
@@ -653,12 +665,12 @@ class Playbook:
     ) -> int:
         """
         Evict lowest-scoring entries to free up tokens.
-        
+
         Args:
             domain: Domain to evict from.
             tokens_needed: Minimum tokens to free.
             current_step: Current step for scoring.
-            
+
         Returns:
             Number of tokens freed.
         """
@@ -666,24 +678,23 @@ class Playbook:
         # Under fifo_memory this is oldest-first; otherwise lowest-score-first.
         domain_entries = [e for e in self.entries if e.domain == domain]
         domain_entries.sort(
-            key=lambda e: e.eviction_key(current_step, self.scoring_params),
-            reverse=False
+            key=lambda e: e.eviction_key(current_step, self.scoring_params), reverse=False
         )
-        
+
         tokens_freed = 0
         entries_to_remove = set()
-        
+
         for entry in domain_entries:
             if tokens_freed >= tokens_needed:
                 break
             entries_to_remove.add(entry.id)
             tokens_freed += entry.token_count
-        
+
         # Remove evicted entries
         self.entries = [e for e in self.entries if e.id not in entries_to_remove]
-        
+
         return tokens_freed
-    
+
     def add_entry(
         self,
         domain: str,
@@ -693,20 +704,20 @@ class Playbook:
     ) -> Optional[PlaybookEntry]:
         """
         Add a new entry to the playbook, with deduplication and optional eviction.
-        
+
         If store_token_capacity is set and enforce_budget is True, this will
         evict entries (lowest-score, or oldest under FIFO) to make room.
-        
+
         NOTE: New entries are added WITHOUT any success/failure feedback.
         Feedback should only be recorded when the entry is actually USED
         in a subsequent prompt.
-        
+
         Args:
             domain: Domain name.
             text: Strategy/lesson text.
             step: Current step/index.
             enforce_budget: Whether to evict entries if over token budget.
-            
+
         Returns:
             The added or existing PlaybookEntry, or None if eviction failed.
         """
@@ -714,14 +725,14 @@ class Playbook:
         existing = self._find_duplicate(domain, text)
         if existing is not None:
             return self._resolve_duplicate(existing, text, step)
-        
+
         # Create new entry (no feedback yet)
         existing_ids = {e.id for e in self.entries}
         while str(self._next_id) in existing_ids:
             self._next_id += 1
         entry_id = str(self._next_id)
         self._next_id += 1
-        
+
         entry = PlaybookEntry(
             id=entry_id,
             domain=domain,
@@ -733,19 +744,15 @@ class Playbook:
         )
         if self.tokenizer is not None:
             entry.recount_tokens(self.tokenizer)
-        
+
         # Enforce the STORE capacity here. The prompt budget is applied at
         # retrieval time instead, so that ranking has candidates to reject.
         if self.store_token_capacity is not None and enforce_budget:
             domain_tokens = self.get_domain_tokens(domain)
             if domain_tokens + entry.token_count > self.store_token_capacity:
                 # Need to evict some entries
-                tokens_needed = (
-                    domain_tokens + entry.token_count
-                ) - self.store_token_capacity
-                tokens_freed = self._evict_lowest_score_entries(
-                    domain, tokens_needed, step
-                )
+                tokens_needed = (domain_tokens + entry.token_count) - self.store_token_capacity
+                tokens_freed = self._evict_lowest_score_entries(domain, tokens_needed, step)
 
                 if tokens_freed < tokens_needed:
                     # The budget is the invariant this class exists to
@@ -760,17 +767,17 @@ class Playbook:
 
         self.entries.append(entry)
         return entry
-    
+
     def record_feedback(self, entry_id: str, helpful: bool) -> bool:
         """
         Record feedback for an entry (success or failure).
-        
+
         This should ONLY be called when an entry was actually used in a prompt.
-        
+
         Args:
             entry_id: ID of the entry.
             helpful: True if the answer was correct, False otherwise.
-            
+
         Returns:
             True if entry was found and updated, False otherwise.
         """
@@ -783,17 +790,17 @@ class Playbook:
                     entry.failure_count += 1
                     entry.harmful_count += 1  # Legacy
                 return True
-        
+
         return False
-    
+
     def mark_entry_used(self, entry_id: str, step: int) -> bool:
         """
         Mark an entry as used at a specific step (for recency tracking).
-        
+
         Args:
             entry_id: ID of the entry.
             step: Current step counter.
-            
+
         Returns:
             True if entry was found and updated, False otherwise.
         """
@@ -803,7 +810,7 @@ class Playbook:
                 entry.last_seen_step = step  # Legacy
                 return True
         return False
-    
+
     def prune(
         self,
         max_entries_per_domain: int = 32,
@@ -811,45 +818,44 @@ class Playbook:
     ) -> int:
         """
         Prune playbook to keep only top entries per domain.
-        
+
         Args:
             max_entries_per_domain: Maximum entries to keep per domain.
             current_step: Current step for scoring.
-            
+
         Returns:
             Number of entries removed.
         """
         original_count = len(self.entries)
         domains = set(e.domain for e in self.entries)
         pruned_entries = []
-        
+
         for domain in domains:
             # Pruning is an eviction decision: keep the entries with the
             # highest eviction key, drop the rest.
             domain_entries = [e for e in self.entries if e.domain == domain]
             domain_entries.sort(
-                key=lambda e: e.eviction_key(current_step, self.scoring_params),
-                reverse=True
+                key=lambda e: e.eviction_key(current_step, self.scoring_params), reverse=True
             )
             pruned_entries.extend(domain_entries[:max_entries_per_domain])
-        
+
         self.entries = pruned_entries
         return original_count - len(self.entries)
-    
+
     def get_stats(self, domain: Optional[str] = None) -> dict:
         """
         Get statistics about the playbook.
-        
+
         Args:
             domain: Optional domain to filter by.
-            
+
         Returns:
             Dictionary with playbook statistics.
         """
         entries = self.entries
         if domain:
             entries = [e for e in entries if e.domain == domain]
-        
+
         if not entries:
             return {
                 "num_entries": 0,
@@ -857,10 +863,10 @@ class Playbook:
                 "avg_score": 0.0,
                 "avg_success_rate": 0.0,
             }
-        
+
         total_uses = sum(e.total_uses() for e in entries)
         total_successes = sum(e.success_count for e in entries)
-        
+
         return {
             "num_entries": len(entries),
             "total_tokens": sum(e.token_count for e in entries),

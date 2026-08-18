@@ -23,6 +23,7 @@ from edge_slm_ace.utils.device_utils import get_device
 def load_dataset(path: Path) -> list[dict]:
     """Load a dataset from a JSON file."""
     import json
+
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -93,13 +94,13 @@ def main():
         action="store_true",
         help="Automatically regenerate plots after all epochs complete (requires tinyace_plots.py)",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Validate epochs
     if args.epochs < 1:
         parser.error("--epochs must be at least 1")
-    
+
     # Get task config
     try:
         task_config = get_task_config(args.task_name)
@@ -108,35 +109,38 @@ def main():
     except KeyError as e:
         print(f"Error: {e}")
         return 1
-    
+
     # Resolve dataset path
     repo_root = Path(__file__).parent.parent
     dataset_path = repo_root / dataset_path_str
-    
+
     if not dataset_path.exists():
         print(f"Error: Dataset not found: {dataset_path}")
         return 1
-    
+
     # Load model config first (needed for device resolution)
     try:
         config = get_model_config(args.model_id)
     except Exception as e:
         print(f"Error: Failed to load model config: {e}")
         return 1
-    
+
     # Resolve device (with override support)
     # Note: load_model_and_tokenizer will handle tiny-gpt2 CPU override internally
     if args.device:
         from edge_slm_ace.utils.device_utils import resolve_device_override
+
         device, _ = resolve_device_override(args.device, model_id=config.model_id)
     else:
         device = get_device()
-    
+
     # Print summary
     mode_str = f"ACE ({args.ace_mode})" if args.epochs > 1 else "Baseline"
-    print(f"Model: {args.model_id} | Task: {args.task_name} | Mode: {mode_str} | Device override: {args.device or 'auto'}")
+    print(
+        f"Model: {args.model_id} | Task: {args.task_name} | Mode: {mode_str} | Device override: {args.device or 'auto'}"
+    )
     print(f"Using device: {device}\n")
-    
+
     # Load model and tokenizer (reused across epochs)
     print(f"Loading model: {config.model_id}")
     try:
@@ -149,31 +153,31 @@ def main():
     except Exception as e:
         print(f"Error: Failed to load model: {e}")
         return 1
-    
+
     # Load dataset
     try:
         dataset = load_dataset(dataset_path)
     except Exception as e:
         print(f"Error: Failed to load dataset: {e}")
         return 1
-    
+
     # Apply limit if specified
     if args.limit is not None:
-        dataset = dataset[:args.limit]
+        dataset = dataset[: args.limit]
         print(f"Limited to {len(dataset)} examples\n")
-    
+
     # Create output directory
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     sanitized_model_id = sanitize_model_id(config.model_id)
-    
+
     # Playbook path (shared across ACE epochs)
     playbook_path = output_dir / f"{args.task_name}_playbook.jsonl"
-    
+
     # Run epochs
     epoch_summaries = []
-    
+
     for epoch in range(args.epochs):
         print("=" * 60)
         if epoch == 0:
@@ -181,7 +185,7 @@ def main():
         else:
             print(f"Epoch {epoch}: ACE")
         print("=" * 60)
-        
+
         try:
             if epoch == 0:
                 # Baseline epoch
@@ -195,9 +199,11 @@ def main():
                     task_name=args.task_name,
                     mode="baseline",
                 )
-                
-                output_path = output_dir / f"{args.task_name}_{sanitized_model_id}_epoch0_baseline.csv"
-                
+
+                output_path = (
+                    output_dir / f"{args.task_name}_{sanitized_model_id}_epoch0_baseline.csv"
+                )
+
             else:
                 # ACE epochs
                 # Load or create playbook
@@ -205,7 +211,7 @@ def main():
                     playbook = Playbook.load(playbook_path)
                 else:
                     playbook = Playbook()
-                
+
                 results, summary = run_dataset_ace(
                     model=model,
                     tokenizer=tokenizer,
@@ -220,35 +226,38 @@ def main():
                     ace_mode=args.ace_mode,
                     token_budget=args.token_budget,
                 )
-                
+
                 output_path = output_dir / f"{args.task_name}_{sanitized_model_id}_epoch{epoch}.csv"
                 print(f"Playbook size: {len(playbook.entries)} entries")
-            
+
             # Save CSV
             df = pd.DataFrame(results)
             # Add epoch column for tracking
             df["epoch"] = epoch
             df.to_csv(output_path, index=False)
             print(f"Results saved to {output_path}")
-            
+
             # Store summary
-            epoch_summaries.append({
-                "epoch": epoch,
-                "mode": "baseline" if epoch == 0 else "ace",
-                "accuracy": summary["accuracy"],
-                "avg_latency_ms": summary["avg_latency_ms"],
-                "num_examples": summary["num_examples"],
-            })
-            
+            epoch_summaries.append(
+                {
+                    "epoch": epoch,
+                    "mode": "baseline" if epoch == 0 else "ace",
+                    "accuracy": summary["accuracy"],
+                    "avg_latency_ms": summary["avg_latency_ms"],
+                    "num_examples": summary["num_examples"],
+                }
+            )
+
             print(f"Accuracy: {summary['accuracy']:.3f}")
             print(f"Avg latency: {summary['avg_latency_ms']:.2f} ms\n")
-            
+
         except Exception as e:
             print(f"Error during epoch {epoch}: {e}")
             import traceback
+
             traceback.print_exc()
             continue
-    
+
     # Print final summary table
     print("\n" + "=" * 60)
     print("Epoch Summary")
@@ -256,15 +265,17 @@ def main():
     print(f"{'Epoch':<8} {'Mode':<12} {'Accuracy':<12} {'Avg Latency (ms)':<18} {'Examples':<10}")
     print("-" * 60)
     for s in epoch_summaries:
-        print(f"{s['epoch']:<8} {s['mode']:<12} {s['accuracy']:<12.3f} {s['avg_latency_ms']:<18.2f} {s['num_examples']:<10}")
+        print(
+            f"{s['epoch']:<8} {s['mode']:<12} {s['accuracy']:<12.3f} {s['avg_latency_ms']:<18.2f} {s['num_examples']:<10}"
+        )
     print("=" * 60)
-    
+
     # Optionally regenerate plots
     if args.auto_plots:
         try:
             # Import tinyace_plots module
             from scripts.tinyace_plots import main as regenerate_plots
-            
+
             print("\n" + "=" * 60)
             print("Regenerating plots...")
             print("=" * 60)
@@ -276,7 +287,7 @@ def main():
         except Exception as e:
             print(f"\nWarning: Plot regeneration failed: {e}")
             print("You can regenerate plots manually with: python tinyace_plots.py")
-    
+
     return 0
 
 
@@ -313,4 +324,3 @@ if __name__ == "__main__":
 #   --ace-mode ace_working_memory \
 #   --device cuda \
 #   --output-dir results/ace_phi3
-

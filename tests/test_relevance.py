@@ -74,7 +74,9 @@ class TestQueryConditionedRetrieval:
     def test_retrieval_follows_the_question(self, fake_relevance):
         playbook = self._playbook(relevance_weight=0.9)
         top = playbook.get_top_k(
-            "science", k=1, current_step=10,
+            "science",
+            k=1,
+            current_step=10,
             query="What makes global wind curve?",
         )
         assert "Coriolis" in top[0].text
@@ -82,7 +84,9 @@ class TestQueryConditionedRetrieval:
     def test_a_different_question_retrieves_a_different_lesson(self, fake_relevance):
         playbook = self._playbook(relevance_weight=0.9)
         top = playbook.get_top_k(
-            "science", k=1, current_step=10,
+            "science",
+            k=1,
+            current_step=10,
             query="How do I compute force from mass?",
         )
         assert "force" in top[0].text.lower()
@@ -97,7 +101,9 @@ class TestQueryConditionedRetrieval:
     def test_budgeted_retrieval_is_also_query_conditioned(self, fake_relevance):
         playbook = self._playbook(relevance_weight=0.9)
         top = playbook.get_top_entries_for_budget(
-            "science", token_budget=15, current_step=10,
+            "science",
+            token_budget=15,
+            current_step=10,
             query="What makes global wind curve?",
         )
         assert top and "Coriolis" in top[0].text

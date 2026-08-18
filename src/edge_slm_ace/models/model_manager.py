@@ -3,13 +3,15 @@
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.generation.utils import DynamicCache
+
 if not hasattr(DynamicCache, "seen_tokens"):
+
     @property
     def seen_tokens(self):
         return 0
+
     DynamicCache.seen_tokens = seen_tokens
 from typing import Optional
-
 
 # Models permitted to execute their own code from the Hub. Empty by default,
 # and never appended to automatically: the previous loader escalated to
@@ -117,7 +119,9 @@ def load_model_and_tokenizer(
     )
 
     if forced == "forced" and device.type == "cpu":
-        print("[model_manager] tiny-gpt2 detected -> forcing CPU (CUDA load blocked by torch >=2.6)")
+        print(
+            "[model_manager] tiny-gpt2 detected -> forcing CPU (CUDA load blocked by torch >=2.6)"
+        )
 
     # trust_remote_code is opt-in via the allowlist and is never escalated on
     # failure, since that would execute unreviewed code from the Hub.
@@ -316,7 +320,7 @@ def generate(
 
     # Decode output (skip the input tokens)
     try:
-        generated_ids = outputs[0][inputs["input_ids"].shape[1]:]
+        generated_ids = outputs[0][inputs["input_ids"].shape[1] :]
         generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
     except Exception as e:
         raise ValueError(f"Failed to decode output: {e}") from e
@@ -337,11 +341,11 @@ def generate(
 def count_tokens(tokenizer: AutoTokenizer, text: str) -> int:
     """
     Count the number of tokens in a text string.
-    
+
     Args:
         tokenizer: The tokenizer to use.
         text: Text to count tokens for.
-        
+
     Returns:
         Number of tokens.
     """
@@ -351,4 +355,3 @@ def count_tokens(tokenizer: AutoTokenizer, text: str) -> int:
     except Exception:
         # Fallback: approximate via word count
         return int(len(text.split()) * 1.3)
-

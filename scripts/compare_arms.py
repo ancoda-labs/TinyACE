@@ -69,19 +69,35 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("arms", nargs="*", type=str,
-                        help="Two predictions.jsonl paths to compare directly")
-    parser.add_argument("--results-root", type=str, default=None,
-                        help="Compare every arm found under this root")
-    parser.add_argument("--reference", type=str, default="baseline",
-                        help="Substring identifying the reference arm (default: baseline)")
-    parser.add_argument("--metric", type=str, default=None,
-                        choices=["oma_correct", "is_correct"],
-                        help="Correctness field (default: oma_correct when present)")
-    parser.add_argument("--confidence", type=float, default=0.95,
-                        choices=[0.90, 0.95, 0.99], help="Confidence level")
-    parser.add_argument("--json-out", type=str, default=None,
-                        help="Write the comparisons to a JSON file")
+    parser.add_argument(
+        "arms", nargs="*", type=str, help="Two predictions.jsonl paths to compare directly"
+    )
+    parser.add_argument(
+        "--results-root", type=str, default=None, help="Compare every arm found under this root"
+    )
+    parser.add_argument(
+        "--reference",
+        type=str,
+        default="baseline",
+        help="Substring identifying the reference arm (default: baseline)",
+    )
+    parser.add_argument(
+        "--metric",
+        type=str,
+        default=None,
+        choices=["oma_correct", "is_correct"],
+        help="Correctness field (default: oma_correct when present)",
+    )
+    parser.add_argument(
+        "--confidence",
+        type=float,
+        default=0.95,
+        choices=[0.90, 0.95, 0.99],
+        help="Confidence level",
+    )
+    parser.add_argument(
+        "--json-out", type=str, default=None, help="Write the comparisons to a JSON file"
+    )
 
     args = parser.parse_args()
 
@@ -90,13 +106,16 @@ def main() -> int:
     if len(args.arms) == 2:
         rows_a = load_predictions(Path(args.arms[0]))
         rows_b = load_predictions(Path(args.arms[1]))
-        comparisons.append(compare_arms(
-            rows_a, rows_b,
-            name_a=Path(args.arms[0]).parent.name,
-            name_b=Path(args.arms[1]).parent.name,
-            metric=_pick_metric(rows_a + rows_b, args.metric),
-            confidence=args.confidence,
-        ))
+        comparisons.append(
+            compare_arms(
+                rows_a,
+                rows_b,
+                name_a=Path(args.arms[0]).parent.name,
+                name_b=Path(args.arms[1]).parent.name,
+                metric=_pick_metric(rows_a + rows_b, args.metric),
+                confidence=args.confidence,
+            )
+        )
 
     elif args.results_root:
         root = Path(args.results_root)
@@ -128,12 +147,16 @@ def main() -> int:
                 if str(Path(label).parent.parent) != ref_prefix:
                     continue
                 rows = load_predictions(path)
-                comparisons.append(compare_arms(
-                    ref_rows, rows,
-                    name_a=ref_label, name_b=label,
-                    metric=_pick_metric(ref_rows + rows, args.metric),
-                    confidence=args.confidence,
-                ))
+                comparisons.append(
+                    compare_arms(
+                        ref_rows,
+                        rows,
+                        name_a=ref_label,
+                        name_b=label,
+                        metric=_pick_metric(ref_rows + rows, args.metric),
+                        confidence=args.confidence,
+                    )
+                )
     else:
         parser.error("Provide two predictions.jsonl paths, or --results-root")
 
@@ -145,8 +168,10 @@ def main() -> int:
     significant = [c for c in comparisons if c["mcnemar"]["significant_05"]]
     print()
     print("=" * 72)
-    print(f"{len(significant)} of {len(comparisons)} comparisons "
-          f"are distinguishable from noise at p<0.05.")
+    print(
+        f"{len(significant)} of {len(comparisons)} comparisons "
+        f"are distinguishable from noise at p<0.05."
+    )
     if comparisons and not significant:
         print("Report these as 'no detectable difference', not as an ordering.")
 

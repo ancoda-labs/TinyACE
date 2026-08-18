@@ -69,7 +69,7 @@ def load_dataset(path: Path) -> List[Dict]:
         else:
             # JSON: standard array format
             dataset = json.load(f)
-    
+
     # Schema validation for SciQ format (non-fatal, but raises clear errors)
     for example in dataset:
         ex_id = example.get("id", "unknown")
@@ -86,12 +86,12 @@ def load_dataset(path: Path) -> List[Dict]:
                 missing.append("distractor3")
             if "question" not in example or not example.get("question", "").strip():
                 missing.append("question")
-            
+
             if missing:
                 raise ValueError(
                     f"SciQ example '{ex_id}' missing required fields: {', '.join(missing)}"
                 )
-    
+
     return dataset
 
 
@@ -120,7 +120,7 @@ def save_run_metadata(metadata: Dict[str, Any], path: Path) -> None:
 def main() -> int:
     """
     Main CLI entrypoint for running experiments.
-    
+
     Returns:
         Exit code (0 for success, non-zero for error).
     """
@@ -145,9 +145,9 @@ Examples:
       --token-budget 500 \\
       --playbook-path playbooks/tatqa.jsonl \\
       --output-path results/ace.csv
-        """
+        """,
     )
-    
+
     # Required arguments
     parser.add_argument(
         "--model-id",
@@ -176,7 +176,7 @@ Examples:
         required=True,
         help="Path to save results CSV",
     )
-    
+
     # Dataset/task specification (one of these required)
     task_group = parser.add_mutually_exclusive_group()
     task_group.add_argument(
@@ -191,14 +191,14 @@ Examples:
         default=None,
         help="Path to JSON dataset file (use with --domain)",
     )
-    
+
     parser.add_argument(
         "--domain",
         type=str,
         default=None,
         help="Domain name (required if using --dataset-path instead of --task-name)",
     )
-    
+
     # Output paths
     parser.add_argument(
         "--metrics-path",
@@ -218,7 +218,7 @@ Examples:
         default=None,
         help="Run name for logging and metadata (optional)",
     )
-    
+
     # ACE-specific parameters
     parser.add_argument(
         "--playbook-path",
@@ -278,7 +278,7 @@ Examples:
         default=32,
         help="Maximum playbook entries per domain after pruning (default: 32)",
     )
-    
+
     # Ablation flags for retention scoring
     parser.add_argument(
         "--disable-vagueness-penalty",
@@ -308,7 +308,7 @@ Examples:
         action="store_true",
         help="Use FIFO eviction instead of scoring-based eviction",
     )
-    
+
     # Generation parameters
     parser.add_argument(
         "--max-new-tokens",
@@ -328,7 +328,7 @@ Examples:
         default=None,
         help="Override top_p from config",
     )
-    
+
     # Device and limits
     parser.add_argument(
         "--device",
@@ -349,7 +349,7 @@ Examples:
         default=DEFAULT_SEED,
         help=f"Random seed for decoding and MCQ option order (default: {DEFAULT_SEED})",
     )
-    
+
     # Other options
     parser.add_argument(
         "--auto-plots",
@@ -361,7 +361,7 @@ Examples:
         action="store_true",
         help="Suppress progress output",
     )
-    
+
     args = parser.parse_args()
 
     # Seed before anything touches an RNG (model load, sampling, option order).
@@ -371,18 +371,18 @@ Examples:
     # Track timing
     run_start_time = datetime.now()
     wall_start = time.time()
-    
+
     try:
         # Validate arguments
         if args.task_name is None and args.dataset_path is None:
             parser.error("Either --task-name or --dataset-path must be provided")
-        
+
         if args.dataset_path is not None and args.domain is None:
             parser.error("--domain is required when using --dataset-path")
-        
+
         if args.mode == "ace" and args.playbook_path is None:
             parser.error("--playbook-path is required for ACE mode")
-        
+
         # Resolve dataset path and domain
         if args.task_name:
             try:
@@ -398,14 +398,14 @@ Examples:
             dataset_path_str = args.dataset_path
             domain = args.domain
             task_name = Path(args.dataset_path).stem
-        
+
         # Load model config
         try:
             config = get_model_config(args.model_id)
         except Exception as e:
             print(f"Error: Failed to load model config for '{args.model_id}': {e}")
             return 1
-        
+
         # Override config parameters
         if args.max_new_tokens is not None:
             config.max_new_tokens = args.max_new_tokens
@@ -413,7 +413,7 @@ Examples:
             config.temperature = args.temperature
         if args.top_p is not None:
             config.top_p = args.top_p
-        
+
         # Resolve device
         device_requested = args.device or "auto"
         if args.device:
@@ -423,17 +423,17 @@ Examples:
             device = get_device()
             device_override_str = None
         device_used = str(device.type)
-        
+
         if not args.quiet:
             print(f"Using device: {device} (requested: {device_requested})")
-        
+
         # Track peak memory during model loading and evaluation
         memory_tracker = PeakMemoryTracker()
-        
+
         # Load model and tokenizer (within memory tracking)
         if not args.quiet:
             print(f"Loading model: {config.model_id}")
-        
+
         try:
             with memory_tracker:
                 model, tokenizer = load_model_and_tokenizer(
@@ -443,27 +443,29 @@ Examples:
                 )
                 if not args.quiet:
                     print("Model loaded successfully.")
-                
+
                 # Load dataset
                 dataset_path = Path(dataset_path_str)
                 if not dataset_path.exists():
                     print(f"Error: Dataset not found: {dataset_path}")
                     return 1
-                
+
                 try:
                     dataset = load_dataset(dataset_path)
                 except Exception as e:
                     print(f"Error: Failed to load dataset: {e}")
                     return 1
-                
+
                 original_size = len(dataset)
                 if args.limit is not None:
-                    dataset = dataset[:args.limit]
-                
+                    dataset = dataset[: args.limit]
+
                 if not args.quiet:
-                    print(f"Loaded {len(dataset)} examples from {dataset_path}" + 
-                          (f" (limited from {original_size})" if args.limit else ""))
-                
+                    print(
+                        f"Loaded {len(dataset)} examples from {dataset_path}"
+                        + (f" (limited from {original_size})" if args.limit else "")
+                    )
+
                 # Run evaluation (still within memory tracking)
                 if args.mode == "baseline":
                     if not args.quiet:
@@ -480,7 +482,7 @@ Examples:
                         option_shuffle_seed=args.seed,
                     )
                     playbook_stats = None
-                    
+
                 elif args.mode in ("self_refine", "self_refine_oracle"):
                     oracle = args.mode == "self_refine_oracle"
                     if not args.quiet:
@@ -502,7 +504,7 @@ Examples:
                         oracle=oracle,
                     )
                     playbook_stats = None
-                    
+
                 else:  # ACE mode, or the prompt-matched control
                     enable_learning = args.mode == "ace"
                     if not args.quiet:
@@ -520,7 +522,7 @@ Examples:
                         args.playbook_path
                         or (Path(args.output_path).parent / "playbook_control.jsonl")
                     )
-                    
+
                     # Create scoring params with ablation flags
                     scoring_params = ScoringParams(
                         disable_vagueness_penalty=args.disable_vagueness_penalty,
@@ -529,7 +531,7 @@ Examples:
                         fifo_memory=args.fifo_memory,
                         relevance_weight=args.relevance_weight,
                     )
-                    
+
                     # Load or create playbook. The control arm always starts
                     # empty -- loading a previous run's lessons would defeat
                     # the point of it being a control.
@@ -544,8 +546,7 @@ Examples:
                         # Update scoring params
                         playbook.scoring_params = scoring_params
                         playbook.store_token_capacity = (
-                            args.store_token_capacity
-                            or playbook.store_token_capacity
+                            args.store_token_capacity or playbook.store_token_capacity
                         )
                     else:
                         if not args.quiet:
@@ -556,9 +557,9 @@ Examples:
                             tokenizer=tokenizer,
                             store_token_capacity=args.store_token_capacity,
                         )
-                    
+
                     initial_playbook_size = len(playbook.entries)
-                    
+
                     results, summary = run_dataset_ace(
                         model=model,
                         tokenizer=tokenizer,
@@ -579,14 +580,14 @@ Examples:
                         enable_learning=enable_learning,
                         use_curator=not args.no_curator,
                     )
-                    
+
                     playbook_stats = {
                         "initial_size": initial_playbook_size,
                         "final_size": len(playbook.entries),
                         "entries_added": len(playbook.entries) - initial_playbook_size,
                         "domain_stats": playbook.get_stats(domain),
                     }
-                    
+
                     # Save playbook log if available
                     playbook_log = summary.get("playbook_log", [])
                     if playbook_log and args.metrics_path:
@@ -595,34 +596,40 @@ Examples:
                             writer = csv.DictWriter(
                                 f,
                                 fieldnames=[
-                                    "step_index", "num_entries", "total_tokens",
-                                    "num_evictions", "retention_score_std",
-                                    "num_retrieved", "num_credited", "credit_mode",
+                                    "step_index",
+                                    "num_entries",
+                                    "total_tokens",
+                                    "num_evictions",
+                                    "retention_score_std",
+                                    "num_retrieved",
+                                    "num_credited",
+                                    "credit_mode",
                                 ],
                             )
                             writer.writeheader()
                             writer.writerows(playbook_log)
                         if not args.quiet:
                             print(f"Playbook log saved to {playbook_log_path}")
-                    
+
                     if not args.quiet:
-                        print(f"Playbook: {initial_playbook_size} → {len(playbook.entries)} entries")
-                
+                        print(
+                            f"Playbook: {initial_playbook_size} → {len(playbook.entries)} entries"
+                        )
+
                 # Update memory tracker one final time
                 memory_tracker.update()
         except Exception as e:
             print(f"Error: Failed to load model '{config.model_id}': {e}")
             return 1
-        
-        
+
         # Calculate wall time
         wall_time_seconds = time.time() - wall_start
-        
+
         # Extract latency statistics from results
         latencies_sec = [r.get("latency_sec", 0.0) for r in results if "latency_sec" in r]
         avg_latency_sec = statistics.mean(latencies_sec) if latencies_sec else None
         median_latency_sec = statistics.median(latencies_sec) if latencies_sec else None
-        
+
         # Compute semantic similarity for each result (if ground truth available)
         semantic_evaluator = None
         semantic_similarities = []
@@ -631,32 +638,31 @@ Examples:
         except Exception as e:
             if not args.quiet:
                 print(f"Warning: Semantic similarity unavailable: {e}")
-        
+
         if semantic_evaluator:
             for result in results:
                 if "gold" in result and "pred" in result:
                     similarity = semantic_evaluator.compute_similarity(
-                        result["pred"],
-                        result["gold"]
+                        result["pred"], result["gold"]
                     )
                     result["semantic_similarity"] = similarity
                     semantic_similarities.append(similarity)
                 else:
                     semantic_similarities.append(0.0)
-        
+
         # Compute average semantic similarity
         avg_semantic_similarity = None
         if semantic_similarities:
             avg_semantic_similarity = sum(semantic_similarities) / len(semantic_similarities)
-        
+
         # Save results CSV
         output_path = Path(args.output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         df = pd.DataFrame(results)
-        df.to_csv(output_path, index=False, encoding='utf-8')
+        df.to_csv(output_path, index=False, encoding="utf-8")
         if not args.quiet:
             print(f"Results saved to {output_path}")
-        
+
         # Build comprehensive metrics
         metrics = {
             "run_name": args.run_name or f"{task_name}_{args.mode}",
@@ -680,7 +686,9 @@ Examples:
             "num_examples": len(dataset),
             "limit_applied": args.limit,
             "peak_memory_mb": memory_tracker.peak_memory_mb,
-            "peak_gpu_memory_mb": memory_tracker.peak_gpu_memory_mb if memory_tracker.peak_gpu_memory_mb > 0 else None,
+            "peak_gpu_memory_mb": (
+                memory_tracker.peak_gpu_memory_mb if memory_tracker.peak_gpu_memory_mb > 0 else None
+            ),
             "avg_semantic_similarity": avg_semantic_similarity,
             # Latency metrics
             "avg_latency_sec": avg_latency_sec or summary.get("avg_latency_sec"),
@@ -690,22 +698,22 @@ Examples:
             "final_playbook_total_tokens": summary.get("final_playbook_total_tokens"),
             **summary,
         }
-        
+
         if playbook_stats:
             metrics["playbook"] = playbook_stats
-        
+
         # Save metrics JSON if requested
         if args.metrics_path:
             save_metrics(metrics, Path(args.metrics_path))
             if not args.quiet:
                 print(f"Metrics saved to {args.metrics_path}")
-        
+
         # Save predictions JSONL if requested
         if args.predictions_path:
             save_predictions(results, Path(args.predictions_path))
             if not args.quiet:
                 print(f"Predictions saved to {args.predictions_path}")
-        
+
         # Print summary
         if not args.quiet:
             print("\n" + "=" * 50)
@@ -718,15 +726,17 @@ Examples:
             print(f"Avg Latency: {summary.get('avg_latency_ms', 0):.1f}ms")
             print(f"Wall Time: {wall_time_seconds:.1f}s")
             if playbook_stats:
-                print(f"Playbook: {playbook_stats['initial_size']} → {playbook_stats['final_size']} entries")
+                print(
+                    f"Playbook: {playbook_stats['initial_size']} → {playbook_stats['final_size']} entries"
+                )
             print("=" * 50)
-        
+
         # Optionally regenerate plots
         if args.auto_plots:
             try:
                 import sys
                 from scripts.tinyace_plots import main as regenerate_plots
-                
+
                 if not args.quiet:
                     print("\nRegenerating plots...")
                 regenerate_plots(results_dir="results", output_dir="tinyace_plots")
@@ -735,19 +745,21 @@ Examples:
             except Exception as e:
                 if not args.quiet:
                     print(f"Warning: Plot regeneration failed: {e}")
-        
+
         return 0
-        
+
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
         return 130
     except Exception as e:
         print(f"\nUnexpected error: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(main())

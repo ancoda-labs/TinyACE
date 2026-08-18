@@ -6,7 +6,6 @@ from typing import Dict, Optional
 
 import torch
 
-
 # ACE mode constants
 ACE_MODE_FULL = "ace_full"
 ACE_MODE_WORKING = "ace_working_memory"
@@ -15,11 +14,12 @@ ACE_MODE_WORKING = "ace_working_memory"
 @dataclass
 class ModelConfig:
     """Configuration for a language model."""
+
     model_id: str
     max_new_tokens: int = 256
     temperature: float = 0.7
     top_p: float = 0.95
-    
+
     def __post_init__(self):
         """Validate configuration values."""
         assert 0.0 <= self.temperature <= 2.0, "Temperature must be in [0, 2]"
@@ -214,13 +214,13 @@ def validate_task_registry() -> Dict[str, str]:
 def get_task_config(task_name: str) -> Dict[str, str]:
     """
     Get task configuration by name.
-    
+
     Args:
         task_name: Task name from TASK_CONFIGS.
-        
+
     Returns:
         Dict with 'path' and 'domain' keys.
-        
+
     Raises:
         KeyError: If task_name is not found.
     """
@@ -229,4 +229,3 @@ def get_task_config(task_name: str) -> Dict[str, str]:
             f"Task '{task_name}' not found. Available tasks: {list(TASK_CONFIGS.keys())}"
         )
     return TASK_CONFIGS[task_name]
-

@@ -65,9 +65,7 @@ class LessonRelevance:
         try:
             from sentence_transformers import SentenceTransformer
 
-            LessonRelevance._model = SentenceTransformer(
-                "sentence-transformers/all-MiniLM-L6-v2"
-            )
+            LessonRelevance._model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
         except Exception:
             # No encoder available. `available` reports False and callers fall
             # back to retention-only ranking rather than failing the run.

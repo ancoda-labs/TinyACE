@@ -41,28 +41,28 @@ def load_grid_config(config_path: Path) -> Dict[str, Any]:
 def check_device_availability(device: str) -> Tuple[bool, str]:
     """
     Check if a device is available.
-    
+
     Args:
         device: Device name ("cpu", "cuda", "mps").
-        
+
     Returns:
         Tuple of (is_available, fallback_device).
     """
     if device == "cpu":
         return True, "cpu"
-    
+
     if device == "cuda":
         if torch.cuda.is_available():
             return True, "cuda"
         else:
             return False, "cpu"
-    
+
     if device == "mps":
         if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             return True, "mps"
         else:
             return False, "cpu"
-    
+
     return False, "cpu"
 
 
@@ -94,44 +94,57 @@ def build_experiment_command(
 ) -> List[str]:
     """Build the command to run a single experiment."""
     cmd = [
-        sys.executable, "-m", "scripts.run_experiment",
-        "--model-id", model_config["hf_id"],
-        "--task-name", task_config["task_name"],
-        "--mode", mode_config["mode"],
-        "--output-path", str(output_dir / "results.csv"),
-        "--metrics-path", str(output_dir / "metrics.json"),
-        "--predictions-path", str(output_dir / "predictions.jsonl"),
-        "--device", device,
+        sys.executable,
+        "-m",
+        "scripts.run_experiment",
+        "--model-id",
+        model_config["hf_id"],
+        "--task-name",
+        task_config["task_name"],
+        "--mode",
+        mode_config["mode"],
+        "--output-path",
+        str(output_dir / "results.csv"),
+        "--metrics-path",
+        str(output_dir / "metrics.json"),
+        "--predictions-path",
+        str(output_dir / "predictions.jsonl"),
+        "--device",
+        device,
     ]
-    
+
     # Add ACE-specific parameters. cot_control shares the ACE prompt path
     # (that is the point of it), so it takes the same scaffold arguments.
     if mode_config["mode"] in ("ace", "cot_control"):
         ace_mode = mode_config.get("ace_mode", "ace_full")
         cmd.extend(["--ace-mode", ace_mode])
-        
+
         # Playbook path
         playbook_dir = defaults.get("playbook_dir", "playbooks")
-        playbook_filename = f"{task_config['task_name']}_{sanitize_for_path(model_config['name'])}.jsonl"
+        playbook_filename = (
+            f"{task_config['task_name']}_{sanitize_for_path(model_config['name'])}.jsonl"
+        )
         playbook_path = output_dir / "playbook.jsonl"
         cmd.extend(["--playbook-path", str(playbook_path)])
-        
+
         # Token budget (for working memory mode)
         # Support both token_budget and working_memory_token_budget
-        token_budget = mode_config.get("working_memory_token_budget") or mode_config.get("token_budget")
+        token_budget = mode_config.get("working_memory_token_budget") or mode_config.get(
+            "token_budget"
+        )
         if token_budget:
             cmd.extend(["--token-budget", str(token_budget)])
-        
+
         # Top-k
         if "top_k" in mode_config:
             cmd.extend(["--top-k", str(mode_config["top_k"])])
-        
+
         # Pruning settings
         if "prune_every_n" in mode_config:
             cmd.extend(["--prune-every-n", str(mode_config["prune_every_n"])])
         if "max_entries_per_domain" in mode_config:
             cmd.extend(["--max-entries-per-domain", str(mode_config["max_entries_per_domain"])])
-        
+
         # Ablation flags (learning-only; a control has nothing to ablate)
         if mode_config.get("disable_vagueness_penalty"):
             cmd.extend(["--disable-vagueness-penalty"])
@@ -146,15 +159,13 @@ def build_experiment_command(
         if "relevance_weight" in mode_config:
             cmd.extend(["--relevance-weight", str(mode_config["relevance_weight"])])
         if "store_token_capacity" in mode_config:
-            cmd.extend(
-                ["--store-token-capacity", str(mode_config["store_token_capacity"])]
-            )
-    
+            cmd.extend(["--store-token-capacity", str(mode_config["store_token_capacity"])])
+
     # Add limit if specified
     effective_limit = limit or defaults.get("limit")
     if effective_limit:
         cmd.extend(["--limit", str(effective_limit)])
-    
+
     # Add generation parameters from defaults
     if "max_new_tokens" in defaults:
         cmd.extend(["--max-new-tokens", str(defaults["max_new_tokens"])])
@@ -162,14 +173,14 @@ def build_experiment_command(
         cmd.extend(["--temperature", str(defaults["temperature"])])
     if "top_p" in defaults:
         cmd.extend(["--top-p", str(defaults["top_p"])])
-    
+
     # Seed (forwarded so every cell of the grid is reproducible)
     cmd.extend(["--seed", str(seed)])
 
     # Run name
     run_name = f"{model_config['name']}_{task_config['name']}_{mode_config['name']}_{device}"
     cmd.extend(["--run-name", run_name])
-    
+
     return cmd
 
 
@@ -210,9 +221,11 @@ def run_experiment(
         if show_progress:
             # Stream output to terminal AND capture to logs
             # Open log files for writing
-            with open(stdout_log, "w", encoding="utf-8") as stdout_f, \
-                 open(stderr_log, "w", encoding="utf-8") as stderr_f, \
-                 open(combined_log, "w", encoding="utf-8") as combined_f:
+            with (
+                open(stdout_log, "w", encoding="utf-8") as stdout_f,
+                open(stderr_log, "w", encoding="utf-8") as stderr_f,
+                open(combined_log, "w", encoding="utf-8") as combined_f,
+            ):
 
                 # Run with streaming output
                 process = subprocess.Popen(
@@ -228,7 +241,7 @@ def run_experiment(
                 # Thread to read stdout
                 def read_stdout():
                     for line in process.stdout:
-                        print(line, end='')  # Print to terminal
+                        print(line, end="")  # Print to terminal
                         stdout_f.write(line)  # Write to stdout log
                         combined_f.write(line)  # Write to combined log
                         stdout_f.flush()
@@ -237,7 +250,7 @@ def run_experiment(
                 # Thread to read stderr
                 def read_stderr():
                     for line in process.stderr:
-                        print(line, end='', file=sys.stderr)  # Print to terminal
+                        print(line, end="", file=sys.stderr)  # Print to terminal
                         stderr_f.write(line)  # Write to stderr log
                         combined_f.write(line)  # Write to combined log
                         stderr_f.flush()
@@ -305,7 +318,7 @@ def main() -> int:
         description="Run experiments for all combinations in a grid configuration.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    
+
     parser.add_argument(
         "--config",
         type=str,
@@ -351,28 +364,28 @@ def main() -> int:
         default=True,
         help="Skip experiments for unavailable devices (default: True)",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Load configuration
     config_path = Path(args.config)
     if not config_path.exists():
         print(f"Error: Config file not found: {config_path}")
         return 1
-    
+
     try:
         config = load_grid_config(config_path)
     except Exception as e:
         print(f"Error: Failed to load config: {e}")
         return 1
-    
+
     # Extract configuration sections
     models = config.get("models", [])
     tasks = config.get("tasks", [])
     modes = config.get("modes", [])
     devices = config.get("devices", ["cpu"])
     defaults = config.get("defaults", {})
-    
+
     if not models:
         print("Error: No models specified in config")
         return 1
@@ -382,10 +395,10 @@ def main() -> int:
     if not modes:
         print("Error: No modes specified in config")
         return 1
-    
+
     # Calculate total experiments
     total_experiments = len(models) * len(tasks) * len(modes) * len(devices)
-    
+
     print(f"=" * 60)
     print(f"Experiment Grid Runner")
     print(f"=" * 60)
@@ -398,54 +411,56 @@ def main() -> int:
     if args.dry_run:
         print(f"Mode: DRY RUN")
     print(f"=" * 60)
-    
+
     # Track results
     results = {
         "success": [],
         "failed": [],
         "skipped": [],
     }
-    
+
     start_time = time.time()
     experiment_num = 0
-    
+
     # Iterate over all combinations
     for model_config in models:
         model_name = model_config.get("name", model_config.get("hf_id", "unknown"))
-        
+
         for task_config in tasks:
             task_name = task_config.get("name", task_config.get("task_name", "unknown"))
-            
+
             for mode_config in modes:
                 mode_name = mode_config.get("name", mode_config.get("mode", "unknown"))
-                
+
                 for device in devices:
                     experiment_num += 1
                     experiment_id = f"{model_name}/{task_name}/{mode_name}/{device}"
-                    
+
                     print(f"\n[{experiment_num}/{total_experiments}] {experiment_id}")
-                    
+
                     # Check device availability
                     device_available, fallback_device = check_device_availability(device)
-                    
+
                     if not device_available:
                         if args.skip_unavailable_devices:
                             print(f"  ⚠ Device '{device}' not available, skipping")
-                            results["skipped"].append({
-                                "experiment": experiment_id,
-                                "reason": f"Device '{device}' not available",
-                            })
+                            results["skipped"].append(
+                                {
+                                    "experiment": experiment_id,
+                                    "reason": f"Device '{device}' not available",
+                                }
+                            )
                             continue
                         else:
                             print(f"  ⚠ Device '{device}' not available, using '{fallback_device}'")
                             device = fallback_device
-                    
+
                     # Build output directory
                     results_root = defaults.get("results_root", "results")
                     output_dir = build_output_dir(
                         results_root, model_name, task_name, mode_name, device
                     )
-                    
+
                     # Build command
                     cmd = build_experiment_command(
                         model_config=model_config,
@@ -457,10 +472,10 @@ def main() -> int:
                         limit=args.limit,
                         seed=args.seed,
                     )
-                    
+
                     if args.verbose or args.dry_run:
                         print(f"  Output: {output_dir}")
-                    
+
                     # Run experiment
                     show_progress = args.show_progress and not args.no_progress
                     success, error_msg = run_experiment(
@@ -470,24 +485,28 @@ def main() -> int:
                         verbose=args.verbose,
                         show_progress=show_progress,
                     )
-                    
+
                     if success:
                         if not args.dry_run:
                             print(f"  ✓ Success")
-                        results["success"].append({
-                            "experiment": experiment_id,
-                            "output_dir": str(output_dir),
-                        })
+                        results["success"].append(
+                            {
+                                "experiment": experiment_id,
+                                "output_dir": str(output_dir),
+                            }
+                        )
                     else:
                         print(f"  ✗ Failed: {error_msg[:200] if error_msg else 'Unknown error'}")
-                        results["failed"].append({
-                            "experiment": experiment_id,
-                            "error": error_msg,
-                        })
-    
+                        results["failed"].append(
+                            {
+                                "experiment": experiment_id,
+                                "error": error_msg,
+                            }
+                        )
+
     # Print summary
     elapsed_time = time.time() - start_time
-    
+
     print(f"\n" + "=" * 60)
     print(f"Grid Run Complete")
     print(f"=" * 60)
@@ -495,19 +514,19 @@ def main() -> int:
     print(f"Successful: {len(results['success'])}")
     print(f"Failed: {len(results['failed'])}")
     print(f"Skipped: {len(results['skipped'])}")
-    
+
     if results["failed"]:
         print(f"\nFailed experiments:")
         for failure in results["failed"]:
             print(f"  - {failure['experiment']}")
-    
+
     if results["skipped"]:
         print(f"\nSkipped experiments:")
         for skipped in results["skipped"]:
             print(f"  - {skipped['experiment']}: {skipped['reason']}")
-    
+
     print(f"=" * 60)
-    
+
     # Return non-zero if any experiments failed
     return 1 if results["failed"] else 0
 

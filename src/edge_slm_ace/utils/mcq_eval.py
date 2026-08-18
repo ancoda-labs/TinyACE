@@ -15,7 +15,7 @@ New Metrics:
 
 Usage:
     from edge_slm_ace.utils.mcq_eval import MCQEvaluator, is_sciq_task
-    
+
     if is_sciq_task(task_name):
         evaluator = MCQEvaluator.get_instance()
         metrics = evaluator.evaluate_mcq(
@@ -90,12 +90,12 @@ def apply_permutation(
 def is_sciq_task(task_name: str) -> bool:
     """
     Check if a task is SciQ-style (MCQ with options).
-    
+
     Gated by task name to ensure backward compatibility with other datasets.
-    
+
     Args:
         task_name: The task name (e.g., "sciq_tiny", "sciq_test").
-        
+
     Returns:
         True if the task is SciQ-style, False otherwise.
     """
@@ -107,28 +107,32 @@ def is_sciq_task(task_name: str) -> bool:
 def has_mcq_options(example: Dict) -> bool:
     """
     Check if an example has MCQ options (SciQ format).
-    
+
     Supports two formats:
     1. Legacy: correct_answer + distractor1/2/3
     2. New: options (list) + gold_option_idx (int)
-    
+
     Args:
         example: A dataset example dict.
-        
+
     Returns:
         True if the example has MCQ options in either format.
     """
     # Check for new format: options list + gold_option_idx
-    if "options" in example and isinstance(example.get("options"), list) and len(example.get("options", [])) == 4:
+    if (
+        "options" in example
+        and isinstance(example.get("options"), list)
+        and len(example.get("options", [])) == 4
+    ):
         if "gold_option_idx" in example:
             return True
-    
+
     # Check for legacy format: correct_answer + distractors
     return (
-        "correct_answer" in example and
-        "distractor1" in example and
-        "distractor2" in example and
-        "distractor3" in example
+        "correct_answer" in example
+        and "distractor1" in example
+        and "distractor2" in example
+        and "distractor3" in example
     )
 
 
@@ -224,7 +228,7 @@ def extract_mcq_options_with_indices(
             str(example.get("id", "unknown")), n_options=4, shuffle_seed=shuffle_seed
         )
         return apply_permutation(options, gold_idx, perm)
-    
+
     # No options found
     raise ValueError("Example does not contain MCQ options in supported formats")
 
@@ -240,15 +244,15 @@ def extract_mcq_options_with_indices(
 # here is unambiguous.
 _STRONG_CHOICE_PATTERNS = [
     # "Answer: X" or "answer: X"
-    re.compile(r'\banswer\s*[:=]\s*\(?([ABCD])\)?', re.IGNORECASE),
+    re.compile(r"\banswer\s*[:=]\s*\(?([ABCD])\)?", re.IGNORECASE),
     # "The answer is X"
-    re.compile(r'\bthe\s+answer\s+is\s+\(?([ABCD])\)?', re.IGNORECASE),
+    re.compile(r"\bthe\s+answer\s+is\s+\(?([ABCD])\)?", re.IGNORECASE),
     # "answer is X"
-    re.compile(r'\banswer\s+is\s+\(?([ABCD])\)?', re.IGNORECASE),
+    re.compile(r"\banswer\s+is\s+\(?([ABCD])\)?", re.IGNORECASE),
     # "Option X" or "option X"
-    re.compile(r'\boption\s+\(?([ABCD])\)?', re.IGNORECASE),
+    re.compile(r"\boption\s+\(?([ABCD])\)?", re.IGNORECASE),
     # "I choose X" or "I select X"
-    re.compile(r'\b(?:choose|select)\s+\(?([ABCD])\)?', re.IGNORECASE),
+    re.compile(r"\b(?:choose|select)\s+\(?([ABCD])\)?", re.IGNORECASE),
 ]
 
 # Weak patterns: a bare letter that *might* be a choice. "(A)" also matches a
@@ -256,9 +260,9 @@ _STRONG_CHOICE_PATTERNS = [
 # so these rank below an exact option-text match when mapping predictions.
 _WEAK_CHOICE_PATTERNS = [
     # "(X)" anywhere
-    re.compile(r'\(([ABCD])\)', re.IGNORECASE),
+    re.compile(r"\(([ABCD])\)", re.IGNORECASE),
     # Standalone letter at end of text
-    re.compile(r'\b([ABCD])\b\s*[.!?\s]*$', re.IGNORECASE),
+    re.compile(r"\b([ABCD])\b\s*[.!?\s]*$", re.IGNORECASE),
 ]
 
 _ACR_PATTERNS = _STRONG_CHOICE_PATTERNS + _WEAK_CHOICE_PATTERNS
@@ -267,27 +271,27 @@ _ACR_PATTERNS = _STRONG_CHOICE_PATTERNS + _WEAK_CHOICE_PATTERNS
 def detect_choice_marker(text: str) -> Optional[str]:
     """
     Detect if the model output contains a clear choice marker (A/B/C/D).
-    
+
     This is used for the Answerable Choice Rate (ACR) metric, which measures
     format adherence in MCQ responses.
-    
+
     Args:
         text: The model's output text.
-        
+
     Returns:
         The detected choice letter (A/B/C/D) if found, None otherwise.
     """
     if not text:
         return None
-    
+
     text = text.strip()
-    
+
     # Try each pattern in priority order
     for pattern in _ACR_PATTERNS:
         match = pattern.search(text)
         if match:
             return match.group(1).upper()
-    
+
     return None
 
 
@@ -400,33 +404,34 @@ def map_prediction_to_option(
 class MCQEvaluator:
     """
     Singleton evaluator for MCQ-aware metrics using semantic embeddings.
-    
+
     Reuses the SemanticEvaluator's model to avoid loading embeddings twice.
-    
+
     Usage:
         evaluator = MCQEvaluator.get_instance()
         result = evaluator.evaluate_mcq(prediction, options, gold_option)
     """
-    
+
     _instance = None
     _semantic_model = None
-    
+
     def __init__(self):
         """Private constructor - use get_instance() instead."""
         self._load_model()
-    
+
     @classmethod
     def get_instance(cls) -> "MCQEvaluator":
         """Get singleton instance of MCQEvaluator."""
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
-    
+
     def _load_model(self):
         """Load the semantic model (reuse from SemanticEvaluator if available)."""
         # Try to reuse existing model from SemanticEvaluator
         try:
             from edge_slm_ace.utils.metrics import SemanticEvaluator
+
             se = SemanticEvaluator.get_instance()
             # Access the class-level model
             if SemanticEvaluator._model is not None:
@@ -434,10 +439,11 @@ class MCQEvaluator:
                 return
         except Exception:
             pass
-        
+
         # Fallback: load our own model
         try:
             from sentence_transformers import SentenceTransformer
+
             MCQEvaluator._semantic_model = SentenceTransformer(
                 "sentence-transformers/all-MiniLM-L6-v2"
             )
@@ -446,7 +452,7 @@ class MCQEvaluator:
                 "sentence-transformers is required for MCQEvaluator. "
                 "Install with: pip install sentence-transformers"
             )
-    
+
     def compute_similarities(
         self,
         prediction: str,
@@ -454,20 +460,20 @@ class MCQEvaluator:
     ) -> np.ndarray:
         """
         Compute cosine similarities between prediction and each option.
-        
+
         Args:
             prediction: The model's prediction text.
             option_texts: List of option texts to compare against.
-            
+
         Returns:
             Array of similarity scores (one per option).
         """
         if MCQEvaluator._semantic_model is None:
             self._load_model()
-        
+
         if not prediction or not option_texts:
             return np.zeros(len(option_texts))
-        
+
         try:
             # Encode all texts at once for efficiency
             all_texts = [prediction] + list(option_texts)
@@ -476,20 +482,20 @@ class MCQEvaluator:
                 convert_to_numpy=True,
                 normalize_embeddings=True,
             )
-            
+
             pred_emb = embeddings[0]
             option_embs = embeddings[1:]
-            
+
             # Cosine similarities in [-1, 1]. Not clipped to [0, 1]: GOM is a
             # margin between gold and distractor similarity, and flooring the
             # distractor side at zero compresses that margin.
             similarities = np.dot(option_embs, pred_emb)
             return np.clip(similarities, -1.0, 1.0)
-            
+
         except Exception as e:
             print(f"[MCQEvaluator] Warning: Similarity computation failed: {e}")
             return np.zeros(len(option_texts))
-    
+
     def evaluate_mcq(
         self,
         prediction: str,
@@ -498,7 +504,7 @@ class MCQEvaluator:
     ) -> Dict[str, any]:
         """
         Evaluate a single MCQ prediction.
-        
+
         Computes:
             - pred_option: The option letter closest to prediction (by semantic similarity)
             - gold_option: The correct option letter
@@ -507,20 +513,20 @@ class MCQEvaluator:
             - acr_hit: 1 if prediction contains clear choice marker, else 0
             - detected_marker: The detected choice marker (A/B/C/D) or None
             - similarities: Dict of option letter -> similarity score
-        
+
         Args:
             prediction: The model's prediction text.
             options: Dict mapping option letters to option texts.
                      Example: {"A": "oxygen", "B": "carbon", "C": "nitrogen", "D": "helium"}
             gold_option: The correct option letter (e.g., "A").
-            
+
         Returns:
             Dict with all computed metrics.
         """
         # Ensure options are in standard order
         option_letters = ["A", "B", "C", "D"]
         option_texts = [options.get(letter, "") for letter in option_letters]
-        
+
         # Compute similarities (needed for GOM and as the mapping fallback)
         sims = self.compute_similarities(prediction, option_texts)
         sim_dict = {letter: float(sims[i]) for i, letter in enumerate(option_letters)}
@@ -532,21 +538,21 @@ class MCQEvaluator:
         if pred_idx is None:
             pred_idx = int(np.argmax(sims))
         pred_option = option_letters[pred_idx]
-        
+
         # OMA: Option-Mapped Accuracy
         oma_correct = 1 if pred_option == gold_option else 0
-        
+
         # GOM: Gold Option Margin
         gold_idx = option_letters.index(gold_option) if gold_option in option_letters else 0
         s_gold = sims[gold_idx]
         other_sims = [sims[i] for i in range(len(sims)) if i != gold_idx]
         s_others = np.mean(other_sims) if other_sims else 0.0
         gom = float(s_gold - s_others)
-        
+
         # ACR: Answerable Choice Rate
         detected_marker = detect_choice_marker(prediction)
         acr_hit = 1 if detected_marker is not None else 0
-        
+
         return {
             "pred_option": pred_option,
             "gold_option": gold_option,
@@ -588,31 +594,31 @@ def build_prompt_with_choices(
 ) -> str:
     """
     Build a prompt with MCQ choices included.
-    
+
     If options are provided, includes a "Choices (A)-(D)" block and asks
     the model to answer with the exact choice text or letter.
-    
+
     Args:
         question: The question text.
         context: Optional context/support text.
         options: Optional list of 4 option strings.
-        
+
     Returns:
         Formatted prompt string.
     """
     prompt_parts = []
-    
+
     if context:
         prompt_parts.append(f"Context: {context}")
-    
+
     prompt_parts.append(f"Question: {question}")
-    
+
     if options and len(options) == 4:
         prompt_parts.append(format_choices_block(options))
     else:
         prompt_parts.append("")
         prompt_parts.append("Answer:")
-    
+
     return "\n".join(prompt_parts)
 
 
@@ -624,18 +630,18 @@ def evaluate_mcq_with_indices(
 ) -> Dict[str, any]:
     """
     Evaluate MCQ prediction using option indices (0-3).
-    
+
     Computes:
         - chosen_option_idx: Index (0-3) of option with highest semantic similarity to prediction
         - oma_correct: 1 if chosen_option_idx == gold_option_idx, else 0
         - gom: similarity(pred, gold_option) - mean(similarity(pred, distractors))
-    
+
     Args:
         prediction: The model's prediction text.
         options: List of 4 option strings.
         gold_option_idx: Integer index (0-3) of the correct option.
         evaluator: Optional MCQEvaluator instance. If None, creates one.
-        
+
     Returns:
         Dict with:
             - chosen_option_idx: int (0-3)
@@ -644,13 +650,13 @@ def evaluate_mcq_with_indices(
     """
     if evaluator is None:
         evaluator = MCQEvaluator.get_instance()
-    
+
     if len(options) != 4:
         raise ValueError(f"Expected 4 options, got {len(options)}")
-    
+
     if not (0 <= gold_option_idx < 4):
         raise ValueError(f"gold_option_idx must be 0-3, got {gold_option_idx}")
-    
+
     # Similarities are still needed for GOM, which is defined in embedding
     # space, so compute them once and reuse for the mapping fallback.
     similarities = evaluator.compute_similarities(prediction, options)
@@ -686,13 +692,13 @@ def compute_mcq_aggregate_metrics(
 ) -> Dict[str, float]:
     """
     Compute aggregate MCQ metrics from per-example results.
-    
+
     Args:
         results: List of result dicts, each containing:
             - oma_correct (int): 1 if correct, 0 otherwise
             - gom (float): Gold Option Margin
             - acr_hit (int): 1 if choice marker detected, 0 otherwise
-            
+
     Returns:
         Dict with aggregate metrics:
             - oma_accuracy: Mean of oma_correct
@@ -705,21 +711,21 @@ def compute_mcq_aggregate_metrics(
             "avg_gom": None,
             "acr_rate": None,
         }
-    
+
     # Filter to results that have MCQ metrics
     mcq_results = [r for r in results if "oma_correct" in r and r["oma_correct"] is not None]
-    
+
     if not mcq_results:
         return {
             "oma_accuracy": None,
             "avg_gom": None,
             "acr_rate": None,
         }
-    
+
     oma_vals = [r["oma_correct"] for r in mcq_results]
     gom_vals = [r["gom"] for r in mcq_results if "gom" in r and r["gom"] is not None]
     acr_vals = [r["acr_hit"] for r in mcq_results if "acr_hit" in r and r["acr_hit"] is not None]
-    
+
     return {
         "oma_accuracy": sum(oma_vals) / len(oma_vals) if oma_vals else None,
         "avg_gom": sum(gom_vals) / len(gom_vals) if gom_vals else None,
