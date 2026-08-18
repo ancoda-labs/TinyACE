@@ -6,14 +6,11 @@ from edge_slm_ace.core.ace_roles import (
     build_generator_prompt,
     build_self_refine_critique_prompt,
     build_self_refine_rewrite_prompt,
-    parse_used_strategies,
-)
-from edge_slm_ace.memory.playbook import Playbook
-
-from edge_slm_ace.core.ace_roles import (
+    choose_lessons_for_playbook,
+    extract_answer,
     parse_generator_output,
     parse_reflector_output_to_lessons,
-    choose_lessons_for_playbook,
+    parse_used_strategies,
 )
 from edge_slm_ace.memory.playbook import Playbook
 
@@ -313,3 +310,51 @@ class TestGeneratorCitationPrompt:
         prompt = build_generator_prompt("science", Playbook(), "Why does wind curve?")
 
         assert "Used strategies:" not in prompt
+
+
+class TestCitationBlockIsNotPartOfTheAnswer:
+    """
+    The Generator's Response Format puts "Answer:" last, so the citation block
+    the ACE prompt asks for arrives *after* the answer. The section parser used
+    to treat it as answer content, making the scored prediction
+    "mitochondria\nUsed strategies:\n1, 3". Only the ACE arm is asked to cite,
+    so this corrupted exact match in one arm and left the other intact.
+    """
+
+    def test_citation_after_answer_is_dropped(self):
+        answer, _ = extract_answer(
+            "Reasoning:\nATP is made by the mitochondria.\n\n"
+            "Answer:\nmitochondria\n\nUsed strategies:\n1, 3"
+        )
+        assert answer == "mitochondria"
+
+    def test_citation_on_one_line_is_dropped(self):
+        answer, _ = extract_answer("Answer:\nphotosynthesis\nUsed strategies: 2")
+        assert answer == "photosynthesis"
+
+    def test_none_citation_is_dropped(self):
+        answer, _ = extract_answer("Answer:\ncarbon dioxide\n\nUsed strategies: none")
+        assert answer == "carbon dioxide"
+
+    def test_citation_is_dropped_when_no_answer_header_is_emitted(self):
+        """What a 1.1B model actually produces: no header, citation at the end."""
+        answer, _ = extract_answer("mitochondria\n\nUsed strategies:\n1, 3")
+        assert answer == "mitochondria"
+
+    def test_reasoning_is_still_recovered(self):
+        answer, reasoning = extract_answer(
+            "Reasoning:\nATP is made by the mitochondria.\n\n"
+            "Answer:\nmitochondria\n\nUsed strategies:\n1"
+        )
+        assert answer == "mitochondria"
+        assert "mitochondria" in reasoning
+
+    def test_output_without_a_citation_is_unchanged(self):
+        """The baseline arm never emits one; its parsing must not shift."""
+        answer, _ = extract_answer("Reasoning:\nX.\n\nAnswer:\nmitochondria")
+        assert answer == "mitochondria"
+
+    def test_a_prediction_mentioning_strategy_is_not_truncated(self):
+        """Only a line *starting* with the marker terminates the section."""
+        answer, _ = extract_answer("Answer:\nthe used strategies of r-selected species")
+        assert answer == "the used strategies of r-selected species"

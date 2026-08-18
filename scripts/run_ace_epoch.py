@@ -13,11 +13,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from edge_slm_ace.utils.config import get_model_config, get_task_config
+from edge_slm_ace.utils.config import get_model_config, get_task_config, resolve_task_path
 from edge_slm_ace.models.model_manager import load_model_and_tokenizer
 from edge_slm_ace.memory.playbook import Playbook
 from edge_slm_ace.core.runner import run_dataset_baseline, run_dataset_ace
 from edge_slm_ace.utils.device_utils import get_device
+from edge_slm_ace.utils.repro import DEFAULT_SEED, set_seed
 
 
 def load_dataset(path: Path) -> list[dict]:
@@ -94,8 +95,21 @@ def main():
         action="store_true",
         help="Automatically regenerate plots after all epochs complete (requires make_figures.py)",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_SEED,
+        help=f"Random seed for decoding and MCQ option order (default: {DEFAULT_SEED})",
+    )
 
     args = parser.parse_args()
+
+    # Seed before anything touches an RNG. This script previously seeded
+    # nothing and passed no option_shuffle_seed, so permutation_for returned
+    # the identity permutation -- and every SciQ row stores the gold answer
+    # first, which put the correct answer at (A) for 100% of examples. Its
+    # numbers were therefore not comparable with any other entrypoint's.
+    set_seed(args.seed)
 
     # Validate epochs
     if args.epochs < 1:
@@ -103,16 +117,13 @@ def main():
 
     # Get task config
     try:
-        task_config = get_task_config(args.task_name)
-        dataset_path_str = task_config["path"]
-        domain = task_config["domain"]
+        domain = get_task_config(args.task_name)["domain"]
+        # Resolved against the repo root by the registry, not re-derived here,
+        # so this script works from any working directory.
+        dataset_path = resolve_task_path(args.task_name)
     except KeyError as e:
         print(f"Error: {e}")
         return 1
-
-    # Resolve dataset path
-    repo_root = Path(__file__).parent.parent
-    dataset_path = repo_root / dataset_path_str
 
     if not dataset_path.exists():
         print(f"Error: Dataset not found: {dataset_path}")
@@ -198,6 +209,7 @@ def main():
                     model_id=config.model_id,
                     task_name=args.task_name,
                     mode="baseline",
+                    option_shuffle_seed=args.seed,
                 )
 
                 output_path = (
@@ -207,10 +219,15 @@ def main():
             else:
                 # ACE epochs
                 # Load or create playbook
+                # The tokenizer goes in so the token budget is denominated in
+                # the same units as the prompt it bounds, rather than in
+                # words * 1.3.
                 if playbook_path.exists():
-                    playbook = Playbook.load(playbook_path)
+                    playbook = Playbook.load(
+                        playbook_path, token_budget=args.token_budget, tokenizer=tokenizer
+                    )
                 else:
-                    playbook = Playbook()
+                    playbook = Playbook(token_budget=args.token_budget, tokenizer=tokenizer)
 
                 results, summary = run_dataset_ace(
                     model=model,
@@ -225,6 +242,7 @@ def main():
                     mode="ace",
                     ace_mode=args.ace_mode,
                     token_budget=args.token_budget,
+                    option_shuffle_seed=args.seed,
                 )
 
                 output_path = output_dir / f"{args.task_name}_{sanitized_model_id}_epoch{epoch}.csv"

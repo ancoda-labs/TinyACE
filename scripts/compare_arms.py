@@ -6,27 +6,33 @@ Point estimates alone are not decidable at these sample sizes: at n=50 the
 "+4%" improvement is two questions and is indistinguishable from noise. Run
 this before putting any delta in a table.
 
+Each arm is compared against the reference `reporting.reference_for()` names
+for it -- ACE arms against `cot_control`, ablations against `tinyace_wm_256` --
+because comparing an ablation to `baseline` measures ACE *plus* the ablation
+rather than the ablated component. All comparisons printed together form one
+family and are Holm-corrected; the adjusted p-value is the one that decides.
+
 Usage:
     # Two prediction files
     python -m scripts.compare_arms \
         results/phi_3_mini/sciq_test/baseline/cuda/predictions.jsonl \
         results/phi_3_mini/sciq_test/tinyace_wm_256/cuda/predictions.jsonl
 
-    # Every arm against a chosen reference, under one results root
-    python -m scripts.compare_arms --results-root results --reference baseline
+    # Every arm against its registered reference, under one results root
+    python -m scripts.compare_arms --results-root results
 
-    # Ablations belong against full TinyACE, not against baseline
-    python -m scripts.compare_arms --results-root results --reference tinyace_wm_256
+    # Override the registry to ask one specific question
+    python -m scripts.compare_arms --results-root results --reference baseline
 """
 
 import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
-from edge_slm_ace.eval.stats import compare_arms, format_comparison
-from edge_slm_ace.reporting import arm_label, is_ablation, reference_for
+from edge_slm_ace.eval.stats import compare_arms, format_comparison, holm_bonferroni
+from edge_slm_ace.reporting import arm_label, reference_for
 
 
 def load_predictions(path: Path) -> List[Dict]:
@@ -54,6 +60,87 @@ def discover_arms(results_root: Path) -> Dict[str, Path]:
     return arms
 
 
+def arm_key_of(label: str) -> str:
+    """
+    The arm segment of a results path, which is {model}/{task}/{arm}/{device}.
+
+    Args:
+        label: Directory path relative to the results root.
+
+    Returns:
+        The arm key, as registered in `reporting.schema`.
+    """
+    parts = Path(label).parts
+    return parts[-2] if len(parts) >= 2 else label
+
+
+def cell_of(label: str) -> str:
+    """The {model}/{task} prefix a comparison must not cross."""
+    return str(Path(label).parent.parent)
+
+
+def pair_with_registered_references(
+    arms: Dict[str, Path],
+) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
+    """
+    Pair each arm with the reference `reporting.reference_for()` names for it.
+
+    Ablations belong against full TinyACE and ACE arms against the CoT control;
+    comparing either to `baseline` measures the wrong thing. That mapping was
+    already defined and tested in the schema, and this script imported it
+    without ever calling it -- every arm was compared against a label matching
+    the literal string "baseline", which is the defect the registry exists to
+    prevent.
+
+    Args:
+        arms: Mapping of results-relative label -> predictions path.
+
+    Returns:
+        Tuple of (pairs, missing):
+          pairs   (reference_label, arm_label), reference first.
+          missing (arm_label, expected_reference_key) for arms whose reference
+                  was not run, which are skipped rather than silently
+                  re-pointed at another arm.
+    """
+    by_cell: Dict[str, Dict[str, str]] = {}
+    for label in arms:
+        by_cell.setdefault(cell_of(label), {})[arm_key_of(label)] = label
+
+    pairs: List[Tuple[str, str]] = []
+    missing: List[Tuple[str, str]] = []
+    for label in sorted(arms):
+        key = arm_key_of(label)
+        reference_key = reference_for(key)
+        if reference_key == key:
+            continue  # the arm is its own reference; nothing to compare
+        reference_label = by_cell[cell_of(label)].get(reference_key)
+        if reference_label is None:
+            missing.append((label, reference_key))
+            continue
+        pairs.append((reference_label, label))
+    return pairs, missing
+
+
+def pair_with_explicit_reference(
+    arms: Dict[str, Path],
+    reference: str,
+) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
+    """
+    Pair every arm against a caller-named reference, within the same cell.
+
+    An explicit override of the registry. Use it to ask a specific question,
+    not as the default -- see `pair_with_registered_references`.
+    """
+    references = [label for label in arms if reference in label]
+    pairs = [
+        (reference_label, label)
+        for reference_label in references
+        for label in sorted(arms)
+        if label != reference_label and cell_of(label) == cell_of(reference_label)
+    ]
+    return pairs, []
+
+
 def _pick_metric(rows: List[Dict], requested: Optional[str]) -> str:
     """Choose the correctness field to compare on."""
     if requested:
@@ -79,8 +166,13 @@ def main() -> int:
     parser.add_argument(
         "--reference",
         type=str,
-        default="baseline",
-        help="Substring identifying the reference arm (default: baseline)",
+        default=None,
+        help=(
+            "Substring identifying one reference arm, overriding the registry. "
+            "By default each arm is compared against the reference "
+            "reporting.reference_for() names for it: ACE arms against "
+            "cot_control, ablations against tinyace_wm_256."
+        ),
     )
     parser.add_argument(
         "--metric",
@@ -129,51 +221,71 @@ def main() -> int:
             print(f"Error: no predictions.jsonl found under {root}", file=sys.stderr)
             return 1
 
-        references = [label for label in arms if args.reference in label]
-        if not references:
+        if args.reference:
+            pairs, missing = pair_with_explicit_reference(arms, args.reference)
+            if not pairs:
+                print(
+                    f"Error: no arm matching '{args.reference}'. Found:\n  "
+                    + "\n  ".join(sorted(arms)),
+                    file=sys.stderr,
+                )
+                return 1
+        else:
+            pairs, missing = pair_with_registered_references(arms)
+
+        for reference_label, arm_label_path in missing:
             print(
-                f"Error: no arm matching '{args.reference}'. Found:\n  "
-                + "\n  ".join(sorted(arms)),
+                f"Note: skipping {arm_label_path} -- its reference arm "
+                f"'{reference_label}' was not run in this cell.",
                 file=sys.stderr,
             )
-            return 1
 
-        for ref_label in references:
-            ref_rows = load_predictions(arms[ref_label])
-            # Only compare arms that differ in mode, not in model or task.
-            ref_prefix = str(Path(ref_label).parent.parent)
-            for label, path in arms.items():
-                if label == ref_label:
-                    continue
-                if str(Path(label).parent.parent) != ref_prefix:
-                    continue
-                rows = load_predictions(path)
-                comparisons.append(
-                    compare_arms(
-                        ref_rows,
-                        rows,
-                        name_a=ref_label,
-                        name_b=label,
-                        metric=_pick_metric(ref_rows + rows, args.metric),
-                        confidence=args.confidence,
-                    )
+        for reference_label, label in pairs:
+            reference_rows = load_predictions(arms[reference_label])
+            rows = load_predictions(arms[label])
+            comparisons.append(
+                compare_arms(
+                    reference_rows,
+                    rows,
+                    name_a=arm_label(arm_key_of(reference_label)),
+                    name_b=arm_label(arm_key_of(label)),
+                    metric=_pick_metric(reference_rows + rows, args.metric),
+                    confidence=args.confidence,
                 )
+            )
     else:
         parser.error("Provide two predictions.jsonl paths, or --results-root")
+
+    # Every comparison printed together is one family of tests. Reporting each
+    # p<0.05 on its own across a 10-arm sweep gives roughly a 40% chance of at
+    # least one false positive, so the adjusted value is what decides.
+    adjusted = holm_bonferroni([c["mcnemar"]["p_value"] for c in comparisons])
+    for comparison, p_adjusted in zip(comparisons, adjusted):
+        comparison["mcnemar"]["p_adjusted"] = p_adjusted
+        comparison["mcnemar"]["significant_05_adjusted"] = p_adjusted < 0.05
 
     for comparison in comparisons:
         print()
         print("=" * 72)
         print(format_comparison(comparison))
+        test = comparison["mcnemar"]
+        if len(comparisons) > 1:
+            verdict = "survives" if test["significant_05_adjusted"] else "does not survive"
+            print(
+                f"  -> p={test['p_value']:.4f} {verdict} Holm correction "
+                f"across {len(comparisons)} tests (p_adj={test['p_adjusted']:.4f})"
+            )
 
-    significant = [c for c in comparisons if c["mcnemar"]["significant_05"]]
+    raw = [c for c in comparisons if c["mcnemar"]["significant_05"]]
+    survivors = [c for c in comparisons if c["mcnemar"]["significant_05_adjusted"]]
     print()
     print("=" * 72)
     print(
-        f"{len(significant)} of {len(comparisons)} comparisons "
-        f"are distinguishable from noise at p<0.05."
+        f"{len(survivors)} of {len(comparisons)} comparisons survive Holm "
+        f"correction at p<0.05 ({len(raw)} before correction, "
+        f"family size {len(comparisons)})."
     )
-    if comparisons and not significant:
+    if comparisons and not survivors:
         print("Report these as 'no detectable difference', not as an ordering.")
 
     if args.json_out:

@@ -10,6 +10,7 @@
 | **[api.md](api.md)** | Package reference |
 | **[results.md](results.md)** | Withdrawn results, kept for provenance |
 | **[code-review.md](code-review.md)** | Full audit that prompted the current state |
+| **[code-review-followup.md](code-review-followup.md)** | Follow-up review of the current state: what the repairs left behind |
 
 ---
 
@@ -25,7 +26,9 @@ difference to mean anything — the things that went wrong last time.
 
 Wondering why something is built the way it is:
 [code-review.md](code-review.md) documents the defects the current design is a
-response to.
+response to, and
+[code-review-followup.md](code-review-followup.md) reviews what the repairs
+themselves left behind.
 
 ---
 

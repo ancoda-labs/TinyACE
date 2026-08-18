@@ -256,6 +256,35 @@ Avoid generic phrases entirely. Every lesson must be a concrete, actionable rule
     return prompt
 
 
+# Lines that end a section without starting one.
+#
+# `build_generator_prompt` asks the Generator to name the strategies it applied,
+# and the Response Format puts "Answer:" last -- so the citation block lands
+# *after* the answer. Without a terminator the section parser treated it as
+# answer content and the scored prediction became
+# "mitochondria\nUsed strategies:\n1, 3". Only the ACE arm is asked for a
+# citation, so this corrupted exact match in one arm and not the other, which
+# is the same arm-asymmetric parsing that extract_answer exists to prevent.
+SECTION_TERMINATORS = ["used strategies:", "used strategy:"]
+
+
+def _drop_from_terminator(lines: List[str]) -> List[str]:
+    """
+    Truncate at the first terminator line.
+
+    Args:
+        lines: Non-empty, stripped output lines.
+
+    Returns:
+        Everything before the citation block. The whole list when there is
+        none, so non-ACE output is unaffected.
+    """
+    for i, line in enumerate(lines):
+        if any(line.lower().startswith(k) for k in SECTION_TERMINATORS):
+            return lines[:i]
+    return lines
+
+
 def parse_generator_output(text: str) -> Tuple[str, Optional[str]]:
     """
     Parse the Generator's output to extract reasoning and answer.
@@ -308,8 +337,16 @@ def parse_generator_output(text: str) -> Tuple[str, Optional[str]]:
         # Check if this line starts a new section
         is_reasoning_header = any(line_lower.startswith(k) for k in reasoning_keywords)
         is_answer_header = any(line_lower.startswith(k) for k in answer_keywords)
+        is_terminator = any(line_lower.startswith(k) for k in SECTION_TERMINATORS)
 
-        if is_answer_header:
+        if is_terminator:
+            # Closes whatever section is open and contributes nothing. The
+            # answer section is last in the Generator's response format, so
+            # without this the citation block the ACE prompt asks for was
+            # appended to the answer -- and only the ACE arm is asked for it,
+            # so exact match was destroyed in one arm and intact in the other.
+            current_section = None
+        elif is_answer_header:
             current_section = "answer"
             # Extract text after the keyword
             for keyword in answer_keywords:
@@ -340,6 +377,11 @@ def parse_generator_output(text: str) -> Tuple[str, Optional[str]]:
     # Strategy 3: Fallback - extract last meaningful content
     if not answer:
         lines = [l.strip() for l in text.split("\n") if l.strip()]
+        # Drop the citation block and everything under it before scanning
+        # backwards. When the model emits no "Answer:" header at all -- routine
+        # for a 1.1B model -- the last line is the citation the prompt asked
+        # for, and a reverse scan would return "1, 3" as the answer.
+        lines = _drop_from_terminator(lines)
 
         if lines:
             # Try to find the last line that looks like an answer

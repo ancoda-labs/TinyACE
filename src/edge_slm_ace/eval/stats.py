@@ -131,6 +131,38 @@ def mcnemar_exact(arm_a: Sequence[int], arm_b: Sequence[int]) -> Dict:
     }
 
 
+def holm_bonferroni(p_values: Sequence[float]) -> List[float]:
+    """
+    Holm-Bonferroni adjusted p-values for a family of tests.
+
+    A grid of 11 arms produces 10 tests against a reference. At alpha=0.05 the
+    chance of at least one false positive under the null is 1 - 0.95^10 ~= 40%,
+    so an uncorrected "significant" result from a sweep is close to expected
+    rather than surprising. Holm is uniformly more powerful than Bonferroni and
+    needs no independence assumption, which matters here because the arms are
+    scored on the same items.
+
+    The family is every comparison reported together. Splitting one sweep into
+    several invocations to shrink it does not make the correction smaller; it
+    just hides the count.
+
+    Args:
+        p_values: Raw two-sided p-values, in any order.
+
+    Returns:
+        Adjusted p-values, index-aligned with the input, each in [0, 1] and
+        monotone in the raw ordering.
+    """
+    ranked = sorted(enumerate(p_values), key=lambda pair: pair[1])
+    m = len(ranked)
+    adjusted = [0.0] * m
+    running = 0.0
+    for rank, (index, p) in enumerate(ranked):
+        running = max(running, min(1.0, (m - rank) * p))
+        adjusted[index] = running
+    return adjusted
+
+
 def summarize_accuracy(
     correctness: Iterable[int],
     confidence: float = 0.95,
