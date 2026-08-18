@@ -38,7 +38,7 @@ class ScoringParams:
     disable_vagueness_penalty: bool = False  # If True, set δ=0 (ignore vagueness term)
     disable_recency_decay: bool = False      # If True, set γ=0 (ignore recency term)
     disable_failure_penalty: bool = False   # If True, set β=0 (ignore failure term)
-    fifo_memory: bool = False                # If True, bypass scoring entirely, use FIFO eviction
+    fifo_memory: bool = False                # If True, evict oldest-first instead of lowest-score
 
 
 # Generic phrases that indicate vague/unhelpful lessons
@@ -185,22 +185,21 @@ class PlaybookEntry:
         - disable_vagueness_penalty: Set δ=0
         - disable_recency_decay: Set γ=0
         - disable_failure_penalty: Set β=0
-        - fifo_memory: Return insertion order (lower = earlier, for FIFO eviction)
-        
+
+        Note: `fifo_memory` deliberately has no effect here. It is an
+        *eviction* policy, not a retention score -- see `eviction_key()`.
+        Retrieval ranking always uses this score so that the FIFO ablation
+        isolates eviction order as the single changed variable.
+
         Args:
             current_step: Current step counter for recency calculation.
             params: Scoring hyperparameters (uses defaults if None).
             
         Returns:
             Retention score (higher = better, should be retained).
-            If fifo_memory=True, returns negative insertion order (lower = earlier).
         """
         if params is None:
             params = ScoringParams()
-        
-        # FIFO mode: return negative creation timestamp (earlier = lower score = evicted first)
-        if params.fifo_memory:
-            return -self.created_at
         
         n_used = self.total_uses()
         
@@ -231,7 +230,39 @@ class PlaybookEntry:
         
         # Final score
         return success_term - failure_term + recency_term - vagueness_term
-    
+
+    def retrieval_key(
+        self,
+        current_step: int = 0,
+        params: Optional[ScoringParams] = None,
+    ) -> float:
+        """
+        Ranking key for deciding which entries to show the Generator.
+
+        Higher = better. Always the retention score, including under the
+        FIFO ablation, so that ablation changes eviction only.
+        """
+        return self.score(current_step, params)
+
+    def eviction_key(
+        self,
+        current_step: int = 0,
+        params: Optional[ScoringParams] = None,
+    ) -> float:
+        """
+        Ordering key for deciding which entries to drop. Lower = evicted first.
+
+        Under `fifo_memory` this is the creation timestamp, so the oldest
+        entry (smallest timestamp, hence lowest key) is evicted first --
+        which is what first-in-first-out means. Otherwise it is the
+        retention score, so the weakest entry is evicted first.
+        """
+        if params is None:
+            params = ScoringParams()
+        if params.fifo_memory:
+            return self.created_at
+        return self.score(current_step, params)
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return asdict(self)
@@ -371,7 +402,7 @@ class Playbook:
         """
         domain_entries = [e for e in self.entries if e.domain == domain]
         domain_entries.sort(
-            key=lambda e: e.score(current_step, self.scoring_params),
+            key=lambda e: e.retrieval_key(current_step, self.scoring_params),
             reverse=True
         )
         return domain_entries[:k]
@@ -398,7 +429,7 @@ class Playbook:
         """
         domain_entries = [e for e in self.entries if e.domain == domain]
         domain_entries.sort(
-            key=lambda e: e.score(current_step, self.scoring_params),
+            key=lambda e: e.retrieval_key(current_step, self.scoring_params),
             reverse=True
         )
         
@@ -451,20 +482,21 @@ class Playbook:
         Returns:
             Number of tokens freed.
         """
-        # Get domain entries sorted by score (ascending = lowest first)
+        # Get domain entries ordered by eviction key (ascending = dropped first).
+        # Under fifo_memory this is oldest-first; otherwise lowest-score-first.
         domain_entries = [e for e in self.entries if e.domain == domain]
         domain_entries.sort(
-            key=lambda e: e.score(current_step, self.scoring_params),
+            key=lambda e: e.eviction_key(current_step, self.scoring_params),
             reverse=False
         )
         
         tokens_freed = 0
-        entries_to_remove = []
+        entries_to_remove = set()
         
         for entry in domain_entries:
             if tokens_freed >= tokens_needed:
                 break
-            entries_to_remove.append(entry.id)
+            entries_to_remove.add(entry.id)
             tokens_freed += entry.token_count
         
         # Remove evicted entries
@@ -599,9 +631,11 @@ class Playbook:
         pruned_entries = []
         
         for domain in domains:
+            # Pruning is an eviction decision: keep the entries with the
+            # highest eviction key, drop the rest.
             domain_entries = [e for e in self.entries if e.domain == domain]
             domain_entries.sort(
-                key=lambda e: e.score(current_step, self.scoring_params),
+                key=lambda e: e.eviction_key(current_step, self.scoring_params),
                 reverse=True
             )
             pruned_entries.extend(domain_entries[:max_entries_per_domain])

@@ -451,32 +451,62 @@ class TestAblationFlags:
         assert score_without_penalty > score_with_penalty, \
             "Disabling failure penalty should increase score"
     
-    def test_fifo_memory(self):
-        """When fifo_memory=True, scoring should return insertion order."""
-        # Create entries at different times
+    def test_fifo_memory_evicts_oldest_first(self):
+        """When fifo_memory=True, the oldest entry must be evicted first."""
         import time
+        now = time.time()
         entry1 = PlaybookEntry(
             id="1",
             domain="test",
             text="First entry",
-            created_at=time.time() - 10,  # Older
+            created_at=now - 10,  # Older
         )
         entry2 = PlaybookEntry(
             id="2",
             domain="test",
             text="Second entry",
-            created_at=time.time(),  # Newer
+            created_at=now,  # Newer
         )
-        
+
         params_fifo = ScoringParams(fifo_memory=True)
-        
-        score1 = entry1.score(current_step=1, params=params_fifo)
-        score2 = entry2.score(current_step=1, params=params_fifo)
-        
-        # Older entry should have lower score (evicted first)
-        assert score1 < score2, \
-            "In FIFO mode, older entries should have lower scores"
-        
-        # Scores should be negative (based on negative created_at)
-        assert score1 < 0 and score2 < 0, \
-            "FIFO scores should be negative (negative created_at)"
+
+        key1 = entry1.eviction_key(current_step=1, params=params_fifo)
+        key2 = entry2.eviction_key(current_step=1, params=params_fifo)
+
+        # Eviction sorts ascending and drops the front, so first-in must
+        # have the lower key.
+        assert key1 < key2, \
+            "In FIFO mode, the older entry must be evicted first"
+
+    def test_fifo_memory_does_not_change_retrieval(self):
+        """FIFO is an eviction policy; retrieval ranking stays score-based."""
+        import time
+        now = time.time()
+        strong = PlaybookEntry(
+            id="1", domain="test", text="Use formula F = m * a for force.",
+            success_count=9, failure_count=0, created_at=now - 10,
+        )
+        weak = PlaybookEntry(
+            id="2", domain="test", text="Use formula F = m * a for force.",
+            success_count=0, failure_count=9, created_at=now,
+        )
+
+        params_fifo = ScoringParams(fifo_memory=True)
+
+        assert strong.retrieval_key(current_step=1, params=params_fifo) > \
+            weak.retrieval_key(current_step=1, params=params_fifo), \
+            "FIFO must not degrade retrieval ranking to insertion order"
+
+    def test_fifo_playbook_evicts_oldest_entry(self):
+        """End-to-end: adding over budget under FIFO drops the oldest entry."""
+        playbook = Playbook(
+            token_budget=25,
+            scoring_params=ScoringParams(fifo_memory=True),
+        )
+        first = playbook.add_entry("test", "First lesson about acceleration " * 2, step=1)
+        second = playbook.add_entry("test", "Second lesson about velocity " * 2, step=2)
+        playbook.add_entry("test", "Third lesson about momentum " * 2, step=3)
+
+        remaining = {e.id for e in playbook.entries}
+        assert first.id not in remaining, "Oldest entry should have been evicted first"
+        assert second.id in remaining, "Newer entries should be retained under FIFO"
