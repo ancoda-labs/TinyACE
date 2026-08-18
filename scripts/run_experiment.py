@@ -702,7 +702,9 @@ Examples:
                     "initial_size": initial_playbook_size,
                     "final_size": len(playbook.entries),
                     "entries_added": len(playbook.entries) - initial_playbook_size,
-                    "domain_stats": playbook.get_stats(domain),
+                    # Scored at the final step, so avg_score is the score
+                    # the last eviction decision would have used.
+                    "domain_stats": playbook.get_stats(domain, current_step=len(dataset)),
                 }
 
                 # Save playbook log if available

@@ -5,6 +5,8 @@ import math
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from edge_slm_ace.memory.playbook import (
     Playbook,
     PlaybookEntry,
@@ -667,3 +669,85 @@ class TestStoreCapacityVsPromptBudget:
         for i in range(20):
             playbook.add_entry("science", self._entry_text(i), step=i + 1)
         assert len(playbook.entries) == 20
+
+
+class TestVaguenessHeuristicTable:
+    """
+    Hand-labelled lessons, because the previous tests only exercised extremes.
+
+    delta weights this term in the retention score and has a dedicated ablation
+    arm, so the threshold has to survive ordinary prose. It did not: the
+    formula check tested for the bare characters "=+-*/%^", so any hyphenated
+    word or slash counted as a formula and earned a specificity credit.
+    "Think carefully about the well-known question" -- a phrase from
+    GENERIC_PHRASES, and the Reflector prompt's own first example of a bad
+    lesson -- scored 0.25 against an is_generic threshold of 0.5.
+    """
+
+    GENERIC = [
+        "Think carefully about the well-known question",
+        "Pay attention to details",
+        "Check your work",
+        "Remember to check your work and/or ask again",
+        "Be thorough in your analysis of the state-of-the-art",
+        "Take your time and double check",
+    ]
+
+    SPECIFIC = [
+        "For density problems, convert g/cm3 to kg/m3 by multiplying by 1000",
+        "When calculating profit margin: (revenue - expenses) / revenue * 100",
+        "For percentage calculations: divide by 100, then multiply by the base amount",
+        "If the question asks for net profit after tax, apply the tax rate to pre-tax profit",
+        "Photosynthesis converts CO2 and H2O into glucose using light energy",
+    ]
+
+    @pytest.mark.parametrize("text", GENERIC)
+    def test_generic_advice_is_flagged(self, text):
+        score = compute_vagueness_score(text)
+        assert score > 0.5, f"'{text}' should be generic (score={score})"
+
+    @pytest.mark.parametrize("text", SPECIFIC)
+    def test_actionable_rules_are_not_flagged(self, text):
+        score = compute_vagueness_score(text)
+        assert score <= 0.5, f"'{text}' should be specific (score={score})"
+
+    def test_a_hyphen_alone_is_not_a_formula(self):
+        """The regression: prose credited as specific because it contains '-'."""
+        hyphenated = compute_vagueness_score("Be careful with the well-known cases")
+        plain = compute_vagueness_score("Be careful with the well known cases")
+        assert hyphenated == plain
+
+    def test_a_generic_phrase_with_a_real_procedure_is_still_specific(self):
+        """The floor must not punish a concrete lesson for one stock phrase."""
+        score = compute_vagueness_score(
+            "For density problems, make sure to convert g/cm3 to kg/m3 by multiplying by 1000"
+        )
+        assert score <= 0.5
+
+
+class TestPruneRequiresAStep:
+    """
+    prune() defaulted current_step to 0, and the runner relied on that default.
+    Every entry's age was then 0, so every entry received the identical recency
+    bonus gamma -- a constant, which cannot change a ranking. Pruning ignored
+    recency entirely, which is half of what the no-recency ablation is meant to
+    be testing.
+    """
+
+    def test_step_is_required(self):
+        playbook = Playbook()
+        playbook.add_entry("science", "For wind questions, apply the Coriolis effect.", step=1)
+        with pytest.raises(TypeError):
+            playbook.prune(max_entries_per_domain=1)
+
+    def test_recency_decides_between_otherwise_equal_entries(self):
+        """With no feedback and equal vagueness, the recently used one stays."""
+        playbook = Playbook()
+        stale = playbook.add_entry("science", "Apply Coriolis deflection to wind direction.", 1)
+        fresh = playbook.add_entry("science", "Apply Bernoulli to pressure differences.", 1)
+        stale.last_used_at = 1
+        fresh.last_used_at = 40
+
+        playbook.prune(max_entries_per_domain=1, current_step=40)
+
+        assert [e.id for e in playbook.entries] == [fresh.id]

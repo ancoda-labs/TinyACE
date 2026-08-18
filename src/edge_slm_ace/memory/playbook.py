@@ -81,6 +81,36 @@ def _normalize_for_comparison(text: str) -> str:
     return re.sub(r"\s+", " ", stripped).strip()
 
 
+# An operator counts as a formula only when it is applied to a number, or when
+# it is an equals sign. Testing for the bare characters credited any hyphenated
+# word ("well-known") and any slash ("and/or") as evidence of a formula, so
+# "Think carefully about the well-known question" -- a phrase that is literally
+# in GENERIC_PHRASES, and that the Reflector prompt gives as its first example
+# of a bad lesson -- scored 0.25 against an is_generic threshold of 0.5.
+_FORMULA_RE = re.compile(r"\d\s*[-+*/^=%]|[-+*/^=%]\s*\d|=")
+
+# Terms that indicate a lesson names a procedure rather than an attitude.
+_SPECIFIC_TERMS = (
+    "formula",
+    "equation",
+    "calculate",
+    "multiply",
+    "divide",
+    "subtract",
+    "add",
+    "percentage",
+    "ratio",
+    "if",
+    "when",
+    "then",
+)
+
+# Floor for a lesson that contains a generic phrase and no specificity signal
+# at all. Above the is_generic threshold, so specificity credits cannot excuse
+# a lesson that is nothing but generic advice.
+_GENERIC_FLOOR = 0.6
+
+
 def compute_vagueness_score(text: str) -> float:
     """
     Compute a vagueness/genericness score for a lesson.
@@ -89,10 +119,16 @@ def compute_vagueness_score(text: str) -> float:
     - 0.0 = specific, actionable lesson
     - 1.0 = very vague/generic lesson
 
-    Heuristics used:
-    - Presence of generic phrases
-    - Very short text (< 5 words)
-    - Low specificity (no numbers, formulas, or domain terms)
+    Heuristics, in the order they are applied:
+    - Very short text is generic.
+    - A phrase from GENERIC_PHRASES is strong evidence of genericness.
+    - Numbers, formulas applied to numbers, and procedural terms are evidence
+      against it, and reduce the score -- but they cannot pull a lesson that is
+      *only* generic advice below `_GENERIC_FLOOR`.
+
+    delta weights this term in the retention score and has its own ablation
+    arm, so a threshold that a hyphen could flip was not measuring what the
+    equation claims.
 
     Args:
         text: The lesson text to score.
@@ -115,28 +151,12 @@ def compute_vagueness_score(text: str) -> float:
     generic_count = sum(1 for phrase in GENERIC_PHRASES if phrase in text_lower)
     if generic_count > 0:
         # More generic phrases = higher vagueness
-        score += min(0.5, generic_count * 0.2)
+        score += min(0.5, generic_count * 0.25)
 
     # Check for specificity indicators (formulas, numbers, specific terms)
     has_numbers = any(c.isdigit() for c in text)
-    has_formula = any(sym in text for sym in ["=", "+", "-", "*", "/", "%", "^"])
-    has_specific_terms = any(
-        term in text_lower
-        for term in [
-            "formula",
-            "equation",
-            "calculate",
-            "multiply",
-            "divide",
-            "subtract",
-            "add",
-            "percentage",
-            "ratio",
-            "if",
-            "when",
-            "then",
-        ]
-    )
+    has_formula = bool(_FORMULA_RE.search(text))
+    has_specific_terms = any(term in text_lower for term in _SPECIFIC_TERMS)
 
     # Reduce score for specific content
     if has_numbers:
@@ -145,6 +165,11 @@ def compute_vagueness_score(text: str) -> float:
         score -= 0.15
     if has_specific_terms:
         score -= 0.1
+
+    # A lesson carrying a generic phrase and nothing concrete stays generic,
+    # whatever the length term contributed.
+    if generic_count and not (has_numbers or has_formula or has_specific_terms):
+        score = max(score, _GENERIC_FLOOR)
 
     # Clamp to [0, 1]
     return max(0.0, min(1.0, score))
@@ -279,7 +304,10 @@ class PlaybookEntry:
         if params.disable_recency_decay:
             recency_term = 0.0
         else:
-            age = max(0, current_step - self.last_used_at) if current_step > 0 else 0
+            # max() already handles a step behind an entry's last use; the
+            # old `if current_step > 0` guard added nothing numerically and
+            # only made a missing step look intentional.
+            age = max(0, current_step - self.last_used_at)
             recency_term = params.gamma * math.exp(-params.lambda_decay * age)
 
         # Vagueness penalty: δ · V(l_i)
@@ -814,14 +842,23 @@ class Playbook:
     def prune(
         self,
         max_entries_per_domain: int = 32,
-        current_step: int = 0,
+        *,
+        current_step: int,
     ) -> int:
         """
         Prune playbook to keep only top entries per domain.
 
+        `current_step` is keyword-only and has no default on purpose. It used
+        to default to 0, and the runner relied on that default, which made
+        every entry's age 0 and therefore gave every entry the identical
+        recency bonus gamma. A constant added to every candidate cannot change
+        a ranking, so pruning silently ignored recency altogether -- and the
+        tinyace_ablate_no_recency arm was partly measuring a term that was
+        already inert on the eviction path.
+
         Args:
             max_entries_per_domain: Maximum entries to keep per domain.
-            current_step: Current step for scoring.
+            current_step: Current step, for the recency term.
 
         Returns:
             Number of entries removed.
@@ -842,12 +879,14 @@ class Playbook:
         self.entries = pruned_entries
         return original_count - len(self.entries)
 
-    def get_stats(self, domain: Optional[str] = None) -> dict:
+    def get_stats(self, domain: Optional[str] = None, current_step: int = 0) -> dict:
         """
         Get statistics about the playbook.
 
         Args:
             domain: Optional domain to filter by.
+            current_step: Step to evaluate the recency term at. Reported
+                `avg_score` is otherwise not the score any decision used.
 
         Returns:
             Dictionary with playbook statistics.
@@ -870,7 +909,7 @@ class Playbook:
         return {
             "num_entries": len(entries),
             "total_tokens": sum(e.token_count for e in entries),
-            "avg_score": sum(e.score() for e in entries) / len(entries),
+            "avg_score": sum(e.score(current_step) for e in entries) / len(entries),
             "avg_success_rate": total_successes / max(1, total_uses),
             "domains": list(set(e.domain for e in entries)),
         }

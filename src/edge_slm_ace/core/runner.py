@@ -1036,7 +1036,7 @@ def run_dataset_ace(
         num_evictions = 0
         if enable_learning and step % prune_every_n == 0:
             entries_before_prune = len(playbook.entries)
-            playbook.prune(max_entries_per_domain=max_entries_per_domain)
+            playbook.prune(max_entries_per_domain=max_entries_per_domain, current_step=step)
             num_evictions = entries_before_prune - len(playbook.entries)
 
         # Capture playbook state after processing
