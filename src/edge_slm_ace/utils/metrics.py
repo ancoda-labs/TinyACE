@@ -13,6 +13,7 @@ import numpy as np
 try:
     import psutil
     import os
+
     _PSUTIL_AVAILABLE = True
 except ImportError:
     psutil = None
@@ -21,6 +22,7 @@ except ImportError:
 # Try to import torch for GPU memory tracking
 try:
     import torch
+
     _TORCH_AVAILABLE = True
 except ImportError:
     torch = None
@@ -29,6 +31,7 @@ except ImportError:
 # Try to import sentence transformers for semantic similarity (optional)
 try:
     from sentence_transformers import SentenceTransformer
+
     _SEMANTIC_MODEL_AVAILABLE = True
     _SEMANTIC_WARNING_PRINTED = False
 except ImportError:
@@ -42,6 +45,7 @@ _semantic_model_cache = None
 # Try to import sacrebleu for BLEU scores (optional)
 try:
     import sacrebleu
+
     _BLEU_AVAILABLE = True
 except ImportError:
     sacrebleu = None
@@ -54,6 +58,7 @@ _MIN_BLEU_REFERENCE_TOKENS = 4
 # ------------------------------
 # Basic helpers
 # ------------------------------
+
 
 def _norm_text(s: str) -> str:
     """Lowercase + strip + collapse internal whitespace."""
@@ -147,6 +152,7 @@ def _token_f1(a: str, b: str) -> float:
 # Numeric & unit-aware similarity
 # ------------------------------
 
+
 def compare_numbers_with_units(pred: str, gold: str, tol: float = 1e-3) -> float:
     """
     Compare numeric answers with light unit handling.
@@ -200,6 +206,7 @@ def compare_numbers_with_units(pred: str, gold: str, tol: float = 1e-3) -> float
 # ------------------------------
 # Semantic similarity scorer (Archit's version)
 # ------------------------------
+
 
 def semantic_answer_score(pred: str, label: str) -> float:
     """
@@ -268,6 +275,7 @@ def semantic_answer_score(pred: str, label: str) -> float:
 # BLEU score (Archit's addition)
 # ------------------------------
 
+
 def compute_bleu_score(prediction: str, reference: str) -> Optional[float]:
     """
     Compute BLEU between a prediction and a reference using sacrebleu.
@@ -281,7 +289,9 @@ def compute_bleu_score(prediction: str, reference: str) -> Optional[float]:
         BLEU-4 to mean anything (fewer than four tokens).
     """
     if not _BLEU_AVAILABLE:
-        raise ImportError("sacrebleu is required for BLEU scores. Install with: pip install sacrebleu")
+        raise ImportError(
+            "sacrebleu is required for BLEU scores. Install with: pip install sacrebleu"
+        )
 
     # BLEU-4 is 0 (or undefined) whenever the reference is shorter than four
     # tokens, which is almost every answer in these datasets -- SciQ gold
@@ -300,6 +310,7 @@ def compute_bleu_score(prediction: str, reference: str) -> Optional[float]:
 # ------------------------------
 # Token metrics (Archit's addition)
 # ------------------------------
+
 
 def compute_token_metrics(tokenizer, prompts: List[str], outputs: List[str]) -> Dict[str, float]:
     """
@@ -337,19 +348,20 @@ def compute_token_metrics(tokenizer, prompts: List[str], outputs: List[str]) -> 
 # Basic accuracy metrics
 # ------------------------------
 
+
 def compute_accuracy(preds: List[str], labels: List[str]) -> float:
     """
     Compute accuracy using case-insensitive exact match.
-    
+
     Args:
         preds: List of predicted answers.
         labels: List of ground truth answers.
-        
+
     Returns:
         Accuracy as a float between 0 and 1.
     """
     assert len(preds) == len(labels), "Predictions and labels must have same length"
-    
+
     correct = 0
     for pred, label in zip(preds, labels):
         # Simple case-insensitive comparison
@@ -361,10 +373,10 @@ def compute_accuracy(preds: List[str], labels: List[str]) -> float:
 def compute_average_latency(latencies_ms: List[float]) -> float:
     """
     Compute average latency in milliseconds.
-    
+
     Args:
         latencies_ms: List of latencies in milliseconds.
-        
+
     Returns:
         Average latency in milliseconds.
     """
@@ -376,10 +388,10 @@ def compute_average_latency(latencies_ms: List[float]) -> float:
 def compute_average_tokens(token_counts: List[int]) -> float:
     """
     Compute average token count.
-    
+
     Args:
         token_counts: List of token counts.
-        
+
     Returns:
         Average token count.
     """
@@ -392,27 +404,32 @@ def compute_average_tokens(token_counts: List[int]) -> float:
 # Semantic accuracy (two implementations)
 # ------------------------------
 
+
 def _get_semantic_model():
     """Lazy load semantic model for similarity computation (sentence-transformers)."""
     global _semantic_model_cache, _SEMANTIC_WARNING_PRINTED
-    
+
     if not _SEMANTIC_MODEL_AVAILABLE:
         if not _SEMANTIC_WARNING_PRINTED:
-            print("[metrics] sentence-transformers not installed; semantic accuracy will use exact match fallback.")
+            print(
+                "[metrics] sentence-transformers not installed; semantic accuracy will use exact match fallback."
+            )
             _SEMANTIC_WARNING_PRINTED = True
         return None
-    
+
     if _semantic_model_cache is None:
         try:
             # Use a small, fast model for semantic similarity
-            _semantic_model_cache = SentenceTransformer('all-MiniLM-L6-v2')
+            _semantic_model_cache = SentenceTransformer("all-MiniLM-L6-v2")
         except Exception as e:
             # If loading fails, disable semantic matching
             if not _SEMANTIC_WARNING_PRINTED:
-                print(f"[metrics] Failed to load sentence-transformers model: {e}; semantic accuracy will use exact match fallback.")
+                print(
+                    f"[metrics] Failed to load sentence-transformers model: {e}; semantic accuracy will use exact match fallback."
+                )
                 _SEMANTIC_WARNING_PRINTED = True
             return None
-    
+
     return _semantic_model_cache
 
 
@@ -424,64 +441,67 @@ def compute_semantic_accuracy(
 ) -> Optional[float]:
     """
     Compute semantic accuracy using similarity scoring.
-    
+
     Two modes:
     1. Default (use_sentence_transformers=False): Uses semantic_answer_score (Archit's version)
        - Fast, rule-based similarity (numeric/unit-aware, token F1, character similarity)
        - No external dependencies required
        - Returns float (never None)
-    
+
     2. use_sentence_transformers=True: Uses sentence-transformers embeddings
        - More sophisticated semantic similarity via embeddings
        - Requires sentence-transformers package
        - Returns float or None if unavailable
-    
+
     Args:
         preds: List of predicted answers.
         labels: List of ground truth answers.
         threshold: Similarity threshold for considering answers correct (default: 0.8).
         use_sentence_transformers: If True, use sentence-transformers; else use rule-based scoring.
-        
+
     Returns:
         Semantic accuracy as a float between 0 and 1.
         Returns None only if use_sentence_transformers=True and model unavailable.
     """
     assert len(preds) == len(labels), "Predictions and labels must have same length"
-    
+
     if len(preds) == 0:
         return 0.0
-    
+
     if use_sentence_transformers:
         # Use sentence-transformers approach (from HEAD)
         model = _get_semantic_model()
-        
+
         if model is None:
             return None
-        
+
         try:
             # Compute embeddings
             pred_embeddings = model.encode(preds, convert_to_numpy=True)
             label_embeddings = model.encode(labels, convert_to_numpy=True)
-            
+
             # Compute cosine similarity
             from sklearn.metrics.pairwise import cosine_similarity
+
             similarities = cosine_similarity(pred_embeddings, label_embeddings)
-            
+
             # Extract diagonal (pred[i] vs label[i])
             diagonal_similarities = np.diag(similarities)
-            
+
             # Count correct (similarity >= threshold)
             correct = np.sum(diagonal_similarities >= threshold)
-            
+
             return float(correct / len(preds))
         except Exception as e:
-            print(f"[metrics] Error computing semantic accuracy with sentence-transformers: {e}; falling back to rule-based")
+            print(
+                f"[metrics] Error computing semantic accuracy with sentence-transformers: {e}; falling back to rule-based"
+            )
             # Fall through to rule-based method
     else:
         # Use rule-based semantic_answer_score (Archit's version)
         hits = sum(1 for p, g in zip(preds, labels) if semantic_answer_score(p, g) >= threshold)
         return hits / len(preds)
-    
+
     # Fallback to rule-based if sentence-transformers failed
     hits = sum(1 for p, g in zip(preds, labels) if semantic_answer_score(p, g) >= threshold)
     return hits / len(preds)
@@ -490,6 +510,7 @@ def compute_semantic_accuracy(
 # ------------------------------
 # Peak Memory Tracking (Edge Feasibility)
 # ------------------------------
+
 
 def _max_rss_mb() -> Optional[float]:
     """
@@ -512,19 +533,19 @@ def _max_rss_mb() -> Optional[float]:
 class PeakMemoryTracker:
     """
     Context manager for tracking peak RAM usage during code execution.
-    
+
     Tracks both CPU RAM (via psutil) and GPU VRAM (via torch.cuda if available).
-    
+
     Usage:
         with PeakMemoryTracker() as tracker:
             # Your code here
             model, tokenizer = load_model(...)
             results = run_evaluation(...)
-        
+
         peak_mb = tracker.peak_memory_mb
         peak_gpu_mb = tracker.peak_gpu_memory_mb  # if CUDA available
     """
-    
+
     def __init__(self):
         self.process = None
         self.initial_memory_mb = 0.0
@@ -532,11 +553,11 @@ class PeakMemoryTracker:
         self.initial_gpu_memory_mb = 0.0
         self.peak_gpu_memory_mb = 0.0
         self._tracking = False
-    
+
     def __enter__(self):
         """Start tracking memory."""
         self._tracking = True
-        
+
         # Track CPU RAM
         if _PSUTIL_AVAILABLE:
             self.process = psutil.Process(os.getpid())
@@ -545,7 +566,7 @@ class PeakMemoryTracker:
         else:
             self.initial_memory_mb = 0.0
             self.peak_memory_mb = 0.0
-        
+
         # Track GPU VRAM if CUDA is available
         if _TORCH_AVAILABLE and torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
@@ -554,9 +575,9 @@ class PeakMemoryTracker:
         else:
             self.initial_gpu_memory_mb = 0.0
             self.peak_gpu_memory_mb = 0.0
-        
+
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Stop tracking and record peak memory."""
         self._tracking = False
@@ -571,31 +592,31 @@ class PeakMemoryTracker:
         high_water = _max_rss_mb()
         if high_water is not None:
             self.peak_memory_mb = max(self.peak_memory_mb, high_water)
-        
+
         # Final GPU VRAM check
         if _TORCH_AVAILABLE and torch.cuda.is_available():
             peak_gpu_bytes = torch.cuda.max_memory_allocated()
             self.peak_gpu_memory_mb = peak_gpu_bytes / (1024 * 1024)
-        
+
         return False  # Don't suppress exceptions
-    
+
     def update(self):
         """Manually update peak memory (useful for long-running loops)."""
         if not self._tracking:
             return
-        
+
         # Update CPU RAM peak
         if _PSUTIL_AVAILABLE and self.process:
             current_memory_mb = self.process.memory_info().rss / (1024 * 1024)
             self.peak_memory_mb = max(self.peak_memory_mb, current_memory_mb)
-        
+
         # GPU VRAM is tracked automatically by torch.cuda.max_memory_allocated()
-    
+
     @property
     def memory_delta_mb(self) -> float:
         """Return the increase in memory usage (peak - initial)."""
         return self.peak_memory_mb - self.initial_memory_mb
-    
+
     @property
     def gpu_memory_delta_mb(self) -> float:
         """Return the increase in GPU memory usage (peak - initial)."""
@@ -606,34 +627,35 @@ class PeakMemoryTracker:
 # Semantic Evaluator (BERTScore-lite)
 # ------------------------------
 
+
 class SemanticEvaluator:
     """
     Lightweight semantic similarity evaluator using sentence-transformers.
-    
+
     Uses 'all-MiniLM-L6-v2' model for efficient edge-friendly semantic similarity.
     Implements singleton pattern to load model only once.
-    
+
     Usage:
         evaluator = SemanticEvaluator.get_instance()
         similarity = evaluator.compute_similarity("prediction", "reference")
     """
-    
+
     _instance = None
     _model = None
     _model_name = "sentence-transformers/all-MiniLM-L6-v2"
-    
+
     def __init__(self):
         """Private constructor - use get_instance() instead."""
         if SemanticEvaluator._model is None:
             self._load_model()
-    
+
     @classmethod
     def get_instance(cls) -> "SemanticEvaluator":
         """Get singleton instance of SemanticEvaluator."""
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
-    
+
     def _load_model(self):
         """Load the sentence-transformers model."""
         if not _SEMANTIC_MODEL_AVAILABLE:
@@ -641,53 +663,51 @@ class SemanticEvaluator:
                 "sentence-transformers is required for SemanticEvaluator. "
                 "Install with: pip install sentence-transformers"
             )
-        
+
         try:
             SemanticEvaluator._model = SentenceTransformer(self._model_name)
         except Exception as e:
-            raise RuntimeError(
-                f"Failed to load semantic model '{self._model_name}': {e}"
-            )
-    
+            raise RuntimeError(f"Failed to load semantic model '{self._model_name}': {e}")
+
     def compute_similarity(self, prediction: str, reference: str) -> float:
         """
         Compute semantic similarity between prediction and reference.
-        
+
         Uses cosine similarity of sentence embeddings.
-        
+
         Args:
             prediction: The predicted/generated text.
             reference: The ground truth/reference text.
-            
+
         Returns:
-            Similarity score between 0.0 and 1.0 (higher = more similar).
+            Cosine similarity in [-1, 1] (higher = more similar). Negative
+            values are meaningful and are not clipped away.
         """
         if SemanticEvaluator._model is None:
             self._load_model()
-        
+
         if not prediction or not reference:
             return 0.0
-        
+
         try:
             # Compute embeddings
             pred_embedding = SemanticEvaluator._model.encode(
-                prediction,
-                convert_to_numpy=True,
-                normalize_embeddings=True
+                prediction, convert_to_numpy=True, normalize_embeddings=True
             )
             ref_embedding = SemanticEvaluator._model.encode(
-                reference,
-                convert_to_numpy=True,
-                normalize_embeddings=True
+                reference, convert_to_numpy=True, normalize_embeddings=True
             )
-            
+
             # Cosine similarity of normalised embeddings, in [-1, 1].
             # Not clipped to [0, 1]: negative similarity is a real signal, and
             # clipping it away compresses GOM toward zero and hides the case
             # where a prediction is actively unlike the reference.
+            similarity = np.dot(pred_embedding, ref_embedding)
             return float(np.clip(similarity, -1.0, 1.0))
-            
+
         except Exception as e:
             # Fallback to rule-based similarity if embedding fails
-            print(f"[SemanticEvaluator] Warning: Embedding computation failed: {e}; falling back to rule-based similarity")
+            print(
+                f"[SemanticEvaluator] Warning: Embedding computation failed: {e}; falling back to rule-based similarity"
+            )
             return semantic_answer_score(prediction, reference)
