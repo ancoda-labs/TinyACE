@@ -43,6 +43,8 @@ matplotlib.use("Agg")  # Non-interactive backend
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+from edge_slm_ace.reporting import arm_label, model_label
 import seaborn as sns
 
 # Set style
@@ -90,37 +92,8 @@ def normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def extract_model_name(model_id: str) -> str:
-    """
-    Extract short model name from full model_id.
-
-    Examples:
-    - "microsoft/Phi-3-mini-4k-instruct" -> "phi3mini"
-    - "sshleifer/tiny-gpt2" -> "tinygpt2"
-    - "meta-llama/Llama-3.2-1B-Instruct" -> "llama1b"
-    """
-    model_id_lower = model_id.lower()
-
-    # Common patterns
-    if "phi-3" in model_id_lower or "phi3" in model_id_lower:
-        if "mini" in model_id_lower:
-            return "phi3mini"
-        return "phi3"
-    elif "llama" in model_id_lower:
-        if "1b" in model_id_lower or "1b" in model_id:
-            return "llama1b"
-        elif "3.2" in model_id_lower:
-            return "llama32"
-        return "llama"
-    elif "tiny-gpt2" in model_id_lower or "tinygpt2" in model_id_lower:
-        return "tinygpt2"
-    elif "mistral" in model_id_lower:
-        return "mistral"
-
-    # Fallback: use last part of path
-    parts = model_id.split("/")
-    if len(parts) > 1:
-        return parts[-1].lower().replace("-", "").replace("_", "")[:10]
-    return model_id.lower().replace("-", "").replace("_", "")[:10]
+    """Short display name for a model. Delegates to the shared registry."""
+    return model_label(model_id)
 
 
 def extract_task_name(task_name: str) -> str:
@@ -138,26 +111,8 @@ def extract_task_name(task_name: str) -> str:
 
 
 def normalize_mode(mode: str) -> str:
-    """
-    Normalize mode names to canonical format.
-
-    Maps:
-    - "baseline" -> "zero_shot"
-    - "ace_full" -> "ace_full"
-    - "ace_working_memory" -> "tinyace" (or keep as is)
-    """
-    mode_lower = mode.lower()
-
-    if mode_lower in ["baseline", "zero_shot"]:
-        return "zero_shot"
-    elif mode_lower == "ace_full":
-        return "ace_full"
-    elif mode_lower in ["ace_working_memory", "tinyace"]:
-        return "tinyace"
-    elif mode_lower == "self_refine":
-        return "self_refine"
-
-    return mode_lower
+    """Canonical arm key, lowercased. Labels come from `arm_label`."""
+    return str(mode).lower()
 
 
 def load_results(results_dir: str = "results") -> pd.DataFrame:

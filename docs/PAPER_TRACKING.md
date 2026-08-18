@@ -140,7 +140,7 @@ Experiment tracking and planning document for the workshop paper.
 #### Person 3 (Archit) - Metrics & Evaluation
 - [ ] ⏳ Extend `compute_accuracy()` for robust answer comparison
 - [ ] ⏳ Add latency percentiles (p50, p95, p99)
-- [ ] ⏳ Create `scripts/summarize_results.py` for comparison tables
+- [ ] ⏳ Create `scripts/aggregate_results.py` for comparison tables
 - [ ] ⏳ Test metrics on baseline CSVs
 
 ### Week 2: Full Experiments + Analysis

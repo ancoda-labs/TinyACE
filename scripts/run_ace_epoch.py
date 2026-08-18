@@ -92,7 +92,7 @@ def main():
     parser.add_argument(
         "--auto-plots",
         action="store_true",
-        help="Automatically regenerate plots after all epochs complete (requires tinyace_plots.py)",
+        help="Automatically regenerate plots after all epochs complete (requires make_figures.py)",
     )
 
     args = parser.parse_args()
@@ -273,20 +273,20 @@ def main():
     # Optionally regenerate plots
     if args.auto_plots:
         try:
-            # Import tinyace_plots module
-            from scripts.tinyace_plots import main as regenerate_plots
+            # Import make_figures module
+            from scripts.make_figures import main as regenerate_plots
 
             print("\n" + "=" * 60)
             print("Regenerating plots...")
             print("=" * 60)
-            regenerate_plots(results_dir="results", output_dir="tinyace_plots")
+            regenerate_plots(results_dir="results", output_dir="figures")
             print("Plots regenerated successfully.")
         except ImportError as e:
-            print(f"\nWarning: Could not import tinyace_plots: {e}")
-            print("Skipping plot regeneration. Run manually with: python -m scripts.tinyace_plots")
+            print(f"\nWarning: Could not import make_figures: {e}")
+            print("Skipping plot regeneration. Run manually with: python -m scripts.make_figures")
         except Exception as e:
             print(f"\nWarning: Plot regeneration failed: {e}")
-            print("You can regenerate plots manually with: python tinyace_plots.py")
+            print("You can regenerate plots manually with: python make_figures.py")
 
     return 0
 

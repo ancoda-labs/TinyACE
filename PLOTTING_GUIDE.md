@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `scripts/tinyace_plots.py` module automatically generates all paper figures from standardized evaluation results. It reads CSV files from the `results/` directory and generates publication-ready PDF and PNG figures.
+The `scripts/make_figures.py` module automatically generates all paper figures from standardized evaluation results. It reads CSV files from the `results/` directory and generates publication-ready PDF and PNG figures.
 
 ## Quick Start
 
@@ -10,10 +10,10 @@ The `scripts/tinyace_plots.py` module automatically generates all paper figures 
 
 ```bash
 # Generate all plots from results/
-python -m scripts.tinyace_plots
+python -m scripts.make_figures
 
 # Custom paths
-python -m scripts.tinyace_plots --results_dir results --output_dir tinyace_plots
+python -m scripts.make_figures --results_dir results --output_dir make_figures
 ```
 
 ### Auto-Generate Plots After Evaluation
@@ -101,7 +101,7 @@ Compares latency vs accuracy across different devices.
 ## Output Structure
 
 ```
-tinyace_plots/
+figures/
 ├── summary.csv              # Aggregated statistics per (task, model, mode)
 ├── fig1_memory_cliff.pdf    # Memory cliff plot
 ├── fig1_memory_cliff.png    # PNG version
@@ -174,14 +174,14 @@ In your LaTeX paper (`tinyace_paper.tex`), include figures like:
 ```latex
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.95\columnwidth]{tinyace_plots/fig1_memory_cliff.pdf}
+    \includegraphics[width=0.95\columnwidth]{figures/fig1_memory_cliff.pdf}
     \caption{Memory Cliff: Learning curve showing accuracy improvement over questions processed.}
     \label{fig:motivation}
 \end{figure}
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.95\columnwidth]{tinyace_plots/fig3_token_efficiency.pdf}
+    \includegraphics[width=0.95\columnwidth]{figures/fig3_token_efficiency.pdf}
     \caption{Token Efficiency: Average context tokens across different modes.}
     \label{fig:token_efficiency}
 \end{figure}
@@ -204,7 +204,7 @@ pip install -r requirements.txt
 
 ### Custom Task/Model Selection
 
-The plotting functions accept optional `task` and `model` parameters. You can modify `scripts/tinyace_plots.py` to filter specific combinations:
+The plotting functions accept optional `task` and `model` parameters. You can modify `scripts/make_figures.py` to filter specific combinations:
 
 ```python
 # In plot_memory_cliff()

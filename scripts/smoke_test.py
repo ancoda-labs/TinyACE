@@ -1,137 +1,168 @@
 #!/usr/bin/env python3
-"""Smoke test script for tiny-gpt2 CPU-only verification.
+"""End-to-end smoke test: load a model, run a few examples, check the plumbing.
 
-This script verifies that tiny-gpt2 runs correctly on CPU, even when CUDA is requested.
-This is expected behavior due to PyTorch >=2.6 security restrictions.
+Verifies that a model loads, generates, and produces scoreable output on the
+target device, without waiting for a full evaluation. Checks the conditions
+that silently invalidate a real run:
+
+  - the chat template was applied (instruct models prompted raw ramble)
+  - no prompt was truncated (the tail of a prompt is the question)
+  - predictions map to options above the embedding tier (an OMA resting on
+    embedding argmax over free text is weak evidence)
+
+Usage:
+    # CPU, tiny model, no network-heavy download
+    python -m scripts.smoke_test
+
+    # GPU with a real model
+    python -m scripts.smoke_test --model phi3-mini --device cuda
+
+    # Any registered model or HuggingFace id
+    python -m scripts.smoke_test --model Qwen/Qwen2.5-1.5B-Instruct --limit 5
 """
 
+import argparse
+import json
 import sys
 from pathlib import Path
 
-from edge_slm_ace.utils.config import get_model_config, get_task_config
-from edge_slm_ace.models.model_manager import load_model_and_tokenizer
 from edge_slm_ace.core.runner import run_dataset_baseline
-from edge_slm_ace.utils.device_utils import resolve_device_override
+from edge_slm_ace.models.model_manager import load_model_and_tokenizer
+from edge_slm_ace.utils.config import get_model_config, get_task_config, resolve_task_path
+from edge_slm_ace.utils.repro import DEFAULT_SEED, capture_environment, set_seed
 
 
-def load_dataset(path: Path) -> list[dict]:
-    """Load a dataset from a JSON file."""
-    import json
-
+def load_dataset(task_name: str, limit: int):
+    """Load the first `limit` examples of a registered task."""
+    path = resolve_task_path(task_name)
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        if path.suffix.lower() == ".jsonl":
+            rows = [json.loads(line) for line in f if line.strip()]
+        else:
+            rows = json.load(f)
+    return rows[:limit]
 
 
-def main():
-    """Run smoke test with tiny-gpt2."""
-    print("=" * 60)
-    print("tiny-gpt2 CPU-only Smoke Test")
-    print("=" * 60)
-    print("This test verifies that tiny-gpt2 runs on CPU even when CUDA is requested.")
-    print("This is expected behavior due to PyTorch >=2.6 security restrictions.")
-    print("=" * 60)
-    print()
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Smoke-test the evaluation pipeline on a few examples.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="tiny-gpt2",
+        help="Model key or HuggingFace id (default: tiny-gpt2)",
+    )
+    parser.add_argument(
+        "--task", type=str, default="sciq_tiny", help="Registered task name (default: sciq_tiny)"
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        choices=["cpu", "cuda", "mps"],
+        help="Device override (default: auto-detect)",
+    )
+    parser.add_argument("--limit", type=int, default=3, help="Examples to run (default: 3)")
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--max-new-tokens", type=int, default=64)
 
-    model_id = "sshleifer/tiny-gpt2"
-    task_name = "tatqa_tiny"
+    args = parser.parse_args()
 
-    # Get task config
+    set_seed(args.seed)
+    environment = capture_environment()
+
+    print("=" * 64)
+    print("TinyACE smoke test")
+    print("=" * 64)
+    print(f"  torch        {environment['torch_version']}")
+    print(f"  transformers {environment['transformers_version']}")
+    print(f"  commit       {environment['git_commit']}")
+    print(f"  model        {args.model}")
+    print(f"  task         {args.task} (first {args.limit} examples)")
+    print(f"  device       {args.device or 'auto'}")
+    print("=" * 64)
+
+    config = get_model_config(args.model)
+    config.max_new_tokens = args.max_new_tokens
+
     try:
-        task_config = get_task_config(task_name)
-        dataset_path_str = task_config["path"]
-        domain = task_config["domain"]
-    except KeyError as e:
-        print(f"Error: {e}")
-        return 1
-
-    # Resolve dataset path
-    repo_root = Path(__file__).parent.parent
-    dataset_path = repo_root / dataset_path_str
-
-    if not dataset_path.exists():
-        print(f"Error: Dataset not found: {dataset_path}")
-        return 1
-
-    # Load model config
-    try:
-        config = get_model_config(model_id)
+        model, tokenizer = load_model_and_tokenizer(config.model_id, device_override=args.device)
     except Exception as e:
-        print(f"Error: Failed to load model config: {e}")
+        print(f"\nFAIL: could not load {config.model_id}: {e}", file=sys.stderr)
         return 1
 
-    # Test: Request CUDA but should get CPU
-    print("Testing device resolution (requesting CUDA, expecting CPU override)...")
-    device, forced = resolve_device_override("cuda", model_id=config.model_id)
-    if device.type != "cpu":
-        print(f"ERROR: Expected CPU device, got {device}")
-        return 1
-    if forced != "forced":
-        print(f"ERROR: Expected forced=True, got {forced}")
-        return 1
-    print(f"✓ Device correctly forced to CPU: {device}")
-    print()
-
-    # Load model and tokenizer
-    print(f"Loading model: {config.model_id}")
     try:
-        model, tokenizer = load_model_and_tokenizer(
-            config.model_id,
-            device=device,
-            device_override="cuda",  # Request CUDA, should be forced to CPU
+        dataset = load_dataset(args.task, args.limit)
+    except Exception as e:
+        print(f"\nFAIL: could not load task {args.task}: {e}", file=sys.stderr)
+        return 1
+
+    domain = get_task_config(args.task)["domain"]
+
+    results, summary = run_dataset_baseline(
+        model=model,
+        tokenizer=tokenizer,
+        dataset=dataset,
+        domain=domain,
+        config=config,
+        model_id=config.model_id,
+        task_name=args.task,
+        option_shuffle_seed=args.seed,
+    )
+
+    print("\n" + "=" * 64)
+    print("Checks")
+    print("=" * 64)
+
+    failures = []
+
+    if not results:
+        failures.append("no results produced")
+    else:
+        if summary.get("truncation_rate", 0) > 0:
+            failures.append(f"{summary['truncation_rate']:.0%} of prompts truncated")
+
+        template_rate = summary.get("chat_template_rate", 0)
+        if template_rate < 1 and getattr(tokenizer, "chat_template", None):
+            failures.append(f"chat template applied to only {template_rate:.0%} of prompts")
+
+        if not any(r.get("pred", "").strip() for r in results):
+            failures.append("every prediction was empty")
+
+    tiers = summary.get("mapping_tier_distribution") or {}
+    if tiers:
+        print("  option mapping:", ", ".join(f"{k}={v:.0%}" for k, v in sorted(tiers.items())))
+        if tiers.get("embedding", 0) > 0.5:
+            print("    note: mostly embedding fallback -- OMA here is weak evidence")
+
+    print(f"  examples      {summary.get('num_examples', 0)}")
+    print(f"  chat template {summary.get('chat_template_rate', 0):.0%} of prompts")
+    print(f"  truncated     {summary.get('truncation_rate', 0):.0%} of prompts")
+    if summary.get("oma_accuracy") is not None:
+        print(
+            f"  OMA           {summary['oma_accuracy']:.0%} "
+            f"(n={summary.get('num_examples')}, not a result at this n)"
         )
-        print(f"✓ Model loaded successfully on device: {device}")
-    except Exception as e:
-        print(f"✗ Error: Failed to load model: {e}")
-        import traceback
+    print(f"  latency       {summary.get('avg_latency_ms', 0):.0f} ms/example")
 
-        traceback.print_exc()
+    print("\n  sample prediction:")
+    if results:
+        sample = results[0]
+        print(f"    Q:    {str(sample.get('question', ''))[:80]}")
+        print(f"    pred: {str(sample.get('pred', ''))[:80]}")
+        print(f"    gold: {str(sample.get('gold', ''))[:80]}")
+
+    print("=" * 64)
+    if failures:
+        for failure in failures:
+            print(f"FAIL: {failure}", file=sys.stderr)
         return 1
 
-    # Load dataset
-    try:
-        dataset = load_dataset(dataset_path)
-    except Exception as e:
-        print(f"Error: Failed to load dataset: {e}")
-        return 1
-
-    # Limit to 1 example for quick test
-    dataset = dataset[:1]
-
-    print(f"Loaded {len(dataset)} examples")
-    print()
-
-    # Run baseline
-    print("Running baseline evaluation...")
-    try:
-        results, summary = run_dataset_baseline(
-            model=model,
-            tokenizer=tokenizer,
-            dataset=dataset,
-            domain=domain,
-            config=config,
-            model_id=config.model_id,
-            task_name=task_name,
-            mode="baseline",
-        )
-
-        print()
-        print("=" * 60)
-        print("✓ tiny-gpt2 CPU-only smoke test completed")
-        print("=" * 60)
-        print(f"Device used: {device}")
-        print(f"Accuracy: {summary['accuracy']:.3f}")
-        print(f"Avg latency: {summary['avg_latency_ms']:.2f} ms")
-        print(f"Examples processed: {summary['num_examples']}")
-        print("=" * 60)
-
-        return 0
-
-    except Exception as e:
-        print(f"✗ Error during evaluation: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return 1
+    print("PASS: pipeline is functional end to end.")
+    return 0
 
 
 if __name__ == "__main__":

@@ -144,7 +144,7 @@ TINY ACE/
 ├── scripts/                 # CLI Tools
 │   ├── run_experiment.py    # Single run entry point
 │   ├── run_eval_grid.py     # Batch experiment runner
-│   └── tinyace_plots.py     # Generate paper figures
+│   └── make_figures.py     # Generate paper figures
 ├── configs/                 # YAML configurations
 ├── docs/                    # Documentation & Analysis
 └── data/                    # SciQ and other datasets

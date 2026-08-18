@@ -5,8 +5,8 @@ This script reads a summary CSV file and generates visualization plots
 comparing accuracy across different modes, models, and tasks.
 
 Usage:
-    python -m scripts.plot_results
-    python -m scripts.plot_results --summary-csv results/summary.csv --output-dir results/plots/
+    python -m scripts.make_diagnostics
+    python -m scripts.make_diagnostics --summary-csv results/summary.csv --output-dir results/plots/
 """
 
 import argparse
@@ -20,41 +20,19 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from edge_slm_ace.reporting import ARMS, arm_label, arm_order, model_label
+
+# Display order for arms, derived from the shared registry rather than
+# maintained as a second list that can drift out of sync with it.
+MODE_ORDER = [arm.key for arm in ARMS]
+
+
 # =============================================================================
 # Mode label normalization for publication-ready plots
 # =============================================================================
-MODE_LABELS = {
-    "baseline": "Baseline",
-    "ace": "ACE",
-    "ace_full": "ACE Full",
-    "ace_working_memory": "ACE WM",
-    "tinyace_wm_256": "TinyACE-256",
-    "tinyace_wm_512": "TinyACE-512",
-    "tinyace_ablate_no_vagueness": "Ablate: No Vagueness",
-    "tinyace_ablate_no_recency": "Ablate: No Recency",
-    "tinyace_ablate_no_failure": "Ablate: No Failure",
-    "tinyace_fifo": "FIFO Eviction",
-    "self_refine": "Self-Refine",
-}
-
-# Mode ordering for consistent plot legends
-MODE_ORDER = [
-    "baseline",
-    "ace_full",
-    "ace_working_memory",
-    "tinyace_wm_256",
-    "tinyace_wm_512",
-    "tinyace_ablate_no_vagueness",
-    "tinyace_ablate_no_recency",
-    "tinyace_ablate_no_failure",
-    "tinyace_fifo",
-    "self_refine",
-]
-
-
 def normalize_mode_label(mode: str) -> str:
-    """Convert internal mode name to publication-ready label."""
-    return MODE_LABELS.get(mode, mode.replace("_", " ").title())
+    """Publication-ready label for an arm, from the shared registry."""
+    return arm_label(mode)
 
 
 def get_effective_mode(row: pd.Series) -> str:
@@ -296,13 +274,13 @@ def main() -> int:
         epilog="""
 Examples:
   # Generate all plots from default summary CSV
-  python -m scripts.plot_results
+  python -m scripts.make_diagnostics
 
   # Generate plots from custom summary CSV
-  python -m scripts.plot_results --summary-csv results/summary.csv --output-dir results/plots/
+  python -m scripts.make_diagnostics --summary-csv results/summary.csv --output-dir results/plots/
 
   # Generate only specific plots
-  python -m scripts.plot_results --plots accuracy latency memory
+  python -m scripts.make_diagnostics --plots accuracy latency memory
         """,
     )
 

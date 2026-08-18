@@ -735,11 +735,11 @@ Examples:
         if args.auto_plots:
             try:
                 import sys
-                from scripts.tinyace_plots import main as regenerate_plots
+                from scripts.make_figures import main as regenerate_plots
 
                 if not args.quiet:
                     print("\nRegenerating plots...")
-                regenerate_plots(results_dir="results", output_dir="tinyace_plots")
+                regenerate_plots(results_dir="results", output_dir="figures")
                 if not args.quiet:
                     print("Plots regenerated successfully.")
             except Exception as e:

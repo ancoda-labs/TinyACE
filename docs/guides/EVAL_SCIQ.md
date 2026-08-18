@@ -121,7 +121,7 @@ python -m scripts.run_experiment \
 python -m scripts.aggregate_results
 
 # Generate plots (includes OMA/GOM/ACR plots for SciQ data)
-python -m scripts.plot_results
+python -m scripts.make_diagnostics
 ```
 
 ## New Plots

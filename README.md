@@ -135,7 +135,7 @@ TINY ACE/
 │   ├── run_experiment.py     # Single experiment runner
 │   ├── run_eval_grid.py      # Grid experiment runner
 │   ├── compare_arms.py       # CIs + paired significance testing
-│   └── tinyace_plots.py      # Visualization pipeline
+│   └── make_figures.py      # Visualization pipeline
 ├── configs/                    # Configuration files
 │   └── experiment_grid.yaml   # Experiment configuration
 ├── docs/                       # Documentation
@@ -200,10 +200,10 @@ python -m scripts.run_eval_grid --config configs/experiment_grid.yaml --dry-run
 
 ```bash
 # Generate all plots from results
-python -m scripts.tinyace_plots
+python -m scripts.make_figures
 
 # Custom paths
-python -m scripts.tinyace_plots --results_dir results --output_dir plots
+python -m scripts.make_figures --results_dir results --output_dir plots
 ```
 
 ### Run Qwen2.5 Rival Experiments
@@ -215,7 +215,7 @@ Compare TinyACE against Qwen2.5 models (parameter-matched rivals to TinyLlama, P
 python -m scripts.run_qwen_rivals
 
 # Or use the shell script
-./scripts/run_qwen_rivals.sh
+python -m scripts.run_qwen_rivals
 
 # Dry run (preview what would be run)
 python -m scripts.run_qwen_rivals --dry-run

@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from edge_slm_ace.eval.stats import compare_arms, format_comparison
+from edge_slm_ace.reporting import arm_label, is_ablation, reference_for
 
 
 def load_predictions(path: Path) -> List[Dict]:
