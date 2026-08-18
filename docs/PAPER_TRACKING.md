@@ -211,7 +211,7 @@ Experiment tracking and planning document for the workshop paper.
 - `llama-3.2-1b_medqa_tiny_baseline_20241110.csv`
 
 **Playbooks**: `{task}_playbook.jsonl`
-- `tatqa_playbook.jsonl`
+- `sciq_playbook.jsonl`
 - `medqa_playbook.jsonl`
 - `iot_playbook.jsonl`
 
