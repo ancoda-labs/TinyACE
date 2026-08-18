@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from edge_slm_ace.eval.stats import compare_arms, format_comparison, holm_bonferroni
-from edge_slm_ace.reporting import arm_label, reference_for
+from edge_slm_ace.reporting import arm_label, get_arm, reference_for
 
 
 def load_predictions(path: Path) -> List[Dict]:
@@ -110,6 +110,17 @@ def pair_with_registered_references(
     missing: List[Tuple[str, str]] = []
     for label in sorted(arms):
         key = arm_key_of(label)
+        if get_arm(key) is None:
+            # reference_for() falls back to "baseline" for a key it does not
+            # know, which is the wrong reference for anything ACE-shaped and
+            # exactly the mistake this function exists to prevent. Say so
+            # rather than emitting a comparison that looks authoritative.
+            print(
+                f"Note: '{key}' is not a registered arm, so its reference "
+                f"defaults to baseline. Register it in reporting/schema.py if "
+                f"it should be compared against something else.",
+                file=sys.stderr,
+            )
         reference_key = reference_for(key)
         if reference_key == key:
             continue  # the arm is its own reference; nothing to compare
@@ -233,10 +244,10 @@ def main() -> int:
         else:
             pairs, missing = pair_with_registered_references(arms)
 
-        for reference_label, arm_label_path in missing:
+        for skipped_label, reference_key in missing:
             print(
-                f"Note: skipping {arm_label_path} -- its reference arm "
-                f"'{reference_label}' was not run in this cell.",
+                f"Note: skipping {skipped_label} -- its reference arm "
+                f"'{reference_key}' was not run in this cell.",
                 file=sys.stderr,
             )
 
@@ -259,8 +270,19 @@ def main() -> int:
     # Every comparison printed together is one family of tests. Reporting each
     # p<0.05 on its own across a 10-arm sweep gives roughly a 40% chance of at
     # least one false positive, so the adjusted value is what decides.
-    adjusted = holm_bonferroni([c["mcnemar"]["p_value"] for c in comparisons])
-    for comparison, p_adjusted in zip(comparisons, adjusted):
+    #
+    # A pair with no comparable items carries a forced p=1.0 and no evidence.
+    # Counting it would inflate the family size and cost the real comparisons
+    # power for nothing, so it sits outside the correction and is marked
+    # not-significant directly.
+    testable = [c for c in comparisons if c["mcnemar"]["n"] > 0]
+    for comparison in comparisons:
+        comparison["mcnemar"]["in_test_family"] = comparison["mcnemar"]["n"] > 0
+        comparison["mcnemar"]["p_adjusted"] = 1.0
+        comparison["mcnemar"]["significant_05_adjusted"] = False
+
+    adjusted = holm_bonferroni([c["mcnemar"]["p_value"] for c in testable])
+    for comparison, p_adjusted in zip(testable, adjusted):
         comparison["mcnemar"]["p_adjusted"] = p_adjusted
         comparison["mcnemar"]["significant_05_adjusted"] = p_adjusted < 0.05
 
@@ -269,11 +291,11 @@ def main() -> int:
         print("=" * 72)
         print(format_comparison(comparison))
         test = comparison["mcnemar"]
-        if len(comparisons) > 1:
+        if test["in_test_family"] and len(testable) > 1:
             verdict = "survives" if test["significant_05_adjusted"] else "does not survive"
             print(
                 f"  -> p={test['p_value']:.4f} {verdict} Holm correction "
-                f"across {len(comparisons)} tests (p_adj={test['p_adjusted']:.4f})"
+                f"across {len(testable)} tests (p_adj={test['p_adjusted']:.4f})"
             )
 
     raw = [c for c in comparisons if c["mcnemar"]["significant_05"]]
@@ -281,11 +303,16 @@ def main() -> int:
     print()
     print("=" * 72)
     print(
-        f"{len(survivors)} of {len(comparisons)} comparisons survive Holm "
+        f"{len(survivors)} of {len(testable)} comparisons survive Holm "
         f"correction at p<0.05 ({len(raw)} before correction, "
-        f"family size {len(comparisons)})."
+        f"family size {len(testable)})."
     )
-    if comparisons and not survivors:
+    if len(comparisons) != len(testable):
+        print(
+            f"{len(comparisons) - len(testable)} comparison(s) had no items in "
+            f"common and were not tested."
+        )
+    if testable and not survivors:
         print("Report these as 'no detectable difference', not as an ordering.")
 
     if args.json_out:

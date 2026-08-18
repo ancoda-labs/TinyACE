@@ -5,6 +5,7 @@ import pytest
 from edge_slm_ace.eval.stats import (
     align_on_key,
     compare_arms,
+    holm_bonferroni,
     mcnemar_exact,
     summarize_accuracy,
     wilson_interval,
@@ -153,3 +154,32 @@ class TestTaskRegistry:
 
         monkeypatch.chdir(tmp_path)
         assert resolve_task_path("sciq_test").exists()
+
+
+class TestHolmBonferroni:
+    """
+    A sweep of 10 arms against a reference gives ~40% chance of at least one
+    p<0.05 under the null, so an uncorrected result from a grid is closer to
+    expected than to surprising.
+    """
+
+    def test_single_test_is_unchanged(self):
+        assert holm_bonferroni([0.03]) == [0.03]
+
+    def test_smallest_p_takes_the_largest_multiplier(self):
+        assert holm_bonferroni([0.01, 0.04]) == pytest.approx([0.02, 0.04])
+
+    def test_adjusted_values_are_monotone_in_the_raw_order(self):
+        adjusted = holm_bonferroni([0.001, 0.02, 0.03, 0.5])
+        assert adjusted == sorted(adjusted)
+
+    def test_alignment_survives_unsorted_input(self):
+        raw = [0.04, 0.005, 0.03]
+        adjusted = holm_bonferroni(raw)
+        assert adjusted[1] == pytest.approx(0.015), "the smallest p is at index 1"
+
+    def test_never_exceeds_one(self):
+        assert all(p <= 1.0 for p in holm_bonferroni([0.4, 0.5, 0.9]))
+
+    def test_empty_family(self):
+        assert holm_bonferroni([]) == []

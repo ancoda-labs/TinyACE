@@ -3,7 +3,7 @@
 import statistics
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -55,6 +55,7 @@ PLAYBOOK_LOG_FIELDS: List[str] = [
     "num_entries",
     "total_tokens",
     "num_evictions",
+    "entries_added",
     "retention_score_std",
     "num_retrieved",
     "num_credited",
@@ -122,6 +123,7 @@ def run_dataset_baseline(
     task_name: str,
     mode: str = "baseline",
     option_shuffle_seed: Optional[int] = None,
+    on_result: Optional[Callable[[Dict], None]] = None,
 ) -> tuple[List[Dict], Dict]:
     """
     Run baseline evaluation (no ACE) on a dataset.
@@ -369,6 +371,8 @@ def run_dataset_baseline(
                 result["acr_hit"] = None
 
         results.append(result)
+        if on_result is not None:
+            on_result(result)
 
         predictions.append(answer)
         labels.append(ground_truth)
@@ -467,6 +471,7 @@ def run_dataset_self_refine(
     task_name: str,
     mode: str = "self_refine",
     oracle: bool = False,
+    on_result: Optional[Callable[[Dict], None]] = None,
 ) -> tuple[List[Dict], Dict]:
     """
     Run self-refinement evaluation on a dataset (SEAL/SPICE-lite baseline).
@@ -648,6 +653,8 @@ def run_dataset_self_refine(
             "bleu_score": bleu_score,
         }
         results.append(result)
+        if on_result is not None:
+            on_result(result)
 
         predictions.append(final_answer)
         labels.append(ground_truth)
@@ -686,6 +693,7 @@ def run_dataset_ace(
     option_shuffle_seed: Optional[int] = None,
     enable_learning: bool = True,
     use_curator: bool = True,
+    on_result: Optional[Callable[[Dict], None]] = None,
 ) -> tuple[List[Dict], Dict]:
     """
     Run ACE-style adaptive evaluation on a dataset.
@@ -830,12 +838,6 @@ def run_dataset_ace(
                     example, shuffle_seed=option_shuffle_seed
                 )
 
-        # Capture playbook state before processing
-        playbook_before = {
-            "num_entries": len(playbook.entries),
-            "total_tokens": playbook.total_tokens,
-        }
-
         # Step 1: Generator - build prompt with playbook context.
         # Choices are rendered by build_generator_prompt via the same shared
         # block the baseline arm uses, rather than appended here with
@@ -904,8 +906,12 @@ def run_dataset_ace(
             # recording it as a real zero would drag any average down.
             bleu_score = None
 
-        # Set result_mode based on ace_mode
-        result_mode = ace_mode  # Use ace_mode directly (ace_full or ace_working_memory)
+        # The row's arm identity. `ace_mode` distinguishes ace_full from
+        # ace_working_memory, but it is set for the control arm too -- which
+        # made cot_control write "ace_full" into its own rows, so the control
+        # was indistinguishable from the arm it is the control for in anything
+        # grouping on this column. `ace - cot_control` is the entire claim.
+        result_mode = ace_mode if mode == "ace" else mode
 
         # Count tokens.
         #
@@ -994,18 +1000,27 @@ def run_dataset_ace(
             # in a subsequent prompt. Recording feedback at creation time would
             # bias the lesson based on the example it was derived from, not on
             # whether it actually helps future examples.
+            # Ids before and after, so a lesson that deduplicates into an
+            # existing entry is not counted as an addition -- and therefore not
+            # inferred to have caused an eviction.
+            ids_before_add = {e.id for e in playbook.entries}
             for lesson in curated_lessons:
                 playbook.add_entry(
                     domain=domain,
                     text=lesson,
                     step=step,
                 )
+            ids_after_add = {e.id for e in playbook.entries}
+            entries_added = len(ids_after_add - ids_before_add)
+            evictions_during_add = len(ids_before_add - ids_after_add)
         else:
             reflection_text = ""
             reflection_latency_ms = 0.0
             curated_lessons = []
             num_rejected_by_curator = 0
             curator_latency_ms = 0.0
+            entries_added = 0
+            evictions_during_add = 0
 
         # Credit assignment.
         #
@@ -1047,12 +1062,6 @@ def run_dataset_ace(
             "total_tokens": playbook.total_tokens,
         }
 
-        # Track evictions that happened during add_entry (working memory mode)
-        # This is approximate - we track the difference in entry count
-        entries_added = len(curated_lessons) if should_reflect else 0
-        evictions_during_add = max(
-            0, playbook_before["num_entries"] + entries_added - playbook_after["num_entries"]
-        )
         total_evictions = num_evictions + evictions_during_add
 
         # Log playbook stats for this step
@@ -1071,6 +1080,9 @@ def run_dataset_ace(
                 "num_entries": playbook_after["num_entries"],
                 "total_tokens": playbook_after["total_tokens"],
                 "num_evictions": total_evictions,
+                # Lessons that became new entries. Lower than the number the
+                # Curator passed whenever one deduplicated into an incumbent.
+                "entries_added": entries_added,
                 "retention_score_std": score_std,
                 "num_retrieved": len(used_entry_ids),
                 "num_credited": len(credited_ids),
@@ -1173,6 +1185,8 @@ def run_dataset_ace(
                 result["acr_hit"] = None
 
         results.append(result)
+        if on_result is not None:
+            on_result(result)
 
         predictions.append(answer)
         labels.append(ground_truth)

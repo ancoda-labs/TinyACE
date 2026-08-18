@@ -184,6 +184,37 @@ def build_scoring_params(args: argparse.Namespace) -> ScoringParams:
     )
 
 
+class PredictionWriter:
+    """
+    Append per-example rows to predictions.jsonl as they are produced.
+
+    Rows were buffered in memory and written once, after the loop, so a run
+    that died at example 900 of 1000 left no file at all -- which made
+    --resume useless for the case it exists to serve, since there was nothing
+    to resume from. Each row is flushed as it arrives.
+
+    A no-op when no predictions path was requested.
+    """
+
+    def __init__(self, path: Optional[Path], append: bool):
+        self.path = path
+        self._file = None
+        if path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._file = open(path, "a" if append else "w", encoding="utf-8")
+
+    def __call__(self, result: Dict) -> None:
+        if self._file is None:
+            return
+        self._file.write(json.dumps(result, default=str) + "\n")
+        self._file.flush()
+
+    def close(self) -> None:
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+
+
 def recompute_correctness(summary: Dict[str, Any], results: List[Dict], resumed: int) -> Dict:
     """
     Recompute the per-example aggregates over a merged row set.
@@ -652,6 +683,13 @@ Examples:
                 if not args.quiet:
                     print(f"Resuming: {before - len(dataset)} of {before} examples already done")
 
+            # Rows land on disk as they are produced, so an interruption leaves
+            # something for the next --resume to pick up.
+            prediction_writer = PredictionWriter(
+                Path(args.predictions_path) if args.predictions_path else None,
+                append=bool(already_done),
+            )
+
             if not args.quiet:
                 print(
                     f"Loaded {len(dataset)} examples from {dataset_path}"
@@ -672,6 +710,7 @@ Examples:
                     task_name=task_name,
                     mode=args.mode,
                     option_shuffle_seed=args.seed,
+                    on_result=prediction_writer,
                 )
                 playbook_stats = None
 
@@ -694,6 +733,7 @@ Examples:
                     task_name=task_name,
                     mode=args.mode,
                     oracle=oracle,
+                    on_result=prediction_writer,
                 )
                 playbook_stats = None
 
@@ -794,6 +834,7 @@ Examples:
                     option_shuffle_seed=args.seed,
                     enable_learning=enable_learning,
                     use_curator=not args.no_curator,
+                    on_result=prediction_writer,
                 )
 
                 playbook_stats = {
@@ -820,6 +861,8 @@ Examples:
 
                 if not args.quiet:
                     print(f"Playbook: {initial_playbook_size} → {len(playbook.entries)} entries")
+
+            prediction_writer.close()
 
             # Update memory tracker one final time
             memory_tracker.update()

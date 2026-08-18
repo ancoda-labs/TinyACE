@@ -588,9 +588,19 @@ def generate_latex_table(summaries: List[Dict], output_path: Path):
     for _, row in df.iterrows():
         model = row["model_name"]
         config = row["mode_name"].replace("_", " ").replace("tinyace ", "TinyACE ")
-        oma = row.get("oma_accuracy", row.get("accuracy", 0))
-        latency = row.get("avg_latency_sec", row.get("avg_latency_ms", 0) / 1000)
-        wm_tokens = row.get("wm_tokens", 0)
+
+        # pandas returns NaN for a column that exists but is empty, so
+        # `.get(key, default)` never reaches its default. NaN then survives the
+        # `is not None` guard below and `round(nan * n)` raises ValueError --
+        # after every run has finished, destroying the paper table.
+        def present(key, fallback=None):
+            value = row.get(key)
+            return fallback if value is None or pd.isna(value) else value
+
+        oma = present("oma_accuracy", present("accuracy"))
+        latency_ms = present("avg_latency_ms")
+        latency = present("avg_latency_sec", (latency_ms / 1000) if latency_ms is not None else 0.0)
+        wm_tokens = present("wm_tokens", 0)
 
         # A missing metric renders as "--", never as 0.000. Silent defaults
         # are how a column of zeros reached a paper-ready table unnoticed.

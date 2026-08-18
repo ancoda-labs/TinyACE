@@ -6,7 +6,7 @@ comparing accuracy across different modes, models, and tasks.
 
 Usage:
     python -m scripts.make_diagnostics
-    python -m scripts.make_diagnostics --summary-csv results/summary.csv --output-dir results/plots/
+    python -m scripts.make_diagnostics --summary-csv results/summary_runs.csv --output-dir results/plots/
 """
 
 import argparse
@@ -35,11 +35,17 @@ def normalize_mode_label(mode: str) -> str:
 
 
 def get_effective_mode(row: pd.Series) -> str:
-    """Get effective mode from row (prefer ace_mode over mode for ACE runs)."""
-    if "effective_mode" in row and pd.notna(row["effective_mode"]):
-        return row["effective_mode"]
-    if "ace_mode" in row and pd.notna(row["ace_mode"]):
-        return row["ace_mode"]
+    """
+    Get the effective arm from a row.
+
+    `summary_runs.csv` identifies the arm as `arm` / `arm_label`, so a reader
+    that only knew about `mode` collapsed every row into "unknown" and drew a
+    single bar. `ace_mode` still wins over a bare `mode` for older runs, where
+    `mode` was "ace" for every ACE variant.
+    """
+    for column in ("effective_mode", "arm", "ace_mode"):
+        if column in row and pd.notna(row[column]):
+            return row[column]
     return row.get("mode", "unknown")
 
 
@@ -276,7 +282,7 @@ Examples:
   python -m scripts.make_diagnostics
 
   # Generate plots from custom summary CSV
-  python -m scripts.make_diagnostics --summary-csv results/summary.csv --output-dir results/plots/
+  python -m scripts.make_diagnostics --summary-csv results/summary_runs.csv --output-dir results/plots/
 
   # Generate only specific plots
   python -m scripts.make_diagnostics --plots accuracy latency memory
@@ -286,8 +292,12 @@ Examples:
     parser.add_argument(
         "--summary-csv",
         type=str,
-        default="results/summary.csv",
-        help="Path to summary CSV file (default: results/summary.csv)",
+        default="results/summary_runs.csv",
+        help=(
+            "Path to the run summary written by scripts.aggregate_results "
+            "(default: results/summary_runs.csv). This defaulted to "
+            "results/summary.csv, which aggregate_results no longer produces."
+        ),
     )
     parser.add_argument(
         "--output-dir",

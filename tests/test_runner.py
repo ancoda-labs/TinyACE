@@ -177,3 +177,79 @@ class TestResultSchema:
     def test_ace_rows_carry_the_same_join_columns(self, stub_generation, tmp_path):
         results, _ = run_ace(stub_generation, tmp_path, "Answer:\nmitochondria")
         assert self.JOIN_COLUMNS <= set(results[0])
+
+
+class TestArmIdentity:
+    """
+    The control arm must be distinguishable from the arm it controls for.
+
+    run_dataset_ace wrote `mode = ace_mode` into every row, and cot_control
+    goes through the same code path with ace_mode still set -- so the control
+    labelled itself "ace_full". Anything grouping on that column pooled the two,
+    and `ace - cot_control` is the entire claim the protocol rests on.
+    """
+
+    def run(self, stub_generation, tmp_path, mode, ace_mode="ace_full", learning=True):
+        stub_generation("Answer:\nmitochondria")
+        results, _ = run_dataset_ace(
+            model=None,
+            tokenizer=StubTokenizer(),
+            dataset=EXAMPLES,
+            domain="science",
+            config=CONFIG,
+            playbook=Playbook(token_budget=256),
+            playbook_path=tmp_path / "pb.jsonl",
+            model_id="stub",
+            task_name="iot_tiny",
+            mode=mode,
+            ace_mode=ace_mode,
+            enable_learning=learning,
+        )
+        return results
+
+    def test_control_rows_are_labelled_cot_control(self, stub_generation, tmp_path):
+        rows = self.run(stub_generation, tmp_path, mode="cot_control", learning=False)
+        assert {r["mode"] for r in rows} == {"cot_control"}
+
+    def test_ace_rows_keep_the_ace_mode_variant(self, stub_generation, tmp_path):
+        """ace_full and ace_working_memory still have to be told apart."""
+        rows = self.run(stub_generation, tmp_path, mode="ace", ace_mode="ace_working_memory")
+        assert {r["mode"] for r in rows} == {"ace_working_memory"}
+
+
+class TestEvictionAccounting:
+    """A deduplicated lesson is not an addition, so it is not an eviction."""
+
+    LESSON = "- For ATP questions, name the organelle performing oxidative phosphorylation.\n"
+
+    def test_repeated_lesson_is_not_counted_as_an_eviction(self, stub_generation, tmp_path):
+        _, summary = run_ace(
+            stub_generation,
+            tmp_path,
+            generator_reply="Answer:\nwrong",
+            reflector_reply=self.LESSON,
+            curator_reply="Lesson 1: is_generic=False",
+        )
+        log = summary["playbook_log"]
+        assert log[0]["entries_added"] == 1, "first step stores the lesson"
+        assert log[1]["entries_added"] == 0, "second step deduplicates into it"
+        assert log[1]["num_evictions"] == 0, "deduplication is not an eviction"
+
+
+class TestStreaming:
+    """Rows must reach the caller as they are produced, not only at the end."""
+
+    def test_on_result_fires_per_example(self, stub_generation, tmp_path):
+        stub_generation("Answer:\nmitochondria")
+        seen = []
+        results, _ = run_dataset_baseline(
+            model=None,
+            tokenizer=StubTokenizer(),
+            dataset=EXAMPLES,
+            domain="science",
+            config=CONFIG,
+            model_id="stub",
+            task_name="iot_tiny",
+            on_result=seen.append,
+        )
+        assert [r["qid"] for r in seen] == [r["qid"] for r in results]

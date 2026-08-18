@@ -176,11 +176,14 @@ def summarize_predictions(
         return pd.DataFrame()
 
     group_by = group_by or [c for c in ("model_label", "task", "arm") if c in df.columns]
-    metric = _primary_metric(df)
 
     rows = []
     for keys, group in df.groupby(group_by, dropna=False):
         keys = keys if isinstance(keys, tuple) else (keys,)
+        # Chosen per group, not per frame. Choosing once over the whole frame
+        # picked oma_correct as soon as any MCQ run was present, so a non-MCQ
+        # task in the same results root reported 0.0% accuracy with n=0.
+        metric = _primary_metric(group)
         stats = summarize_accuracy(group[metric].dropna(), confidence=confidence)
         row = dict(zip(group_by, keys))
         row.update(

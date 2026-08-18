@@ -909,7 +909,9 @@ class Playbook:
         return {
             "num_entries": len(entries),
             "total_tokens": sum(e.token_count for e in entries),
-            "avg_score": sum(e.score(current_step) for e in entries) / len(entries),
+            "avg_score": (
+                sum(e.score(current_step, self.scoring_params) for e in entries) / len(entries)
+            ),
             "avg_success_rate": total_successes / max(1, total_uses),
             "domains": list(set(e.domain for e in entries)),
         }

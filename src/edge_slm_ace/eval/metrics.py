@@ -207,6 +207,22 @@ def compare_numbers_with_units(pred: str, gold: str, tol: float = 1e-3) -> float
 # ------------------------------
 
 
+def _contains_phrase(haystack: str, needle: str) -> bool:
+    """
+    True when `needle` appears in `haystack` as a whole word or phrase.
+
+    Args:
+        haystack: Normalised text to search.
+        needle: Normalised phrase to look for.
+
+    Returns:
+        Whether the phrase occurs on word boundaries.
+    """
+    if not needle:
+        return False
+    return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", haystack) is not None
+
+
 def semantic_answer_score(pred: str, label: str) -> float:
     """
     Return a similarity score in [0, 1] between `pred` and `label`.
@@ -250,11 +266,16 @@ def semantic_answer_score(pred: str, label: str) -> float:
     #    length-penalised, so without this a verbose-but-right answer scores
     #    lower than a terse-but-wrong one -- which systematically penalised
     #    the chain-of-thought arm relative to the terse baseline arm.
+    #
+    #    Matched on word boundaries, not raw substrings: gold "ice" scored a
+    #    full 1.0 inside "price", and "add" inside "address". This remains a
+    #    lexical measure -- "not oxygen but nitrogen" still contains "oxygen"
+    #    -- which is why the docstring says not to report it as correctness.
     containment = 0.0
     if a and b:
-        if b in a:
+        if _contains_phrase(a, b):
             containment = 1.0
-        elif a in b:
+        elif _contains_phrase(b, a):
             containment = len(a) / len(b)
 
     # 4) token-level F1

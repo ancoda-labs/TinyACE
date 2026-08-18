@@ -10,7 +10,8 @@ Each CSV under results/ should have at least:
 - "qid" or "sample_id"      : question/sample identifier
 - "task" or "task_name"     : task name (e.g., medqa, tatqa_tiny, gsm8k)
 - "model" or "model_id"     : model name (e.g., phi3mini, llama1b)
-- "mode"                    : one of ["zero_shot", "baseline", "ace_full", "ace_working_memory", "tinyace", "self_refine"]
+- "mode"                    : a canonical arm key from reporting.schema (e.g. "baseline",
+                              "cot_control", "ace_full", "tinyace_wm_256")
 - "is_correct" or "correct" : 0/1 or boolean
 - "prompt_tokens"           : integer, total tokens fed into model
 - "context_tokens"          : integer, task context only (optional)
@@ -114,6 +115,13 @@ def extract_task_name(task_name: str) -> str:
 def normalize_mode(mode: str) -> str:
     """Canonical arm key, lowercased. Labels come from `arm_label`."""
     return str(mode).lower()
+
+
+# Arms these figures compare. They named "zero_shot" and "tinyace", which were
+# the labels normalize_mode used to emit; it now returns the canonical arm key,
+# so those two matched nothing and both figures silently dropped the baseline
+# and every working-memory arm. Keys come from reporting.schema.
+FIGURE_ARMS = ["baseline", "cot_control", "ace_full", "tinyace_wm_256", "tinyace_wm_512"]
 
 
 def load_results(results_dir: str = "results") -> pd.DataFrame:
@@ -289,7 +297,7 @@ def plot_memory_cliff(df: pd.DataFrame, output_path: Path, task: str = None, mod
         plot_df = plot_df[plot_df["model"] == model]
 
     # Filter to relevant modes
-    relevant_modes = ["zero_shot", "ace_full", "tinyace"]
+    relevant_modes = FIGURE_ARMS
     plot_df = plot_df[plot_df["mode"].isin(relevant_modes)]
 
     if plot_df.empty:
@@ -376,7 +384,7 @@ def plot_token_efficiency(df: pd.DataFrame, output_path: Path):
         return
 
     # Filter to relevant modes
-    relevant_modes = ["zero_shot", "ace_full", "tinyace"]
+    relevant_modes = FIGURE_ARMS
     plot_df = summary[summary["mode"].isin(relevant_modes)].copy()
 
     if plot_df.empty:

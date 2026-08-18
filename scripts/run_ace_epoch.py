@@ -8,6 +8,7 @@ This script is Mac-safe and can be used for testing ACE evolution.
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -22,10 +23,15 @@ from edge_slm_ace.utils.repro import DEFAULT_SEED, set_seed
 
 
 def load_dataset(path: Path) -> list[dict]:
-    """Load a dataset from a JSON file."""
-    import json
+    """
+    Load a dataset from a JSON or JSONL file.
 
+    The registry contains both -- sciq_mcq_test is JSONL -- and this loader
+    handled only JSON, so that task failed here while working everywhere else.
+    """
     with open(path, "r", encoding="utf-8") as f:
+        if path.suffix.lower() == ".jsonl":
+            return [json.loads(line) for line in f if line.strip()]
         return json.load(f)
 
 
