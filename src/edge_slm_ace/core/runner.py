@@ -34,6 +34,7 @@ from edge_slm_ace.utils.mcq_eval import (
     compute_mcq_aggregate_metrics,
     compute_mapping_tier_distribution,
 )
+from edge_slm_ace.utils.stats import summarize_accuracy
 from edge_slm_ace.models.model_manager import generate, count_tokens
 from edge_slm_ace.memory.playbook import Playbook
 
@@ -377,6 +378,9 @@ def run_dataset_baseline(
             
             if oma_values:
                 summary["oma_accuracy"] = sum(oma_values) / len(oma_values)
+                # Ship the interval next to the point estimate so a delta is
+                # never read without its noise floor.
+                summary["oma_ci"] = summarize_accuracy(oma_values)
             if gom_values:
                 summary["avg_gom"] = sum(gom_values) / len(gom_values)
 
@@ -1084,6 +1088,9 @@ def run_dataset_ace(
             
             if oma_values:
                 summary["oma_accuracy"] = sum(oma_values) / len(oma_values)
+                # Ship the interval next to the point estimate so a delta is
+                # never read without its noise floor.
+                summary["oma_ci"] = summarize_accuracy(oma_values)
             if gom_values:
                 summary["avg_gom"] = sum(gom_values) / len(gom_values)
 
