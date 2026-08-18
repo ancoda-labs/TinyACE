@@ -16,6 +16,8 @@ from edge_slm_ace.core.ace_roles import (
     build_self_refine_rewrite_prompt,
     extract_answer,
     parse_used_strategies,
+    build_curator_prompt,
+    parse_curator_output,
 )
 from edge_slm_ace.utils.config import ModelConfig
 from edge_slm_ace.utils.metrics import (
@@ -640,6 +642,7 @@ def run_dataset_ace(
     max_entries_per_domain: int = 32,
     option_shuffle_seed: Optional[int] = None,
     enable_learning: bool = True,
+    use_curator: bool = True,
 ) -> tuple[List[Dict], Dict]:
     """
     Run ACE-style adaptive evaluation on a dataset.
@@ -708,6 +711,9 @@ def run_dataset_ace(
         option_shuffle_seed: Seed for MCQ option-order permutation.
         enable_learning: If False, run as the prompt-matched control arm --
             same prompt scaffold, no reflection, no playbook writes.
+        use_curator: Run the Curator pass over candidate lessons before they
+            enter the playbook. Costs one extra generation per reflection
+            step. Set False to ablate it.
 
     Returns:
         Tuple of (results, summary):
@@ -907,13 +913,43 @@ def run_dataset_ace(
                 existing_playbook=playbook,
             )
             
-            # Step 5: Curator - add lessons to playbook
+            # Step 5: Curator - screen candidate lessons, then add them.
+            #
+            # This pass was implemented but never invoked, while the README and
+            # the architecture diagram both described the loop as
+            # Generate -> Reflect -> Curate -> Memorize. What actually ran was
+            # choose_lessons_for_playbook, a hardcoded keyword filter.
+            curated_lessons = filtered_lessons
+            num_rejected_by_curator = 0
+            curator_latency_ms = 0.0
+
+            if use_curator and filtered_lessons:
+                curator_prompt = build_curator_prompt(domain, filtered_lessons)
+                curator_start = time.time()
+                curator_text = generate(
+                    model,
+                    tokenizer,
+                    curator_prompt,
+                    max_new_tokens=max(64, config.max_new_tokens // 4),
+                    temperature=config.temperature,
+                    top_p=config.top_p,
+                )
+                curator_latency_ms = (time.time() - curator_start) * 1000
+
+                is_generic_flags = parse_curator_output(len(filtered_lessons), curator_text)
+                curated_lessons = [
+                    lesson
+                    for lesson, is_generic in zip(filtered_lessons, is_generic_flags)
+                    if not is_generic
+                ]
+                num_rejected_by_curator = len(filtered_lessons) - len(curated_lessons)
+
             # NOTE: We do NOT record feedback for newly added lessons here.
             # Lessons should only receive feedback when they are actually USED
             # in a subsequent prompt. Recording feedback at creation time would
             # bias the lesson based on the example it was derived from, not on
             # whether it actually helps future examples.
-            for lesson in filtered_lessons:
+            for lesson in curated_lessons:
                 playbook.add_entry(
                     domain=domain,
                     text=lesson,
@@ -922,6 +958,9 @@ def run_dataset_ace(
         else:
             reflection_text = ""
             reflection_latency_ms = 0.0
+            curated_lessons = []
+            num_rejected_by_curator = 0
+            curator_latency_ms = 0.0
         
         # Credit assignment.
         #
@@ -965,7 +1004,7 @@ def run_dataset_ace(
         
         # Track evictions that happened during add_entry (working memory mode)
         # This is approximate - we track the difference in entry count
-        entries_added = len(filtered_lessons) if should_reflect else 0
+        entries_added = len(curated_lessons) if should_reflect else 0
         evictions_during_add = max(0, playbook_before["num_entries"] + entries_added - playbook_after["num_entries"])
         total_evictions = num_evictions + evictions_during_add
         
@@ -990,6 +1029,8 @@ def run_dataset_ace(
             "num_retrieved": len(used_entry_ids),
             "num_credited": len(credited_ids),
             "credit_mode": credit_mode,
+            "curator_latency_ms": curator_latency_ms,
+            "lessons_rejected_by_curator": num_rejected_by_curator,
         })
         
         # Calculate end-to-end latency
@@ -1125,6 +1166,10 @@ def run_dataset_ace(
         ),
         # Mean spread of retention scores. Near zero means the score does not
         # distinguish between lessons.
+        "use_curator": use_curator,
+        "lessons_rejected_by_curator": sum(
+            r.get("lessons_rejected_by_curator", 0) for r in results
+        ),
         "mean_retention_score_std": (
             statistics.mean(r["retention_score_std"] for r in playbook_log)
             if playbook_log else 0.0

@@ -291,6 +291,14 @@ Examples:
         help="Disable failure penalty in retention scoring (set β=0)",
     )
     parser.add_argument(
+        "--no-curator",
+        action="store_true",
+        help=(
+            "Skip the Curator pass over candidate lessons. The Curator costs "
+            "one extra generation per reflection step; use this to ablate it."
+        ),
+    )
+    parser.add_argument(
         "--fifo-memory",
         action="store_true",
         help="Use FIFO eviction instead of scoring-based eviction",
@@ -568,6 +576,7 @@ Examples:
                         max_entries_per_domain=args.max_entries_per_domain,
                         option_shuffle_seed=args.seed,
                         enable_learning=enable_learning,
+                        use_curator=not args.no_curator,
                     )
                     
                     playbook_stats = {

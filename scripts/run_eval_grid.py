@@ -141,6 +141,14 @@ def build_experiment_command(
             cmd.extend(["--disable-failure-penalty"])
         if mode_config.get("fifo_memory"):
             cmd.extend(["--fifo-memory"])
+        if mode_config.get("no_curator"):
+            cmd.extend(["--no-curator"])
+        if "relevance_weight" in mode_config:
+            cmd.extend(["--relevance-weight", str(mode_config["relevance_weight"])])
+        if "store_token_capacity" in mode_config:
+            cmd.extend(
+                ["--store-token-capacity", str(mode_config["store_token_capacity"])]
+            )
     
     # Add limit if specified
     effective_limit = limit or defaults.get("limit")

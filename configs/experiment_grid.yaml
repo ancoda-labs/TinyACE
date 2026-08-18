@@ -188,6 +188,26 @@ modes:
     fifo_memory: true
     description: "TinyACE with FIFO eviction (no scoring)"
 
+  - name: tinyace_ablate_no_curator
+    mode: ace
+    ace_mode: ace_working_memory
+    working_memory_token_budget: 256
+    top_k: 5
+    prune_every_n: 10
+    max_entries_per_domain: 32
+    no_curator: true
+    description: "TinyACE without the Curator screening pass"
+
+  - name: tinyace_ablate_no_relevance
+    mode: ace
+    ace_mode: ace_working_memory
+    working_memory_token_budget: 256
+    top_k: 5
+    prune_every_n: 10
+    max_entries_per_domain: 32
+    relevance_weight: 0.0
+    description: "TinyACE with domain-only retrieval (no query conditioning)"
+
 # -----------------------------------------------------------------------------
 # Devices
 # -----------------------------------------------------------------------------
