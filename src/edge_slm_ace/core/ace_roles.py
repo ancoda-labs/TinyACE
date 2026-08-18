@@ -508,16 +508,22 @@ def choose_lessons_for_playbook(
     min_length: int = 15,
 ) -> List[str]:
     """
-    Filter and deduplicate lessons before adding to playbook.
-    
+    Filter candidate lessons before offering them to the playbook.
+
+    Only length and genericness filtering happens here. Deduplication is the
+    playbook's job: it can compare a candidate against the incumbent and keep
+    whichever is more specific, whereas dropping the candidate here would
+    always preserve whichever lesson happened to arrive first.
+
     Args:
         domain: Domain name.
         lessons: List of candidate lesson strings.
-        existing_playbook: Current playbook to check against.
+        existing_playbook: Current playbook (retained for signature
+            compatibility; duplicate resolution now lives in Playbook).
         min_length: Minimum character length for a lesson to be kept.
-        
+
     Returns:
-        Filtered list of lessons suitable for playbook.
+        Filtered list of lessons suitable for the playbook.
     """
     filtered = []
     
@@ -545,16 +551,10 @@ def choose_lessons_for_playbook(
             if len(lesson.split()) < 5:
                 continue
         
-        # Check against existing entries (simple deduplication)
-        is_duplicate = False
-        for entry in existing_playbook.entries:
-            if entry.domain == domain:
-                if lesson.lower() in entry.text.lower() or entry.text.lower() in lesson.lower():
-                    is_duplicate = True
-                    break
-        
-        if not is_duplicate:
-            filtered.append(lesson)
+        # Defer duplicate handling to the playbook, which resolves an overlap
+        # by keeping the more specific text rather than always keeping the
+        # incumbent. Dropping the lesson here would deny it that chance.
+        filtered.append(lesson)
     
     return filtered
 

@@ -8,7 +8,8 @@ This module implements the TinyACE working memory system with:
 
 import json
 import math
-from dataclasses import dataclass, asdict, field
+import re
+from dataclasses import dataclass, asdict, field, fields
 from pathlib import Path
 from typing import List, Optional, Tuple
 from datetime import datetime
@@ -56,6 +57,18 @@ GENERIC_PHRASES = [
     "be careful",
     "take your time",
 ]
+
+
+def _normalize_for_comparison(text: str) -> str:
+    """
+    Normalise a lesson for duplicate detection.
+
+    Lowercases, strips punctuation and collapses whitespace. Raw containment
+    was punctuation-sensitive, so "check the units." did not match "check the
+    units:" and near-identical lessons accumulated as separate entries.
+    """
+    stripped = re.sub(r"[^a-z0-9 ]+", " ", text.lower())
+    return re.sub(r"\s+", " ", stripped).strip()
 
 
 def compute_vagueness_score(text: str) -> float:
@@ -136,8 +149,8 @@ class PlaybookEntry:
     failure_count: int = 0
     created_at: float = 0.0
     last_used_at: int = 0
-    token_count: int = 0
-    vagueness_score: float = 0.0
+    token_count: Optional[int] = None
+    vagueness_score: Optional[float] = None
     # Legacy fields for backward compatibility
     helpful_count: int = 0
     harmful_count: int = 0
@@ -148,22 +161,46 @@ class PlaybookEntry:
         """Initialize computed fields."""
         if self.created_at == 0.0:
             self.created_at = datetime.now().timestamp()
-        
-        # Compute token count if not set
-        if self.token_count == 0:
+
+        # None means "not computed yet". Using 0 as the sentinel meant a
+        # genuinely non-vague entry (score 0.0) was silently rescored on every
+        # load, and a one-token entry could never cache its count.
+        if self.token_count is None:
             self.token_count = self._estimate_tokens()
-        
-        # Compute vagueness score if not set
-        if self.vagueness_score == 0.0:
+
+        if self.vagueness_score is None:
             self.vagueness_score = compute_vagueness_score(self.text)
-        
+
         # Update legacy field
         self.is_generic = self.vagueness_score > 0.5
     
     def _estimate_tokens(self, tokens_per_word: float = 1.3) -> int:
-        """Estimate token count from word count."""
+        """
+        Approximate the token count from the word count.
+
+        Only a fallback. `words * 1.3` disagrees with the real tokenizer by a
+        wide margin on technical text, so a "256-token budget" measured this
+        way is not 256 tokens. Call `recount_tokens()` with the run's
+        tokenizer to make the budget mean what it says.
+        """
         word_count = len(self.text.split())
         return max(1, int(word_count * tokens_per_word))
+
+    def recount_tokens(self, tokenizer) -> int:
+        """
+        Recompute this entry's token count with a real tokenizer.
+
+        Args:
+            tokenizer: A HuggingFace tokenizer.
+
+        Returns:
+            The updated token count.
+        """
+        try:
+            self.token_count = max(1, len(tokenizer.encode(self.text, add_special_tokens=False)))
+        except Exception:
+            self.token_count = self._estimate_tokens()
+        return self.token_count
     
     def total_uses(self) -> int:
         """Return total number of times this entry was used."""
@@ -269,25 +306,33 @@ class PlaybookEntry:
     
     @classmethod
     def from_dict(cls, d: dict) -> "PlaybookEntry":
-        """Create from dictionary, handling missing fields gracefully."""
-        # Handle legacy entries that may not have all fields
+        """
+        Create from a dictionary, tolerating entries written by older runs.
+
+        Copies before filling defaults; the previous version mutated the
+        caller's dict in place, so loading a playbook silently rewrote the
+        JSON objects the caller still held.
+        """
+        data = dict(d)
+
         defaults = {
-            "success_count": d.get("helpful_count", 0),
-            "failure_count": d.get("harmful_count", 0),
-            "token_count": 0,
-            "vagueness_score": 0.0,
+            "success_count": data.get("helpful_count", 0),
+            "failure_count": data.get("harmful_count", 0),
+            "token_count": None,
+            "vagueness_score": None,
             "helpful_count": 0,
             "harmful_count": 0,
-            "last_seen_step": d.get("last_used_at", 0),
+            "last_seen_step": data.get("last_used_at", 0),
             "is_generic": False,
         }
-        
-        # Merge defaults with provided dict
+
         for key, default_val in defaults.items():
-            if key not in d:
-                d[key] = default_val
-        
-        return cls(**d)
+            data.setdefault(key, default_val)
+
+        # Drop unknown keys rather than raising, so a playbook written by a
+        # newer version stays loadable.
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
 
 
 class Playbook:
@@ -307,6 +352,7 @@ class Playbook:
         entries: Optional[List[PlaybookEntry]] = None,
         token_budget: Optional[int] = None,
         scoring_params: Optional[ScoringParams] = None,
+        tokenizer=None,
     ):
         """
         Initialize playbook.
@@ -315,12 +361,32 @@ class Playbook:
             entries: Initial entries (optional).
             token_budget: Maximum total tokens for working memory mode (None = unlimited).
             scoring_params: Hyperparameters for retention scoring.
+            tokenizer: Optional HuggingFace tokenizer. When supplied, entry
+                token counts come from it rather than from the words * 1.3
+                heuristic, so the token budget is denominated in the same
+                units as the prompt it is meant to bound.
         """
         self.entries: List[PlaybookEntry] = entries or []
-        self._next_id = 1
         self.token_budget = token_budget
         self.scoring_params = scoring_params or ScoringParams()
+        self.tokenizer = tokenizer
+        if tokenizer is not None:
+            for entry in self.entries:
+                entry.recount_tokens(tokenizer)
+        self._next_id = self._compute_next_id()
     
+    def _compute_next_id(self) -> int:
+        """Return an id one past the highest numeric id currently in use."""
+        max_id = 0
+        for entry in self.entries:
+            try:
+                max_id = max(max_id, int(entry.id))
+            except (ValueError, TypeError):
+                # Non-numeric id: skip it for the numeric maximum, but the
+                # uniqueness check in add_entry still guards against reuse.
+                continue
+        return max_id + 1
+
     @property
     def total_tokens(self) -> int:
         """Return total token count across all entries."""
@@ -331,14 +397,15 @@ class Playbook:
         return sum(e.token_count for e in self.entries if e.domain == domain)
     
     @classmethod
-    def load(cls, path: Path, token_budget: Optional[int] = None) -> "Playbook":
+    def load(cls, path: Path, token_budget: Optional[int] = None, tokenizer=None) -> "Playbook":
         """
         Load playbook from a JSONL file.
         
         Args:
             path: Path to JSONL file.
             token_budget: Token budget for working memory mode.
-            
+            tokenizer: Optional tokenizer for exact token counts.
+
         Returns:
             Playbook instance.
         """
@@ -356,19 +423,15 @@ class Playbook:
                             print(f"Warning: Skipping malformed playbook entry: {e}")
                             continue
         
-        playbook = cls(entries, token_budget=token_budget)
+        playbook = cls(entries, token_budget=token_budget, tokenizer=tokenizer)
         
-        # Set next_id to max existing id + 1
-        if entries:
-            max_id = 0
-            for e in entries:
-                try:
-                    entry_id = int(e.id)
-                    max_id = max(max_id, entry_id)
-                except (ValueError, TypeError):
-                    pass
-            playbook._next_id = max_id + 1
-        
+        # Set next_id past every existing id. Non-numeric ids used to be
+        # skipped entirely, so a playbook containing any of them reset the
+        # counter to 1 and minted duplicates on the next add. record_feedback
+        # returns on its first match, so the duplicate silently received the
+        # feedback meant for the original.
+        playbook._next_id = playbook._compute_next_id()
+
         return playbook
     
     def save(self, path: Path) -> None:
@@ -447,23 +510,71 @@ class Playbook:
     
     def _find_duplicate(self, domain: str, text: str) -> Optional[PlaybookEntry]:
         """
-        Check if a similar entry already exists.
-        
+        Find an existing entry that duplicates `text`.
+
         Args:
             domain: Domain to search in.
             text: Text to check for duplicates.
-            
+
         Returns:
-            Existing entry if duplicate found, None otherwise.
+            Existing entry if a duplicate is found, None otherwise.
         """
-        text_lower = text.lower().strip()
+        normalized = _normalize_for_comparison(text)
+        if not normalized:
+            return None
         for entry in self.entries:
             if entry.domain == domain:
-                entry_text_lower = entry.text.lower().strip()
-                # Check if one contains the other (simple similarity)
-                if text_lower in entry_text_lower or entry_text_lower in text_lower:
+                other = _normalize_for_comparison(entry.text)
+                if not other:
+                    continue
+                if normalized in other or other in normalized:
                     return entry
         return None
+
+    def _resolve_duplicate(
+        self,
+        existing: PlaybookEntry,
+        text: str,
+        step: int,
+    ) -> PlaybookEntry:
+        """
+        Decide which of two overlapping lessons to keep.
+
+        Containment is checked in both directions, so a long specific lesson
+        that happens to contain a short vague one counts as a duplicate of it.
+        Always keeping the incumbent meant that once "check the units" was in
+        the playbook, "For density problems, check the units: convert g/cm3 to
+        kg/m3 by x1000" was rejected as a duplicate and the vague entry
+        survived -- directly fighting the vagueness penalty that the retention
+        score is supposed to apply.
+
+        Keep whichever is less vague, and on a tie keep the incumbent so that
+        its accumulated success/failure history is not thrown away.
+
+        Args:
+            existing: The entry already in the playbook.
+            text: The candidate lesson text.
+            step: Current step, recorded as the entry's last touch.
+
+        Returns:
+            The surviving entry (the same object either way).
+        """
+        existing.last_used_at = step
+        existing.last_seen_step = step
+
+        candidate_vagueness = compute_vagueness_score(text)
+        if candidate_vagueness < existing.vagueness_score:
+            # The new phrasing is more specific: adopt its text, keep the
+            # entry's identity and its feedback history.
+            existing.text = text
+            existing.vagueness_score = candidate_vagueness
+            existing.is_generic = candidate_vagueness > 0.5
+            if self.tokenizer is not None:
+                existing.recount_tokens(self.tokenizer)
+            else:
+                existing.token_count = existing._estimate_tokens()
+
+        return existing
     
     def _evict_lowest_score_entries(
         self,
@@ -533,11 +644,12 @@ class Playbook:
         # Check for duplicates
         existing = self._find_duplicate(domain, text)
         if existing is not None:
-            existing.last_used_at = step
-            existing.last_seen_step = step
-            return existing
+            return self._resolve_duplicate(existing, text, step)
         
         # Create new entry (no feedback yet)
+        existing_ids = {e.id for e in self.entries}
+        while str(self._next_id) in existing_ids:
+            self._next_id += 1
         entry_id = str(self._next_id)
         self._next_id += 1
         
@@ -550,6 +662,8 @@ class Playbook:
             last_used_at=step,
             last_seen_step=step,
         )
+        if self.tokenizer is not None:
+            entry.recount_tokens(self.tokenizer)
         
         # Check token budget
         if self.token_budget is not None and enforce_budget:
@@ -560,11 +674,18 @@ class Playbook:
                 tokens_freed = self._evict_lowest_score_entries(
                     domain, tokens_needed, step
                 )
-                
+
                 if tokens_freed < tokens_needed:
-                    # Couldn't free enough - still add but log warning
-                    pass
-        
+                    # The budget is the invariant this class exists to
+                    # enforce, so say so instead of silently exceeding it.
+                    # (Happens when a single entry is larger than the budget.)
+                    print(
+                        f"Warning: playbook budget exceeded for domain "
+                        f"'{domain}': needed {tokens_needed} tokens, freed "
+                        f"{tokens_freed}. Entry added anyway; the working-memory "
+                        f"budget no longer holds for this run."
+                    )
+
         self.entries.append(entry)
         return entry
     

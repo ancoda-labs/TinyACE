@@ -510,3 +510,99 @@ class TestAblationFlags:
         remaining = {e.id for e in playbook.entries}
         assert first.id not in remaining, "Oldest entry should have been evicted first"
         assert second.id in remaining, "Newer entries should be retained under FIFO"
+
+
+class TestDuplicateResolution:
+    """A vague incumbent must not block a more specific lesson."""
+
+    VAGUE = "Check the units."
+    SPECIFIC = (
+        "For density problems, check the units: convert g/cm3 to kg/m3 by "
+        "multiplying by 1000."
+    )
+
+    def test_specific_lesson_replaces_vague_one(self):
+        playbook = Playbook()
+        playbook.add_entry("science", self.VAGUE, step=1)
+        playbook.add_entry("science", self.SPECIFIC, step=2)
+
+        assert len(playbook.entries) == 1, "Overlapping lessons should still merge"
+        assert playbook.entries[0].text == self.SPECIFIC, \
+            "The more specific phrasing should have won"
+
+    def test_vague_lesson_does_not_replace_specific_one(self):
+        playbook = Playbook()
+        playbook.add_entry("science", self.SPECIFIC, step=1)
+        playbook.add_entry("science", self.VAGUE, step=2)
+
+        assert len(playbook.entries) == 1
+        assert playbook.entries[0].text == self.SPECIFIC
+
+    def test_merging_preserves_feedback_history(self):
+        """Adopting better text must not discard accumulated statistics."""
+        playbook = Playbook()
+        entry = playbook.add_entry("science", self.VAGUE, step=1)
+        playbook.record_feedback(entry.id, helpful=True)
+        playbook.record_feedback(entry.id, helpful=True)
+
+        playbook.add_entry("science", self.SPECIFIC, step=2)
+
+        assert playbook.entries[0].success_count == 2
+        assert playbook.entries[0].id == entry.id
+
+    def test_token_count_follows_the_adopted_text(self):
+        playbook = Playbook()
+        playbook.add_entry("science", self.VAGUE, step=1)
+        playbook.add_entry("science", self.SPECIFIC, step=2)
+
+        entry = playbook.entries[0]
+        assert entry.token_count == entry._estimate_tokens()
+
+
+class TestIdAllocation:
+    def test_non_numeric_ids_do_not_cause_collisions(self):
+        """A legacy playbook with string ids must not remint id '1'."""
+        playbook = Playbook(entries=[
+            PlaybookEntry(id="legacy-a", domain="science", text="Lesson one here."),
+            PlaybookEntry(id="1", domain="science", text="Lesson two here."),
+        ])
+        new_entry = playbook.add_entry("science", "A completely different lesson.", step=1)
+
+        ids = [e.id for e in playbook.entries]
+        assert len(ids) == len(set(ids)), f"Duplicate ids minted: {ids}"
+        assert new_entry.id != "1"
+
+    def test_feedback_reaches_the_intended_entry(self):
+        playbook = Playbook(entries=[
+            PlaybookEntry(id="legacy-a", domain="science", text="Lesson one here."),
+            PlaybookEntry(id="1", domain="science", text="Lesson two here."),
+        ])
+        new_entry = playbook.add_entry("science", "A completely different lesson.", step=1)
+        playbook.record_feedback(new_entry.id, helpful=True)
+
+        assert new_entry.success_count == 1
+        assert sum(e.success_count for e in playbook.entries) == 1
+
+
+class TestEntrySerialisation:
+    def test_from_dict_does_not_mutate_input(self):
+        payload = {"id": "1", "domain": "science", "text": "Some lesson text here."}
+        snapshot = dict(payload)
+
+        PlaybookEntry.from_dict(payload)
+
+        assert payload == snapshot, "from_dict must not rewrite the caller's dict"
+
+    def test_from_dict_tolerates_unknown_fields(self):
+        entry = PlaybookEntry.from_dict({
+            "id": "1", "domain": "science", "text": "Some lesson text here.",
+            "field_from_a_newer_version": 123,
+        })
+        assert entry.id == "1"
+
+    def test_round_trip_preserves_computed_fields(self):
+        original = PlaybookEntry(id="1", domain="science", text="Think carefully.")
+        restored = PlaybookEntry.from_dict(original.to_dict())
+
+        assert restored.vagueness_score == original.vagueness_score
+        assert restored.token_count == original.token_count

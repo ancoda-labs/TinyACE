@@ -181,21 +181,27 @@ class TestChooseLessonsForPlaybook:
         assert len(filtered) == 1
         assert "revenue" in filtered[0].lower()
     
-    def test_filters_duplicates(self):
-        """Test that duplicates are filtered."""
+    def test_duplicates_do_not_grow_the_playbook(self):
+        """Duplicate resolution now happens in Playbook.add_entry.
+
+        This asserts the invariant that matters end to end -- a repeated
+        lesson must not create a second entry -- rather than which layer
+        performs the check.
+        """
         playbook = Playbook()
         playbook.add_entry("finance", "Calculate revenue before expenses", step=1)
-        
+
         lessons = [
             "Calculate revenue before expenses",  # Exact duplicate
             "For tax calculations, apply rate to pre-tax amount",  # New
         ]
-        
-        filtered = choose_lessons_for_playbook("finance", lessons, playbook)
-        
-        # Should filter out the duplicate
-        assert len(filtered) == 1
-        assert "tax" in filtered[0].lower()
+
+        for lesson in choose_lessons_for_playbook("finance", lessons, playbook):
+            playbook.add_entry("finance", lesson, step=2)
+
+        assert len(playbook.entries) == 2, \
+            f"Expected the duplicate to merge, got {[e.text for e in playbook.entries]}"
+        assert any("tax" in e.text.lower() for e in playbook.entries)
     
     def test_filters_generic_advice(self):
         """Test that generic advice is filtered."""
