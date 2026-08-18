@@ -5,6 +5,8 @@
 #   make check      test + lint + format check (what CI runs)
 #   make smoke      end-to-end pipeline check on a tiny model
 #   make grid       full evaluation grid, seeded
+#   make adapt      stage 1: build playbooks on the adaptation split
+#   make evaluate   stage 2: score read-only on the test split
 #   make report     aggregate results, then test every delta for significance
 #   make figures    paper figures
 #   make clean      remove caches and build artifacts
@@ -15,7 +17,7 @@ FIGURES ?= figures
 CONFIG  ?= configs/experiment_grid.yaml
 PY      ?= python
 
-.PHONY: install test check lint format smoke grid report figures clean
+.PHONY: install test check lint format smoke grid adapt evaluate report figures clean
 
 install:
 	$(PY) -m pip install -e ".[dev,metrics,plots]"
@@ -37,6 +39,16 @@ smoke:
 
 grid:
 	$(PY) -m scripts.run_eval_grid --config $(CONFIG) --seed $(SEED)
+
+# The protocol in docs/evaluation.md, in the order it has to run: build a
+# playbook on the adaptation split, then score read-only on the test split.
+# The frozen arm reads what `adapt` leaves behind, so running `evaluate` first
+# has nothing to freeze.
+adapt:
+	$(PY) -m scripts.run_eval_grid --config $(CONFIG) --seed $(SEED) --only-task sciq_val
+
+evaluate:
+	$(PY) -m scripts.run_eval_grid --config $(CONFIG) --seed $(SEED) --only-task sciq_test
 
 # Aggregation prints run-health warnings; compare_arms is what decides whether
 # a difference is a result. Never report a delta that has not been through it.

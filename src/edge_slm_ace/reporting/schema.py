@@ -57,6 +57,14 @@ ARMS: List[Arm] = [
     Arm("tinyace_wm_256", "TinyACE-256", "ace", "256-token prompt budget."),
     Arm("tinyace_wm_512", "TinyACE-512", "ace", "512-token prompt budget."),
     Arm(
+        "tinyace_wm_256_frozen",
+        "TinyACE-256 (frozen)",
+        "ace",
+        "Playbook adapted on sciq_val, frozen, then scored read-only on "
+        "sciq_test. The only ACE arm that does not learn from the split it is "
+        "scored on.",
+    ),
+    Arm(
         "tinyace_fifo",
         "Ablate: FIFO Eviction",
         "ace",

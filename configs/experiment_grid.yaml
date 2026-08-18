@@ -127,6 +127,23 @@ modes:
     max_entries_per_domain: 32
     description: "TinyACE with 256 token working memory budget"
     
+  # Frozen evaluation. Reads the playbook an adaptation run left behind and
+  # never writes: no reflection, no feedback, no pruning. This is the protocol
+  # docs/evaluation.md prescribes -- adapt on sciq_val, freeze, score read-only
+  # on sciq_test -- and it is the only arm here that does not learn from the
+  # split it is scored on. Run `make adapt` before `make evaluate`.
+  #
+  # init_playbook is templated per model, so one entry covers the whole grid.
+  - name: tinyace_wm_256_frozen
+    mode: ace
+    ace_mode: ace_working_memory
+    playbook_mode: frozen
+    init_playbook: "{results_root}/{model}/sciq_val/tinyace_wm_256/{device}/playbook.jsonl"
+    only_tasks: [sciq_test]
+    working_memory_token_budget: 256
+    top_k: 5
+    description: "TinyACE-256 with a playbook frozen after adaptation on sciq_val"
+
   # TinyACE Working Memory 512: Token-budgeted entries (512 tokens)
   - name: tinyace_wm_512
     mode: ace

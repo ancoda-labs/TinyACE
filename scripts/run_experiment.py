@@ -32,9 +32,10 @@ import csv
 import json
 import statistics
 import time
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import pandas as pd
 
@@ -42,7 +43,6 @@ from edge_slm_ace.utils.config import (
     get_model_config,
     get_task_config,
     resolve_task_path,
-    ModelConfig,
 )
 from edge_slm_ace.models.model_manager import load_model_and_tokenizer
 from edge_slm_ace.memory.playbook import Playbook, ScoringParams
@@ -120,6 +120,35 @@ def save_run_metadata(metadata: Dict[str, Any], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2, default=str)
+
+
+def build_scoring_params(args: argparse.Namespace) -> ScoringParams:
+    """
+    Resolve retention-scoring hyperparameters from the command line.
+
+    Unset flags keep the ScoringParams defaults, so a run that names none of
+    them behaves exactly as before.
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        The ScoringParams the run will use, which is echoed into metrics.json
+        so a number can be traced back to the weights that produced it.
+    """
+    overrides = {
+        name: getattr(args, name)
+        for name in ("alpha", "beta", "gamma", "delta", "lambda_decay", "epsilon")
+        if getattr(args, name) is not None
+    }
+    return ScoringParams(
+        disable_vagueness_penalty=args.disable_vagueness_penalty,
+        disable_recency_decay=args.disable_recency_decay,
+        disable_failure_penalty=args.disable_failure_penalty,
+        fifo_memory=args.fifo_memory,
+        relevance_weight=args.relevance_weight,
+        **overrides,
+    )
 
 
 def main() -> int:
@@ -232,6 +261,35 @@ Examples:
         help="Path to playbook JSONL file (required for ACE mode)",
     )
     parser.add_argument(
+        "--playbook-mode",
+        type=str,
+        choices=["learn", "frozen"],
+        default="learn",
+        help=(
+            "'learn' reflects, curates and writes back -- online continual "
+            "learning on whatever split is being scored. 'frozen' retrieves "
+            "and ranks from --init-playbook but never reflects, records "
+            "feedback or writes, which is the read-only evaluation "
+            "docs/evaluation.md prescribes: adapt on sciq_val, freeze, score "
+            "on sciq_test. Requires --init-playbook."
+        ),
+    )
+    parser.add_argument(
+        "--init-playbook",
+        type=str,
+        default=None,
+        help=(
+            "Playbook to start from, distinct from --playbook-path (where a "
+            "learning run writes to). Required by --playbook-mode frozen."
+        ),
+    )
+    parser.add_argument(
+        "--reflect-on-correct-every-n",
+        type=int,
+        default=5,
+        help="Also reflect on every Nth correct answer (default: 5)",
+    )
+    parser.add_argument(
         "--ace-mode",
         type=str,
         choices=["ace_full", "ace_working_memory"],
@@ -283,6 +341,19 @@ Examples:
         default=32,
         help="Maximum playbook entries per domain after pruning (default: 32)",
     )
+
+    # Retention scoring hyperparameters.
+    #
+    # configs/experiment_grid.yaml has carried a `scoring:` block documenting
+    # these against the formal equation since the beginning, and nothing read
+    # it -- editing the YAML changed no behaviour and reported no error. The
+    # resolved values are echoed into metrics.json.
+    parser.add_argument("--alpha", type=float, default=None, help="Success ratio weight")
+    parser.add_argument("--beta", type=float, default=None, help="Failure ratio weight")
+    parser.add_argument("--gamma", type=float, default=None, help="Recency bonus weight")
+    parser.add_argument("--delta", type=float, default=None, help="Vagueness penalty weight")
+    parser.add_argument("--lambda-decay", type=float, default=None, help="Recency decay rate")
+    parser.add_argument("--epsilon", type=float, default=None, help="Smoothing constant")
 
     # Ablation flags for retention scoring
     parser.add_argument(
@@ -387,6 +458,14 @@ Examples:
 
         if args.mode == "ace" and args.playbook_path is None:
             parser.error("--playbook-path is required for ACE mode")
+
+        if args.playbook_mode == "frozen":
+            if args.mode != "ace":
+                parser.error("--playbook-mode frozen only applies to --mode ace")
+            if args.init_playbook is None:
+                parser.error("--playbook-mode frozen requires --init-playbook")
+            if not Path(args.init_playbook).exists():
+                parser.error(f"--init-playbook not found: {args.init_playbook}")
 
         # Resolve dataset path and domain
         if args.task_name:
@@ -521,10 +600,23 @@ Examples:
                 playbook_stats = None
 
             else:  # ACE mode, or the prompt-matched control
-                enable_learning = args.mode == "ace"
+                # Learning is what separates the three arms that share this
+                # code path:
+                #   ace + learn   reflect, curate, write, save
+                #   ace + frozen  retrieve and rank only; the playbook is
+                #                 evidence carried in from another split and
+                #                 is not mutated by the scored run
+                #   cot_control   the same scaffold over an empty playbook
+                enable_learning = args.mode == "ace" and args.playbook_mode == "learn"
                 if not args.quiet:
                     if enable_learning:
                         print(f"Running ACE evaluation (mode: {args.ace_mode})...")
+                    elif args.mode == "ace":
+                        print(
+                            f"Running ACE evaluation with a FROZEN playbook "
+                            f"(mode: {args.ace_mode}); no reflection, feedback "
+                            f"or writes."
+                        )
                     else:
                         print(
                             "Running CoT control: ACE prompt scaffold, empty "
@@ -537,31 +629,41 @@ Examples:
                     args.playbook_path or (Path(args.output_path).parent / "playbook_control.jsonl")
                 )
 
-                # Create scoring params with ablation flags
-                scoring_params = ScoringParams(
-                    disable_vagueness_penalty=args.disable_vagueness_penalty,
-                    disable_recency_decay=args.disable_recency_decay,
-                    disable_failure_penalty=args.disable_failure_penalty,
-                    fifo_memory=args.fifo_memory,
-                    relevance_weight=args.relevance_weight,
-                )
+                scoring_params = build_scoring_params(args)
 
-                # Load or create playbook. The control arm always starts
-                # empty -- loading a previous run's lessons would defeat
-                # the point of it being a control.
-                if enable_learning and playbook_path.exists():
+                # Where the playbook comes from.
+                #
+                #   cot_control  nothing -- loading lessons would defeat the
+                #                point of it being a control
+                #   frozen       --init-playbook, produced by an adaptation run
+                #                on a different split
+                #   learn        --playbook-path, resumed if it already exists
+                if args.mode == "cot_control":
+                    source_path = None
+                elif args.playbook_mode == "frozen":
+                    source_path = Path(args.init_playbook)
+                else:
+                    source_path = playbook_path if playbook_path.exists() else None
+
+                if source_path is not None:
                     if not args.quiet:
-                        print(f"Loading playbook from {playbook_path}")
+                        print(f"Loading playbook from {source_path}")
                     playbook = Playbook.load(
-                        playbook_path,
+                        source_path,
                         token_budget=args.token_budget,
                         tokenizer=tokenizer,
                     )
-                    # Update scoring params
                     playbook.scoring_params = scoring_params
                     playbook.store_token_capacity = (
                         args.store_token_capacity or playbook.store_token_capacity
                     )
+                    if args.playbook_mode == "frozen" and not playbook.entries:
+                        print(
+                            f"Error: --init-playbook {source_path} has no entries. "
+                            f"A frozen run over an empty playbook is the cot_control "
+                            f"arm, not an ACE arm.",
+                        )
+                        return 1
                 else:
                     if not args.quiet:
                         print(f"Creating new playbook at {playbook_path}")
@@ -590,6 +692,7 @@ Examples:
                     top_k=args.top_k,
                     prune_every_n=args.prune_every_n,
                     max_entries_per_domain=args.max_entries_per_domain,
+                    reflect_on_correct_every_n=args.reflect_on_correct_every_n,
                     option_shuffle_seed=args.seed,
                     enable_learning=enable_learning,
                     use_curator=not args.no_curator,
@@ -672,6 +775,12 @@ Examples:
             "domain": domain,
             "mode": args.mode,
             "ace_mode": args.ace_mode if args.mode == "ace" else None,
+            "playbook_mode": args.playbook_mode if args.mode == "ace" else None,
+            "init_playbook": args.init_playbook,
+            # The weights the retention score actually used, so a number can
+            # be traced back to them.
+            "scoring": asdict(build_scoring_params(args)),
+            "reflect_on_correct_every_n": args.reflect_on_correct_every_n,
             "device_requested": device_requested,
             "device_used": device_used,
             "seed": args.seed,
@@ -733,7 +842,6 @@ Examples:
         # Optionally regenerate plots
         if args.auto_plots:
             try:
-                import sys
                 from scripts.make_figures import main as regenerate_plots
 
                 if not args.quiet:

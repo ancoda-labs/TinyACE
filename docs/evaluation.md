@@ -23,6 +23,7 @@ that registry.
 | `cot_control` | **The ACE prompt scaffold over an empty playbook** |
 | `ace_full` | Top-k retrieval, unbounded playbook |
 | `ace_working_memory` | Token-budgeted working memory (`tinyace_wm_256`, `tinyace_wm_512`) |
+| `tinyace_wm_256_frozen` | **The frozen-playbook arm.** Adapted on `sciq_val`, scored read-only on `sciq_test` |
 | `tinyace_ablate_*` | One scoring component disabled |
 | `tinyace_fifo` | Oldest-first eviction instead of lowest-score |
 | `self_refine` | Critique and rewrite from the model's own output only |
@@ -39,7 +40,16 @@ This is the part that is easy to get wrong, so the code answers it for you via
 | `tinyace_ablate_*`, `tinyace_fifo` | `tinyace_wm_256` | Comparing an ablation to `baseline` measures *ACE plus the ablation*, not the ablated component. |
 | `cot_control`, `self_refine` | `baseline` | These are prompting strategies against no strategy. |
 
-`scripts/compare_arms.py` uses these defaults automatically.
+`scripts/compare_arms.py` uses these defaults automatically: with no
+`--reference`, each arm is paired with the reference `reference_for()` names for
+it, and an arm whose reference was not run in that cell is skipped with a note
+rather than re-pointed at another arm. Pass `--reference` to override.
+
+Every comparison printed in one invocation is one **family** of tests and is
+Holm-corrected. Ten arms against a reference give roughly a 40% chance of at
+least one p<0.05 under the null, so the adjusted p-value is the one that
+decides. Splitting a sweep across several invocations to shrink the family does
+not make the correction smaller -- it hides the count.
 
 ---
 
@@ -51,6 +61,19 @@ clean protocol possible:
 1. Build a playbook on **`sciq_val`**.
 2. Freeze it.
 3. Evaluate read-only on **`sciq_test`**.
+
+This is the `tinyace_wm_256_frozen` arm, and it runs in two stages because
+stage 2 reads what stage 1 leaves behind:
+
+```bash
+make adapt      # stage 1: every learning arm on sciq_val
+make evaluate   # stage 2: sciq_test, including the frozen arm
+```
+
+Directly, that is `--playbook-mode frozen --init-playbook <path>`. A frozen run
+retrieves and ranks from the playbook but never reflects, records feedback,
+prunes or writes, so the same playbook scores every example and the run cannot
+learn from the split it is being scored on.
 
 Running ACE directly on the scored set is *online continual learning*: item *i*
 only sees gold from items *< i*, which is defensible but must be argued
