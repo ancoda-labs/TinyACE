@@ -59,6 +59,33 @@ def _index_distribution(values, n: int = 4) -> Dict[str, float]:
     return {"ABCD"[i]: counts[i] / total for i in range(n)}
 
 
+def _generation_health(results: List[Dict]) -> Dict:
+    """
+    Summarise conditions that invalidate a run.
+
+    `truncation_rate` above zero means prompts were clipped, and the clipped
+    tail is where the question lives. `chat_template_rate` below one means the
+    model was prompted as a raw completion despite being instruction-tuned.
+    Both are reported so a broken run is visible in metrics.json rather than
+    only in scrollback.
+    """
+    if not results:
+        return {"truncation_rate": 0.0, "chat_template_rate": 0.0}
+
+    truncated = sum(1 for r in results if r.get("prompt_truncated"))
+    templated = sum(1 for r in results if r.get("used_chat_template"))
+    rate = truncated / len(results)
+    if rate > 0:
+        print(
+            f"WARNING: {truncated}/{len(results)} prompts were truncated "
+            f"({rate:.1%}). Treat these results as invalid."
+        )
+    return {
+        "truncation_rate": rate,
+        "chat_template_rate": templated / len(results),
+    }
+
+
 def run_dataset_baseline(
     model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,
@@ -191,13 +218,14 @@ def run_dataset_baseline(
         
         # Generate answer
         start_time = time.time()
-        answer = generate(
+        answer, gen_meta = generate(
             model,
             tokenizer,
             prompt,
             max_new_tokens=config.max_new_tokens,
             temperature=config.temperature,
             top_p=config.top_p,
+            return_meta=True,
         )
         latency_ms = (time.time() - start_time) * 1000
         end_to_end_latency_sec = time.time() - query_start_time
@@ -251,6 +279,10 @@ def run_dataset_baseline(
             "context": context or "",
             "semantic_score": semantic_score,
             "bleu_score": bleu_score,
+            # Generation provenance: a truncated prompt or a missing chat
+            # template invalidates the row, so both travel with it.
+            "prompt_truncated": gen_meta["prompt_truncated"],
+            "used_chat_template": gen_meta["used_chat_template"],
         }
         
         # Compute MCQ metrics for SciQ tasks (new format with indices)
@@ -321,6 +353,7 @@ def run_dataset_baseline(
         "avg_latency_ms": avg_latency,
         "avg_latency_sec": avg_latency_sec,
         "median_latency_sec": median_latency_sec,
+        **_generation_health(results),
         "num_examples": len(dataset),
         "mean_prompt_token": sum(prompt_tokens_list) / len(prompt_tokens_list) if prompt_tokens_list else 0.0,
         "mean_output_token": sum(prompt_output_tokens_list) / len(prompt_output_tokens_list) if prompt_output_tokens_list else 0.0,
@@ -766,13 +799,14 @@ def run_dataset_ace(
         
         # Step 2: Generate answer
         start_time = time.time()
-        raw_answer = generate(
+        raw_answer, gen_meta = generate(
             model,
             tokenizer,
             generator_prompt,
             max_new_tokens=config.max_new_tokens,
             temperature=config.temperature,
             top_p=config.top_p,
+            return_meta=True,
         )
         latency_ms = (time.time() - start_time) * 1000
         
@@ -928,6 +962,10 @@ def run_dataset_ace(
             "reflected": should_reflect,
             "semantic_score": score,
             "bleu_score": bleu_score,
+            # Generation provenance: a truncated prompt or a missing chat
+            # template invalidates the row, so both travel with it.
+            "prompt_truncated": gen_meta["prompt_truncated"],
+            "used_chat_template": gen_meta["used_chat_template"],
         }
         
         # Compute MCQ metrics for SciQ tasks (new format with indices)
@@ -1001,6 +1039,7 @@ def run_dataset_ace(
         "avg_latency_ms": avg_latency,
         "avg_latency_sec": avg_latency_sec,
         "median_latency_sec": median_latency_sec,
+        **_generation_health(results),
         "num_examples": len(dataset),
         "playbook_size": len(playbook.entries),
         "final_playbook_num_entries": len(playbook.entries),
