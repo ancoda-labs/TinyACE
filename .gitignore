@@ -219,6 +219,7 @@ results/
 # Results directories (keep structure but ignore large files)
 results_models/
 results_ablation/
+paper_snippets/
 *.csv
 *.jsonl
 playbook.jsonl
