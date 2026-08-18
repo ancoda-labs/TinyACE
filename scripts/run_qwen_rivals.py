@@ -64,6 +64,7 @@ from edge_slm_ace.memory.playbook import Playbook, ScoringParams
 from edge_slm_ace.core.runner import run_dataset_baseline, run_dataset_ace
 from edge_slm_ace.utils.device_utils import get_device, resolve_device_override
 from edge_slm_ace.utils.metrics import PeakMemoryTracker, SemanticEvaluator
+from edge_slm_ace.utils.repro import DEFAULT_SEED, capture_environment, set_seed
 
 
 # Default contract configuration
@@ -659,6 +660,12 @@ def main():
         help="Device to use (default: cuda)",
     )
     parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed. Overrides experiment_contract.dataset.seed from the config.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print experiment plan without running",
@@ -676,10 +683,22 @@ def main():
     )
     
     args = parser.parse_args()
-    
+
     # Load configuration
     config = load_config(args.config)
     contract = config.get("experiment_contract", DEFAULT_CONFIG["experiment_contract"])
+
+    # The contract advertises a seed; actually apply it. Previously it was
+    # written into metadata and never used to seed anything.
+    seed = args.seed if args.seed is not None else contract.get("dataset", {}).get(
+        "seed", DEFAULT_SEED
+    )
+    set_seed(seed)
+    environment = capture_environment()
+    contract.setdefault("dataset", {})["seed"] = seed
+    print(f"Seed: {seed} | torch={environment['torch_version']} "
+          f"transformers={environment['transformers_version']} "
+          f"commit={environment['git_commit']}")
     
     # Determine output directories
     output_config = config.get("output", DEFAULT_CONFIG["output"])
@@ -795,6 +814,25 @@ def main():
     print("Generating outputs...")
     print("=" * 70)
     
+    # 0. Save the run manifest so the numbers below can be traced back to a
+    #    seed, a commit and a set of library versions.
+    manifest_path = results_dir / "run_manifest.json"
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "seed": seed,
+                "environment": environment,
+                "contract": contract,
+                "device": args.device,
+                "total_time_seconds": total_time,
+                "num_experiments": len(all_summaries),
+            },
+            f,
+            indent=2,
+            default=str,
+        )
+    print(f"Saved run manifest to {manifest_path}")
+
     # 1. Save results JSON
     results_json_path = results_dir / "results_models_qwen.json"
     with open(results_json_path, "w", encoding="utf-8") as f:

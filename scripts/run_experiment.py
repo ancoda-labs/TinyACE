@@ -44,6 +44,7 @@ from edge_slm_ace.memory.playbook import Playbook, ScoringParams
 from edge_slm_ace.core.runner import run_dataset_baseline, run_dataset_ace, run_dataset_self_refine
 from edge_slm_ace.utils.device_utils import get_device, resolve_device_override
 from edge_slm_ace.utils.metrics import PeakMemoryTracker, SemanticEvaluator
+from edge_slm_ace.utils.repro import DEFAULT_SEED, capture_environment, set_seed
 
 
 def load_dataset(path: Path) -> List[Dict]:
@@ -300,6 +301,12 @@ Examples:
         default=None,
         help="Limit number of examples to process (for quick testing)",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_SEED,
+        help=f"Random seed for decoding and MCQ option order (default: {DEFAULT_SEED})",
+    )
     
     # Other options
     parser.add_argument(
@@ -314,7 +321,11 @@ Examples:
     )
     
     args = parser.parse_args()
-    
+
+    # Seed before anything touches an RNG (model load, sampling, option order).
+    set_seed(args.seed)
+    environment = capture_environment()
+
     # Track timing
     run_start_time = datetime.now()
     wall_start = time.time()
@@ -574,6 +585,14 @@ Examples:
             "ace_mode": args.ace_mode if args.mode == "ace" else None,
             "device_requested": device_requested,
             "device_used": device_used,
+            "seed": args.seed,
+            "environment": environment,
+            "generation": {
+                "max_new_tokens": config.max_new_tokens,
+                "temperature": config.temperature,
+                "top_p": config.top_p,
+                "greedy": config.temperature == 0.0,
+            },
             "num_examples": len(dataset),
             "limit_applied": args.limit,
             "peak_memory_mb": memory_tracker.peak_memory_mb,

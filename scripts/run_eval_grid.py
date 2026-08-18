@@ -90,6 +90,7 @@ def build_experiment_command(
     output_dir: Path,
     defaults: Dict[str, Any],
     limit: Optional[int],
+    seed: int,
 ) -> List[str]:
     """Build the command to run a single experiment."""
     cmd = [
@@ -153,6 +154,9 @@ def build_experiment_command(
     if "top_p" in defaults:
         cmd.extend(["--top-p", str(defaults["top_p"])])
     
+    # Seed (forwarded so every cell of the grid is reproducible)
+    cmd.extend(["--seed", str(seed)])
+
     # Run name
     run_name = f"{model_config['name']}_{task_config['name']}_{mode_config['name']}_{device}"
     cmd.extend(["--run-name", run_name])
@@ -305,6 +309,12 @@ def main() -> int:
         help="Print commands without executing them",
     )
     parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed forwarded to every experiment in the grid (default: 42)",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -436,6 +446,7 @@ def main() -> int:
                         output_dir=output_dir,
                         defaults=defaults,
                         limit=args.limit,
+                        seed=args.seed,
                     )
                     
                     if args.verbose or args.dry_run:
