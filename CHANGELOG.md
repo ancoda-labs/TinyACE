@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — follow-up review (`docs/code-review-followup.md`)
+
+A second review of the state the first audit's repairs left behind. All 14
+findings addressed, plus three defects the fixes themselves surfaced.
+
+**Runs that could not complete**
+
+- Every ACE run died with `UnboundLocalError: statistics`. Both runners carried
+  a redundant local `import statistics`, which made the name local to the whole
+  function and broke the earlier `statistics.pstdev` call. It fired as soon as
+  a domain held two playbook entries, i.e. on every real run.
+- Every ACE run given `--metrics-path` crashed writing `playbook_log.csv`: the
+  writer's hardcoded header had not followed the Curator's two new log fields.
+  The crash came *after* the evaluation, so a completed run was discarded. The
+  column list now lives beside the code that writes a row.
+- That crash was reported as `Error: Failed to load model`, because one
+  `try/except` wrapped loading, parsing, the evaluation loop and every write.
+  The handler now covers only the model load.
+
+**Measurement**
+
+- The `Used strategies:` citation block the ACE prompt asks for was parsed into
+  the scored answer, so predictions read `"mitochondria\nUsed strategies:\n1, 3"`.
+  Only the ACE arm is asked to cite, so exact match was corrupted in one arm and
+  intact in the other.
+- `compare_arms.py` imported `reference_for` and never called it, comparing every
+  arm against `baseline` -- including ablations, which measures ACE *plus* the
+  ablation. Each arm is now paired with its registered reference.
+- Comparisons were reported at an uncorrected p<0.05 each. Ten tests against a
+  reference give ~40% chance of a false positive; Holm correction is now applied
+  across the family.
+- `run_ace_epoch.py` called neither `set_seed` nor `option_shuffle_seed`, putting
+  the gold answer at (A) for 100% of examples -- the first audit's headline
+  finding, alive in one unchecked script.
+- `context_tokens` held the retrieved lessons in the ACE arm and the SciQ support
+  passage in the baseline arm, and the "token efficiency" figure plotted that
+  column across arms. It now means the task context everywhere, the playbook has
+  its own column, and the figure measures `prompt_tokens`.
+- `prune()` defaulted `current_step` to 0, giving every entry the identical
+  recency bonus, so pruning ignored recency entirely.
+- The vagueness heuristic counted any hyphen as a formula, so
+  "Think carefully about the well-known question" scored 0.25 against a
+  threshold of 0.5.
+
+### Added
+
+- **Frozen-playbook protocol.** `--playbook-mode frozen` with `--init-playbook`,
+  the `tinyace_wm_256_frozen` arm, and `make adapt && make evaluate`. The
+  protocol was prescribed in three places and implemented in none, so the
+  default run learned online from the split it was scoring.
+- **Retention-scoring hyperparameters are reachable.** `--alpha/--beta/--gamma/
+  --delta/--lambda-decay/--epsilon` and `--reflect-on-correct-every-n`, forwarded
+  from the config's `scoring:` block, which nothing had ever read. The grid now
+  fails on any mode key no consumer reads.
+- **Resumable runs.** `--resume` skips examples already in the predictions file
+  and merges them back, recomputing the aggregates; the grid skips cells already
+  complete for the current commit.
+- `tests/test_runner.py`, `tests/test_entrypoints.py`, `tests/test_grid_config.py`
+  and `tests/test_resume.py`. `core/runner.py` -- the largest module, and the one
+  that decides what "correct" means -- had no tests at all.
+- CI runs one real end-to-end experiment, which is what found the `statistics`
+  crash, and lints for dead imports (`F401`/`F841`/`F541`), whose absence let
+  finding 4 survive the first audit.
+
 ### Withdrawn
 
 - **All results reported in 0.1.0.** They were produced by a pipeline with

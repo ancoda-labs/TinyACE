@@ -13,6 +13,12 @@ What follows is what the *repairs themselves* left behind: two hard defects intr
 by the newest features, a set of protocols that the docs prescribe but no code
 implements, and the structural debt that lets this class of bug survive.
 
+**Status: all 14 findings addressed** in `f81aeae..334064f`, plus three defects
+the fixes themselves surfaced — a shadowed `statistics` import that crashed
+every ACE run of any length, a `context_tokens` column that meant different
+things in different arms, and a `--playbook-mode frozen` path that had no
+implementation. Each finding below carries the commit that closed it.
+
 **Every claim below was reproduced against the working tree.** Reproduction commands
 are in the [appendix](#appendix-reproducing-these-findings).
 
@@ -20,22 +26,22 @@ are in the [appendix](#appendix-reproducing-these-findings).
 
 ## Verdict
 
-| # | Finding | Severity | Effect |
-|---|---|---|---|
-| [1](#1-every-ace-run-with---metrics-path-crashes-and-discards-its-results) | `playbook_log.csv` writer crashes every ACE run | 🔴 Blocking | All results lost, misreported as a model-load failure |
-| [2](#2-the-used-strategies-line-is-parsed-into-the-answer) | `Used strategies:` line lands inside the scored answer | 🔴 Blocking | Contaminates exact match in the ACE arm only |
-| [3](#3-the-frozen-playbook-protocol-is-documented-but-unimplemented) | Frozen-playbook protocol has no implementation | 🔴 Blocking | ACE still learns on the scored split |
-| [4](#4-compare_armspy-ignores-reference_for-and-compares-everything-to-baseline) | `reference_for()` is exported, tested, and never called | 🔴 Blocking | Ablations compared against the wrong arm |
-| [5](#5-the-curator-ablation-reports-a-constant-zero) | `lessons_rejected_by_curator` always sums to 0 | 🟠 High | The Curator ablation has no observable effect metric |
-| [6](#6-run_ace_epochpy-reintroduces-the-gold-is-always-a-artefact) | `run_ace_epoch.py` never seeds or permutes options | 🟠 High | Gold at (A) 100% of the time; numbers not comparable |
-| [7](#7-no-multiple-comparison-correction-across-a-11-arm-grid) | No multiple-comparison correction over 11 arms | 🟠 High | ~43% chance of a spurious "significant" result |
-| [8](#8-one-broad-except-turns-every-runtime-failure-into-failed-to-load-model) | One `except` mislabels every runtime failure | 🟠 High | Real errors are undebuggable |
-| [9](#9-pruning-runs-with-current_step0-so-recency-never-affects-it) | `prune()` called with `current_step=0` | 🟡 Medium | Recency term is constant; γ ablation is partly inert |
-| [10](#10-the-vagueness-heuristic-rewards-hyphens) | Vagueness scorer rewards any hyphen as a "formula" | 🟡 Medium | Generic lessons escape the δ penalty |
-| [11](#11-documented-scoring-hyperparameters-are-never-read) | `scoring:` YAML block is never read | 🟡 Medium | α/β/γ/δ/λ are decorative |
-| [12](#12-runnerpy-has-no-tests-at-all) | Zero tests for `core/runner.py` | 🟠 High | Findings 1, 2 and 5 all live in the untested file |
-| [13](#13-the-installed-package-cannot-find-its-own-data) | `pip install` produces a package that can't find `data/` | 🟡 Medium | Only editable installs work |
-| [14](#14-the-grid-reloads-every-model-from-disk-for-every-cell) | Grid reloads each model per cell, batch size 1 | 🟡 Medium | Large avoidable GPU-hour cost |
+| # | Finding | Severity | Effect | Fixed in |
+|---|---|---|---|---|
+| [1](#1-every-ace-run-with---metrics-path-crashes-and-discards-its-results) | `playbook_log.csv` writer crashes every ACE run | 🔴 Blocking | All results lost, misreported as a model-load failure | `f81aeae` |
+| [2](#2-the-used-strategies-line-is-parsed-into-the-answer) | `Used strategies:` line lands inside the scored answer | 🔴 Blocking | Contaminates exact match in the ACE arm only | `1795ebc` |
+| [3](#3-the-frozen-playbook-protocol-is-documented-but-unimplemented) | Frozen-playbook protocol has no implementation | 🔴 Blocking | ACE still learns on the scored split | `d3cc5ac` |
+| [4](#4-compare_armspy-ignores-reference_for-and-compares-everything-to-baseline) | `reference_for()` is exported, tested, and never called | 🔴 Blocking | Ablations compared against the wrong arm | `1795ebc` |
+| [5](#5-the-curator-ablation-reports-a-constant-zero) | `lessons_rejected_by_curator` always sums to 0 | 🟠 High | The Curator ablation has no observable effect metric | `f81aeae` |
+| [6](#6-run_ace_epochpy-reintroduces-the-gold-is-always-a-artefact) | `run_ace_epoch.py` never seeds or permutes options | 🟠 High | Gold at (A) 100% of the time; numbers not comparable | `1795ebc` |
+| [7](#7-no-multiple-comparison-correction-across-a-11-arm-grid) | No multiple-comparison correction over 11 arms | 🟠 High | ~43% chance of a spurious "significant" result | `1795ebc` |
+| [8](#8-one-broad-except-turns-every-runtime-failure-into-failed-to-load-model) | One `except` mislabels every runtime failure | 🟠 High | Real errors are undebuggable | `f81aeae` |
+| [9](#9-pruning-runs-with-current_step0-so-recency-never-affects-it) | `prune()` called with `current_step=0` | 🟡 Medium | Recency term is constant; γ ablation is partly inert | `9d5db95` |
+| [10](#10-the-vagueness-heuristic-rewards-hyphens) | Vagueness scorer rewards any hyphen as a "formula" | 🟡 Medium | Generic lessons escape the δ penalty | `9d5db95` |
+| [11](#11-documented-scoring-hyperparameters-are-never-read) | `scoring:` YAML block is never read | 🟡 Medium | α/β/γ/δ/λ are decorative | `d3cc5ac` |
+| [12](#12-runnerpy-has-no-tests-at-all) | Zero tests for `core/runner.py` | 🟠 High | Findings 1, 2 and 5 all live in the untested file | `f81aeae`, `4434f8b` |
+| [13](#13-the-installed-package-cannot-find-its-own-data) | `pip install` produces a package that can't find `data/` | 🟡 Medium | Only editable installs work | `334064f` |
+| [14](#14-the-grid-reloads-every-model-from-disk-for-every-cell) | Grid reloads each model per cell, batch size 1 | 🟡 Medium | Large avoidable GPU-hour cost | `334064f` |
 
 ---
 
