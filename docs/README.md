@@ -21,16 +21,9 @@ Welcome to the TinyACE documentation. This directory contains comprehensive docu
 - **[EVAL_SCIQ.md](guides/EVAL_SCIQ.md)** - SciQ evaluation guide
 - **[EVAL_SCIQ_MCQ.md](guides/EVAL_SCIQ_MCQ.md)** - SciQ MCQ evaluation guide
 
-### Development Notes (`docs/dev/`)
-
-- **[DEV_NOTES_PERSON1.md](dev/DEV_NOTES_PERSON1.md)** - Development notes and implementation details
-- **[TEAM_NOTES.md](dev/TEAM_NOTES.md)** - Team collaboration notes
-- **[TEAM_MESSAGES.md](dev/TEAM_MESSAGES.md)** - Team communication logs
-
 ### Project Management
 
 - **[PAPER_TRACKING.md](PAPER_TRACKING.md)** - Paper writing and tracking notes
-- **[RESTRUCTURING_SUMMARY.md](RESTRUCTURING_SUMMARY.md)** - Repository restructuring summary
 
 ### Legacy Documentation
 
@@ -46,7 +39,6 @@ Welcome to the TinyACE documentation. This directory contains comprehensive docu
 - **Main README**: [../README.md](../README.md)
 - **Configuration**: [../configs/experiment_grid.yaml](../configs/experiment_grid.yaml)
 - **Source Code**: [../src/edge_slm_ace/](../src/edge_slm_ace/)
-- **Navigation Guide**: [NAVIGATION.md](NAVIGATION.md)
 
 ---
 
@@ -57,4 +49,3 @@ Welcome to the TinyACE documentation. This directory contains comprehensive docu
 3. Review [ARCHITECTURE.md](ARCHITECTURE.md) to understand the system design
 4. Check [RESULTS.md](RESULTS.md) for experimental findings
 5. See [PLOTTING_GUIDE.md](../PLOTTING_GUIDE.md) for visualization
-6. Use [NAVIGATION.md](NAVIGATION.md) to find specific information

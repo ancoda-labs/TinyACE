@@ -49,9 +49,9 @@ Experiment tracking and planning document for the workshop paper.
 
 ## Tasks (Domain-Specific Benchmarks)
 
-### 1. Finance Domain: TAT-QA Tiny (`tatqa_tiny`)
+### 1. Science Domain: SciQ Tiny (`sciq_tiny`)
 - **Domain**: Finance
-- **Dataset**: `data/tasks/tatqa_tiny.json`
+- **Dataset**: `data/tasks/sciq_tiny.json`
 - **Examples**: 3 (tiny test set)
 - **Type**: Financial QA with numeric reasoning
 - **Metrics**: Exact Match (EM) for numeric answers
@@ -83,9 +83,9 @@ Experiment tracking and planning document for the workshop paper.
   ```bash
   python -m scripts.run_experiment \
     --model-id phi3-mini \
-    --task-name tatqa_tiny \
+    --task-name sciq_tiny \
     --mode baseline \
-    --output-path results/tatqa_phi3_baseline.csv
+    --output-path results/sciq_phi3_baseline.csv
   ```
 - **Status**: ✅ Implemented and tested
 
@@ -100,10 +100,10 @@ Experiment tracking and planning document for the workshop paper.
   ```bash
   python -m scripts.run_experiment \
     --model-id phi3-mini \
-    --task-name tatqa_tiny \
+    --task-name sciq_tiny \
     --mode ace \
-    --playbook-path playbooks/tatqa_playbook.jsonl \
-    --output-path results/tatqa_phi3_ace.csv
+    --playbook-path playbooks/sciq_playbook.jsonl \
+    --output-path results/sciq_phi3_ace.csv
   ```
 - **Status**: ✅ Pipeline implemented, prompts need refinement (Sathwik's work)
 
@@ -147,19 +147,19 @@ Experiment tracking and planning document for the workshop paper.
 
 #### All Team Members
 - [ ] ⏳ **Baseline runs** (all models × all tasks):
-  - [ ] Phi-3 Mini × tatqa_tiny
+  - [ ] Phi-3 Mini × sciq_tiny
   - [ ] Phi-3 Mini × medqa_tiny
   - [ ] Phi-3 Mini × iot_tiny
-  - [ ] Llama 3.2 1B × tatqa_tiny
+  - [ ] Llama 3.2 1B × sciq_tiny
   - [ ] Llama 3.2 1B × medqa_tiny
   - [ ] Llama 3.2 1B × iot_tiny
   - [ ] (Optional) Mistral-7B or Llama-3-8B on supercomputer
 
 - [ ] ⏳ **ACE runs** (all models × all tasks):
-  - [ ] Phi-3 Mini × tatqa_tiny (with playbook)
+  - [ ] Phi-3 Mini × sciq_tiny (with playbook)
   - [ ] Phi-3 Mini × medqa_tiny (with playbook)
   - [ ] Phi-3 Mini × iot_tiny (with playbook)
-  - [ ] Llama 3.2 1B × tatqa_tiny (with playbook)
+  - [ ] Llama 3.2 1B × sciq_tiny (with playbook)
   - [ ] Llama 3.2 1B × medqa_tiny (with playbook)
   - [ ] Llama 3.2 1B × iot_tiny (with playbook)
 
@@ -206,8 +206,8 @@ Experiment tracking and planning document for the workshop paper.
 **Format**: `{model}_{task}_{mode}_{timestamp}.csv`
 
 **Examples**:
-- `phi3-mini_tatqa_tiny_baseline_20241110.csv`
-- `phi3-mini_tatqa_tiny_ace_20241110.csv`
+- `phi3-mini_sciq_tiny_baseline_20241110.csv`
+- `phi3-mini_sciq_tiny_ace_20241110.csv`
 - `llama-3.2-1b_medqa_tiny_baseline_20241110.csv`
 
 **Playbooks**: `{task}_playbook.jsonl`

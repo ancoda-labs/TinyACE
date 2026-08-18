@@ -33,7 +33,7 @@ Run a smoke test to verify installation:
 python -m scripts.smoke_test
 
 # GPU test (uses Phi-3 Mini)
-python -m scripts.smoke_gpu_phi3 --task-name tatqa_tiny --device cuda --limit 2
+python -m scripts.smoke_gpu_phi3 --task-name sciq_tiny --device cuda --limit 2
 ```
 
 ## Run Your First Experiment

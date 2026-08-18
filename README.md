@@ -22,47 +22,62 @@ Instead of updating model weights, TinyACE evolves the prompt context through a 
 
 - 🧠 **Playbook Memory System**: Dynamic accumulation of domain-specific strategies without fine-tuning
 - 📊 **Retention Scoring**: Multi-component scoring formula for strategic forgetting
-- 💾 **Token-Budgeted Memory**: Efficient memory management for edge devices (256/512 token budgets)
-- 🔬 **Comprehensive Ablation Studies**: Systematic analysis of scoring components
-- 📈 **Model-Dependent Analysis**: Evaluation across Mistral 7B, Phi-3 Mini, and TinyLlama 1.1B
+- 💾 **Token-Budgeted Memory**: Separate store capacity and prompt budget, so retrieval actually selects
+- 🔬 **Ablation Support**: Each component switchable, including the control arm needed to attribute any effect
+- 📈 **Model-Dependent Analysis**: Evaluation across Mistral 7B, Phi-3 Mini, TinyLlama 1.1B and Qwen2.5 rivals
+
+> These describe what the framework implements. Which of them *helps* is an
+> open question until the evaluation is redone -- see Status of Results below.
 
 ---
 
-## 🎯 Key Results
+## 🎯 Status of Results
 
-### Model Performance (SciQ Test Dataset)
+> **The previously published numbers have been withdrawn pending
+> re-evaluation.** They were produced by a pipeline with defects that change
+> the measurements themselves, not merely their presentation. The fixes are in
+> this repository; the runs have not yet been redone.
+>
+> What went wrong, in order of impact:
+>
+> | | Defect | Effect |
+> |---|---|---|
+> | 1 | Gold answer was at option **(A) in 1000/1000** examples | Rewarded first-option bias, which differs between the terse baseline prompt and the verbose ACE prompt |
+> | 2 | `fifo_memory` implemented **LIFO** | The "FIFO beats complex scoring" headline measured something else entirely |
+> | 3 | OMA was **embedding-argmax over the full generation** | Answering with a letter -- which the prompt invites -- scored near-randomly |
+> | 4 | Baseline and ACE differed in prompt, choices block, domain hints **and** answer parser | No delta could be attributed to the playbook |
+> | 5 | `self_refine` was **shown the gold answer** in the prompt that produced its scored prediction | Measured copying, not reasoning |
+> | 6 | **No seed anywhere**; two models decoded at temperature 0.7 | Runs were not reproducible |
+> | 7 | n=50, no confidence intervals, no significance test | Every reported delta was 1-3 questions, inside a +/-12pp noise floor |
+> | 8 | Ablations compared against **baseline** instead of full TinyACE | Under the correct reference, two of the four ablations changed *nothing* |
+>
+> See [CODE_REVIEW.md](CODE_REVIEW.md) for the full analysis and
+> [docs/RESULTS.md](docs/RESULTS.md) for the withdrawn tables.
 
-| Model | Baseline OMA | Best ACE OMA | Improvement | Key Finding |
-|-------|--------------|--------------|-------------|-------------|
-| **Mistral 7B** | 96% | 94% | -2% | Baseline preferred; ACE adds overhead |
-| **Phi-3 Mini** | 74% | **78%** | **+4%** | FIFO eviction achieves best performance |
-| **TinyLlama 1.1B** | 72% | 46% | -26% | Baseline preferred; ACE degrades performance |
+### Re-running the evaluation
 
-**Insight**: ACE is most effective for medium-capability models (3-4B parameters).
+```bash
+# 1. Full grid, seeded, at a sample size that can resolve an effect
+python -m scripts.run_eval_grid --config configs/experiment_grid.yaml --seed 42
 
-### Qwen2.5 Rival Comparison
+# 2. Check every delta before believing it
+python -m scripts.compare_arms --results-root results --reference cot_control
 
-We provide parameter-matched Qwen2.5 rivals to validate findings across model families:
+# 3. Ablations belong against full TinyACE, not against baseline
+python -m scripts.compare_arms --results-root results --reference tinyace_wm_256
+```
 
-| Size Class | Baseline Model | Qwen2.5 Rival | Notes |
-|------------|----------------|---------------|-------|
-| **Small (~1-2B)** | TinyLlama-1.1B | Qwen2.5-1.5B-Instruct | Test if ACE hurts small models |
-| **Medium (~3-4B)** | Phi-3-mini-3.8B | Qwen2.5-3B-Instruct | Test ACE "sweet spot" |
-| **Large (~7B)** | Mistral-7B | Qwen2.5-7B-Instruct | Test if large models need ACE |
+Repeat step 1 with at least three seeds and report mean +/- std.
 
-Run `python -m scripts.run_qwen_rivals` to generate paper-ready comparison artifacts.
+### Arms
 
-### Ablation Study Results (Phi-3 Mini, 256 token budget)
-
-| Configuration | OMA Accuracy | Semantic Similarity | Key Finding |
-|--------------|--------------|---------------------|-------------|
-| Baseline | 74% | 0.385 | Baseline performance |
-| **FIFO Eviction** | **78%** | 0.469 | **Best OMA** - Simple eviction outperforms complex scoring |
-| No Recency | 72% | **0.495** | Best semantic similarity |
-| No Failure | 70% | 0.466 | Critical component (4% drop without it) |
-| No Vagueness | 72% | 0.421 | Prevents playbook bloat |
-
-**Key Finding**: FIFO eviction achieves the best OMA (78%), suggesting complex scoring may be unnecessary for this task.
+| Mode | What it is |
+|---|---|
+| `baseline` | Terse prompt, no playbook |
+| `cot_control` | **The ACE prompt scaffold with an empty playbook.** The claim about the playbook is `ace - cot_control`, not `ace - baseline` |
+| `ace` | Full system (`--ace-mode ace_full` or `ace_working_memory`) |
+| `self_refine` | Critique-and-rewrite using only the model's own output |
+| `self_refine_oracle` | Same, but shown the gold answer. An **upper bound**, not a baseline |
 
 ---
 
@@ -112,18 +127,20 @@ TINY ACE/
 │   │   ├── ace_roles.py      # Generator, Reflector, Curator
 │   │   └── runner.py          # Main evaluation loop
 │   ├── memory/                # Playbook system
-│   │   └── playbook.py       # Retention scoring & eviction
+│   │   ├── playbook.py       # Retention scoring & eviction
+│   │   └── relevance.py      # Query-conditioned retrieval
 │   ├── models/                # Model management
-│   └── utils/                  # Metrics & configuration
+│   └── utils/                  # Metrics, stats, config, seeding
 ├── scripts/                    # CLI tools
 │   ├── run_experiment.py     # Single experiment runner
 │   ├── run_eval_grid.py      # Grid experiment runner
+│   ├── compare_arms.py       # CIs + paired significance testing
 │   └── tinyace_plots.py      # Visualization pipeline
 ├── configs/                    # Configuration files
 │   └── experiment_grid.yaml   # Experiment configuration
 ├── docs/                       # Documentation
 │   ├── ARCHITECTURE.md        # System design details
-│   ├── RESULTS.md             # Experimental results
+│   ├── RESULTS.md             # Withdrawn results, kept for provenance
 │   └── guides/                # User guides
 ├── data/                       # Datasets
 └── tests/                      # Test suite
@@ -253,31 +270,16 @@ See [configs/experiment_grid.yaml](configs/experiment_grid.yaml) for all options
 
 ## 📊 Experimental Results
 
-### Model Comparison Summary
+The previous model-comparison and ablation summaries have been removed from
+this README rather than reproduced with caveats, because each was derived from
+the defective measurements listed under [Status of Results](#-status-of-results)
+above. Reproducing them here, even hedged, would keep numbers in circulation
+that should not be cited.
 
-**Mistral 7B Instruct:**
-- Baseline: 96% OMA, 0.823 semantic similarity, 0.41s latency
-- ACE modes add ~1.4s overhead with minimal benefit
-- **Conclusion**: Strong models don't benefit from ACE
+The withdrawn tables remain in [docs/RESULTS.md](docs/RESULTS.md), annotated
+in place with what was wrong with each.
 
-**Phi-3 Mini:**
-- Baseline: 74% OMA, 0.385 semantic similarity
-- Best ACE (FIFO): 78% OMA, 0.469 semantic similarity (+4% OMA, +0.084 semantic)
-- **Conclusion**: Medium models benefit significantly from ACE
-
-**TinyLlama 1.1B:**
-- Baseline: 72% OMA, 0.659 semantic similarity
-- ACE modes degrade performance (34-46% OMA)
-- **Conclusion**: Very small models are confused by playbook context
-
-### Ablation Study Insights
-
-1. **FIFO Eviction**: Best overall performance (78% OMA)
-2. **Failure Tracking**: Critical component (4% drop without it)
-3. **Recency Bias**: Trade-off (accuracy vs. semantic quality)
-4. **Vagueness Detection**: Prevents playbook bloat
-
-See [docs/RESULTS.md](docs/RESULTS.md) for comprehensive analysis.
+To generate replacements, see [Re-running the evaluation](#re-running-the-evaluation).
 
 ---
 
@@ -292,12 +294,13 @@ See [docs/RESULTS.md](docs/RESULTS.md) for comprehensive analysis.
 
 ## 🔬 Key Features
 
-- ✅ **Three Evaluation Modes**: Baseline, ACE Full, ACE Working Memory
+- ✅ **Five Evaluation Modes**: Baseline, CoT control, ACE Full, ACE Working Memory, Self-Refine
 - ✅ **Token-Budgeted Memory**: Strategic forgetting for edge devices
 - ✅ **Retention Scoring**: Multi-component scoring system
 - ✅ **Ablation Support**: Systematic component analysis
 - ✅ **Multi-Device Support**: CPU, CUDA, MPS (Apple Silicon)
-- ✅ **Comprehensive Metrics**: OMA accuracy, semantic similarity, latency
+- ✅ **Query-Conditioned Retrieval**: Lessons ranked against the question, not just the domain
+- ✅ **Honest Metrics**: OMA with Wilson intervals, paired McNemar tests, seeded runs with captured environments
 
 ---
 
@@ -308,14 +311,14 @@ If you use this codebase in your research, please cite:
 ```bibtex
 @software{tinyace2024,
   title={TinyACE: Domain-Specific Benchmarking of Small Language Models for Edge Devices with Agentic Context Engineering},
-  author={Shahi, Suryodaya and Collaborators},
-  year={2024},
+  author={Shahi, Suryodaya and Sathwik and Archit},
+  year={2026},
   url={https://github.com/SirAlchemist1/edge-slm-ace},
   note={Workshop Paper}
 }
 ```
 
-**Paper**: See `TinyAce-3.pdf` for the full technical report.
+**Paper**: See `TinyAce Paper.pdf` for the full technical report.
 
 ---
 
@@ -340,7 +343,7 @@ For questions or issues, please open an issue on GitHub or contact the maintaine
 
 ## 📖 Paper
 
-The full technical report is available as `TinyAce-3.pdf` in the repository root.
+The full technical report is available as `TinyAce Paper.pdf` in the repository root.
 
 **Paper Title**: "Domain-Specific Benchmarking of Small Language Models for Edge Devices with Agentic Context Engineering (ACE)"
 

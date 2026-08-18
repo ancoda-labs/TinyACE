@@ -1,5 +1,40 @@
 # TinyACE Experimental Results
 
+> **STATUS: WITHDRAWN PENDING RE-EVALUATION.**
+>
+> Every number below was produced by a pipeline with defects that change the
+> measurements themselves. They are retained for provenance only and must not
+> be cited, quoted or carried into the paper. See `CODE_REVIEW.md` for the
+> full analysis; the short version:
+>
+> 1. **The gold answer sat at option (A) in 100% of examples.** Verified:
+>    1000/1000 rows of `sciq_test.json`. Any model with a first-option bias
+>    was rewarded, and that bias differs between the terse baseline prompt and
+>    the verbose ACE prompt, so it does not cancel between arms.
+> 2. **The FIFO arm ran LIFO.** `score()` returned `-created_at`, so eviction
+>    dropped the *newest* entry and retrieval only ever showed the *oldest*
+>    lessons. Whatever produced the 78% headline, it was not FIFO eviction.
+> 3. **OMA was embedding-argmax over the whole generation.** A model that
+>    answered "B" -- which the prompt explicitly invites -- was scored close to
+>    randomly, and long chain-of-thought output diluted the option signal.
+> 4. **The arms were not comparable.** Baseline and ACE differed in prompt,
+>    choices block, domain hints *and* answer parser, so no delta could be
+>    attributed to the playbook.
+> 5. **The self-refine arm was shown the gold answer** in the prompt that
+>    produced its scored prediction.
+> 6. **No seed, anywhere**, while two of the models decoded at temperature 0.7.
+> 7. **Every difference reported here is inside the noise floor.** At n=50 the
+>    95% Wilson CI is about +/-12pp; the deltas below are 1-3 questions.
+> 8. **The ablations were compared against the wrong arm** -- see the section
+>    below.
+>
+> Re-run with `scripts/run_eval_grid.py` at n>=500 with >=3 seeds, then check
+> every delta with `scripts/compare_arms.py` before writing anything down.
+
+---
+
+## Original report (superseded)
+
 **Last Updated:** December 2024  
 **Evaluation Date:** December 2024
 
@@ -89,6 +124,24 @@ All ablation studies conducted on **Phi-3 Mini** with **256 token budget**.
 | **tinyace_ablate_no_failure** | 70% | 0.466 | 8.882 | 0.195 | 9 | 248 |
 | **tinyace_ablate_no_vagueness** | 72% | 0.421 | 9.288 | 0.191 | 17 | 248 |
 
+> **Reference-arm error.** Each `tinyace_ablate_no_X` row below is compared
+> against **baseline** (74%), which is the no-ACE arm. An ablation of a TinyACE
+> component must be compared against **full TinyACE at the same budget**, which
+> the model table above gives as `tinyace_wm_256` = 72%. Against the correct
+> reference:
+>
+> | Config | As reported (vs baseline) | Correct (vs tinyace_wm_256) |
+> |---|---|---|
+> | `tinyace_fifo` 78% | +4% | +6pp (3 questions) |
+> | `no_recency` 72% | -2% | **0pp (0 questions)** |
+> | `no_failure` 70% | -4% | -2pp (1 question) |
+> | `no_vagueness` 72% | -2% | **0pp (0 questions)** |
+>
+> Removing the recency term and removing the vagueness term changed nothing at
+> all. The stated conclusion that "failure tracking is most critical" rests on
+> a single question. None of these differences survives a McNemar test at
+> n=50 -- the +4% headline comes out at p=0.50.
+
 ### Component Importance Ranking
 
 **By OMA Accuracy:**
@@ -173,6 +226,16 @@ All ablation studies conducted on **Phi-3 Mini** with **256 token budget**.
 | **FIFO Eviction** | Best (+4%) | Large increase (+0.084) | Smallest (9 entries) |
 
 ### Latency Analysis
+
+> **Internally inconsistent.** The tables above report Phi-3 Mini (3.8B) at a
+> 6.43s baseline latency and Mistral-7B (7B) at 0.408s -- a 7B model 15x faster
+> than a 3.8B model on the same task and the same reported device. That cannot
+> both be true, and indicates the rows were collected under different hardware,
+> decoding settings or output lengths. The cross-model latency comparison is
+> not usable until that is explained. (MODEL_CONFIGS did in fact give
+> mistral-7b temperature 0.7 and 512 max_new_tokens against Phi-3's greedy 256;
+> that has since been unified.)
+
 
 - **Baseline**: Fastest (0.4-6.4s depending on model)
 - **ACE Modes**: Add ~2.4-2.9s overhead per run

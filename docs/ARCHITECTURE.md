@@ -1,5 +1,23 @@
 # TinyACE Architecture Documentation
 
+> **Updated.** Two things this document described were not true of the code as
+> shipped, and are now implemented rather than merely documented:
+>
+> - The **Curator** stage (`build_curator_prompt` / `parse_curator_output`) was
+>   never called from the ACE loop. What ran was a six-substring keyword
+>   filter. It is now invoked, and switchable via `--no-curator`.
+> - **Retrieval** did not depend on the question. Entries were filtered by
+>   domain and ranked by a query-independent score, and since every SciQ task
+>   maps to the single domain "science", every question in a run received the
+>   identical lesson list. Retrieval is now query-conditioned
+>   (`memory/relevance.py`, weight via `--relevance-weight`).
+>
+> Also note that the store capacity and the prompt token budget are now
+> separate numbers. They were previously the same, which made retrieval
+> ranking a no-op: everything that survived eviction always fitted in the
+> prompt.
+
+
 **Last Updated:** December 2024  
 **Version:** 1.0
 

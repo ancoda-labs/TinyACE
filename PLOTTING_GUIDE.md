@@ -22,15 +22,15 @@ python -m scripts.tinyace_plots --results_dir results --output_dir tinyace_plots
 # Run evaluation and auto-generate plots
 python -m scripts.run_experiment \
   --model-id phi3-mini \
-  --task-name tatqa_tiny \
+  --task-name sciq_tiny \
   --mode baseline \
-  --output-path results/tatqa_phi3_baseline.csv \
+  --output-path results/sciq_phi3_baseline.csv \
   --auto-plots
 
 # Run ACE epochs and auto-generate plots
 python -m scripts.run_ace_epoch \
   --model-id phi3-mini \
-  --task-name tatqa_tiny \
+  --task-name sciq_tiny \
   --epochs 3 \
   --ace-mode ace_working_memory \
   --device cuda \
@@ -43,7 +43,7 @@ Each CSV file under `results/` should have at least these columns:
 
 ### Required Columns:
 - `qid` or `sample_id`: Question/sample identifier
-- `task` or `task_name`: Task name (e.g., `medqa`, `tatqa_tiny`, `gsm8k`)
+- `task` or `task_name`: Task name (e.g., `medqa`, `sciq_tiny`, `gsm8k`)
 - `model` or `model_id`: Model identifier (e.g., `phi3mini`, `llama1b`)
 - `mode`: One of `["zero_shot", "baseline", "ace_full", "ace_working_memory", "tinyace", "self_refine"]`
 - `is_correct` or `correct`: 0/1 or boolean indicating correctness
