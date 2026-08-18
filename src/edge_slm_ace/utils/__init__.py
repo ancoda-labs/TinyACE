@@ -1,57 +1,40 @@
-"""Utility functions: metrics, device detection, configuration."""
+"""Run infrastructure: configuration, device selection, reproducibility.
 
-from edge_slm_ace.utils.metrics import (
-    compute_accuracy,
-    compute_average_latency,
-    semantic_answer_score,
-    compute_bleu_score,
-    compute_semantic_accuracy,
-)
-from edge_slm_ace.utils.device_utils import get_device, resolve_device_override
+Deliberately narrow. Metrics, MCQ scoring and statistics used to live here
+too, which meant "utils" contained the entire measurement layer; they are in
+`edge_slm_ace.eval` now.
+"""
+
 from edge_slm_ace.utils.config import (
+    ACE_MODE_FULL,
+    ACE_MODE_WORKING,
+    MODEL_CONFIGS,
+    TASK_CONFIGS,
     ModelConfig,
     get_model_config,
     get_task_config,
-    TASK_CONFIGS,
-    MODEL_CONFIGS,
-    ACE_MODE_FULL,
-    ACE_MODE_WORKING,
+    resolve_task_path,
+    validate_task_registry,
 )
-from edge_slm_ace.utils.mcq_eval import (
-    is_sciq_task,
-    has_mcq_options,
-    extract_mcq_options,
-    extract_mcq_options_with_indices,
-    build_prompt_with_choices,
-    evaluate_mcq_with_indices,
-    detect_choice_marker,
-    MCQEvaluator,
-    compute_mcq_aggregate_metrics,
-)
+from edge_slm_ace.utils.device_utils import get_device, resolve_device_override
+from edge_slm_ace.utils.repro import DEFAULT_SEED, capture_environment, set_seed
 
 __all__ = [
-    "compute_accuracy",
-    "compute_average_latency",
-    "semantic_answer_score",
-    "compute_bleu_score",
-    "compute_semantic_accuracy",
-    "get_device",
-    "resolve_device_override",
+    # config
+    "ACE_MODE_FULL",
+    "ACE_MODE_WORKING",
+    "MODEL_CONFIGS",
+    "TASK_CONFIGS",
     "ModelConfig",
     "get_model_config",
     "get_task_config",
-    "TASK_CONFIGS",
-    "MODEL_CONFIGS",
-    "ACE_MODE_FULL",
-    "ACE_MODE_WORKING",
-    # MCQ evaluation
-    "is_sciq_task",
-    "has_mcq_options",
-    "extract_mcq_options",
-    "extract_mcq_options_with_indices",
-    "build_prompt_with_choices",
-    "evaluate_mcq_with_indices",
-    "detect_choice_marker",
-    "MCQEvaluator",
-    "compute_mcq_aggregate_metrics",
+    "resolve_task_path",
+    "validate_task_registry",
+    # device
+    "get_device",
+    "resolve_device_override",
+    # reproducibility
+    "DEFAULT_SEED",
+    "capture_environment",
+    "set_seed",
 ]

@@ -48,7 +48,7 @@ from edge_slm_ace.models.model_manager import load_model_and_tokenizer
 from edge_slm_ace.memory.playbook import Playbook, ScoringParams
 from edge_slm_ace.core.runner import run_dataset_baseline, run_dataset_ace, run_dataset_self_refine
 from edge_slm_ace.utils.device_utils import get_device, resolve_device_override
-from edge_slm_ace.utils.metrics import PeakMemoryTracker, SemanticEvaluator
+from edge_slm_ace.eval.metrics import PeakMemoryTracker, SemanticEvaluator
 from edge_slm_ace.utils.repro import DEFAULT_SEED, capture_environment, set_seed
 
 

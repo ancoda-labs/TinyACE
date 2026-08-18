@@ -2,7 +2,7 @@
 
 import pytest
 
-from edge_slm_ace.utils.stats import (
+from edge_slm_ace.eval.stats import (
     align_on_key,
     compare_arms,
     mcnemar_exact,

@@ -35,7 +35,7 @@ import sys
 from pathlib import Path
 import pandas as pd
 
-from edge_slm_ace.utils.metrics import compute_semantic_accuracy
+from edge_slm_ace.eval.metrics import compute_semantic_accuracy
 
 
 def main():

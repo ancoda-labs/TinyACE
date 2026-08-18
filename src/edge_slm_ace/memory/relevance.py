@@ -53,7 +53,7 @@ class LessonRelevance:
         if LessonRelevance._model is not None:
             return
         try:
-            from edge_slm_ace.utils.metrics import SemanticEvaluator
+            from edge_slm_ace.eval.metrics import SemanticEvaluator
 
             SemanticEvaluator.get_instance()
             if SemanticEvaluator._model is not None:

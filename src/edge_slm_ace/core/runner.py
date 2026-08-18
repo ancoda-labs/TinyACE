@@ -20,13 +20,13 @@ from edge_slm_ace.core.ace_roles import (
     parse_curator_output,
 )
 from edge_slm_ace.utils.config import ModelConfig
-from edge_slm_ace.utils.metrics import (
+from edge_slm_ace.eval.metrics import (
     compute_accuracy,
     compute_average_latency,
     semantic_answer_score,
     compute_bleu_score,
 )
-from edge_slm_ace.utils.mcq_eval import (
+from edge_slm_ace.eval.mcq import (
     is_sciq_task,
     has_mcq_options,
     extract_mcq_options,
@@ -37,7 +37,7 @@ from edge_slm_ace.utils.mcq_eval import (
     compute_mcq_aggregate_metrics,
     compute_mapping_tier_distribution,
 )
-from edge_slm_ace.utils.stats import summarize_accuracy
+from edge_slm_ace.eval.stats import summarize_accuracy
 from edge_slm_ace.models.model_manager import generate, count_tokens
 from edge_slm_ace.memory.playbook import Playbook
 from edge_slm_ace.memory.relevance import LessonRelevance

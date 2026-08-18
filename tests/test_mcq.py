@@ -8,7 +8,7 @@ import pytest
 import numpy as np
 from unittest.mock import MagicMock, patch
 
-from edge_slm_ace.utils.mcq_eval import (
+from edge_slm_ace.eval.mcq import (
     TIER_EMBEDDING,
     TIER_LETTER,
     TIER_NONE,
@@ -26,7 +26,7 @@ class TestDetectChoiceMarker:
 
     def test_detect_answer_colon_format(self):
         """Test detection of 'Answer: X' format."""
-        from edge_slm_ace.utils.mcq_eval import detect_choice_marker
+        from edge_slm_ace.eval.mcq import detect_choice_marker
 
         assert detect_choice_marker("Answer: B") == "B"
         assert detect_choice_marker("answer: C") == "C"
@@ -35,7 +35,7 @@ class TestDetectChoiceMarker:
 
     def test_detect_answer_is_format(self):
         """Test detection of 'The answer is X' format."""
-        from edge_slm_ace.utils.mcq_eval import detect_choice_marker
+        from edge_slm_ace.eval.mcq import detect_choice_marker
 
         assert detect_choice_marker("The answer is B") == "B"
         assert detect_choice_marker("The answer is C because...") == "C"
@@ -43,28 +43,28 @@ class TestDetectChoiceMarker:
 
     def test_detect_option_format(self):
         """Test detection of 'Option X' format."""
-        from edge_slm_ace.utils.mcq_eval import detect_choice_marker
+        from edge_slm_ace.eval.mcq import detect_choice_marker
 
         assert detect_choice_marker("Option B is correct") == "B"
         assert detect_choice_marker("I choose option C") == "C"
 
     def test_detect_parenthesis_format(self):
         """Test detection of '(X)' format."""
-        from edge_slm_ace.utils.mcq_eval import detect_choice_marker
+        from edge_slm_ace.eval.mcq import detect_choice_marker
 
         assert detect_choice_marker("The correct choice is (B)") == "B"
         assert detect_choice_marker("(A) is the answer") == "A"
 
     def test_detect_standalone_at_end(self):
         """Test detection of standalone letter at end."""
-        from edge_slm_ace.utils.mcq_eval import detect_choice_marker
+        from edge_slm_ace.eval.mcq import detect_choice_marker
 
         assert detect_choice_marker("Based on the context, B") == "B"
         assert detect_choice_marker("The solution is D.") == "D"
 
     def test_no_detection_for_unrelated_text(self):
         """Test that unrelated text doesn't trigger false positives."""
-        from edge_slm_ace.utils.mcq_eval import detect_choice_marker
+        from edge_slm_ace.eval.mcq import detect_choice_marker
 
         # Should not detect choice markers in regular text
         assert detect_choice_marker("This is about the ABC company") is None
@@ -75,7 +75,7 @@ class TestDetectChoiceMarker:
 
     def test_case_insensitivity(self):
         """Test that detection is case-insensitive."""
-        from edge_slm_ace.utils.mcq_eval import detect_choice_marker
+        from edge_slm_ace.eval.mcq import detect_choice_marker
 
         assert detect_choice_marker("ANSWER: b") == "B"
         assert detect_choice_marker("The ANSWER IS c") == "C"
@@ -86,7 +86,7 @@ class TestIsSciQTask:
 
     def test_sciq_task_names(self):
         """Test that SciQ task names are correctly identified."""
-        from edge_slm_ace.utils.mcq_eval import is_sciq_task
+        from edge_slm_ace.eval.mcq import is_sciq_task
 
         assert is_sciq_task("sciq_tiny") is True
         assert is_sciq_task("sciq_test") is True
@@ -95,7 +95,7 @@ class TestIsSciQTask:
 
     def test_non_sciq_task_names(self):
         """Test that non-SciQ task names are correctly rejected."""
-        from edge_slm_ace.utils.mcq_eval import is_sciq_task
+        from edge_slm_ace.eval.mcq import is_sciq_task
 
         assert is_sciq_task("medqa_tiny") is False
         assert is_sciq_task("tatqa_tiny") is False
@@ -108,7 +108,7 @@ class TestHasMCQOptions:
 
     def test_sciq_format_example(self):
         """Test that SciQ format examples are correctly identified."""
-        from edge_slm_ace.utils.mcq_eval import has_mcq_options
+        from edge_slm_ace.eval.mcq import has_mcq_options
 
         example = {
             "question": "What is H2O?",
@@ -122,7 +122,7 @@ class TestHasMCQOptions:
 
     def test_non_mcq_example(self):
         """Test that non-MCQ examples are correctly rejected."""
-        from edge_slm_ace.utils.mcq_eval import has_mcq_options
+        from edge_slm_ace.eval.mcq import has_mcq_options
 
         example = {
             "question": "What is 2+2?",
@@ -136,7 +136,7 @@ class TestExtractMCQOptions:
 
     def test_option_extraction(self):
         """Test that options are correctly extracted and labeled."""
-        from edge_slm_ace.utils.mcq_eval import extract_mcq_options
+        from edge_slm_ace.eval.mcq import extract_mcq_options
 
         example = {
             "correct_answer": "water",
@@ -161,7 +161,7 @@ class TestMCQEvaluator:
 
     def test_evaluate_mcq_correct_prediction(self):
         """Test MCQ evaluation when prediction matches option C semantically."""
-        from edge_slm_ace.utils.mcq_eval import MCQEvaluator
+        from edge_slm_ace.eval.mcq import MCQEvaluator
 
         # Reset singleton for testing
         MCQEvaluator._instance = None
@@ -203,7 +203,7 @@ class TestMCQEvaluator:
 
     def test_evaluate_mcq_incorrect_prediction(self):
         """Test MCQ evaluation when prediction matches wrong option."""
-        from edge_slm_ace.utils.mcq_eval import MCQEvaluator
+        from edge_slm_ace.eval.mcq import MCQEvaluator
 
         # Reset singleton for testing
         MCQEvaluator._instance = None
@@ -245,7 +245,7 @@ class TestMCQEvaluator:
 
     def test_acr_detection_in_evaluate(self):
         """Test that ACR is correctly detected during evaluation."""
-        from edge_slm_ace.utils.mcq_eval import MCQEvaluator
+        from edge_slm_ace.eval.mcq import MCQEvaluator
 
         # Reset singleton for testing
         MCQEvaluator._instance = None
@@ -291,7 +291,7 @@ class TestExtractMCQOptionsWithIndices:
 
     def test_new_format_extraction(self):
         """Test extraction from new format (options list + gold_option_idx)."""
-        from edge_slm_ace.utils.mcq_eval import extract_mcq_options_with_indices
+        from edge_slm_ace.eval.mcq import extract_mcq_options_with_indices
 
         example = {
             "question": "What is H2O?",
@@ -309,7 +309,7 @@ class TestExtractMCQOptionsWithIndices:
 
     def test_legacy_format_extraction(self):
         """Test extraction from legacy format (correct_answer + distractors)."""
-        from edge_slm_ace.utils.mcq_eval import extract_mcq_options_with_indices
+        from edge_slm_ace.eval.mcq import extract_mcq_options_with_indices
 
         example = {
             "correct_answer": "water",
@@ -327,7 +327,7 @@ class TestExtractMCQOptionsWithIndices:
 
     def test_invalid_format_raises_error(self):
         """Test that invalid format raises ValueError."""
-        from edge_slm_ace.utils.mcq_eval import extract_mcq_options_with_indices
+        from edge_slm_ace.eval.mcq import extract_mcq_options_with_indices
 
         example = {"question": "test", "answer": "test"}
 
@@ -340,7 +340,7 @@ class TestBuildPromptWithChoices:
 
     def test_prompt_with_choices(self):
         """Test prompt includes choices when options provided."""
-        from edge_slm_ace.utils.mcq_eval import build_prompt_with_choices
+        from edge_slm_ace.eval.mcq import build_prompt_with_choices
 
         options = ["water", "oxygen", "hydrogen", "carbon"]
         prompt = build_prompt_with_choices(
@@ -357,7 +357,7 @@ class TestBuildPromptWithChoices:
 
     def test_prompt_without_choices(self):
         """Test prompt without options doesn't include choices."""
-        from edge_slm_ace.utils.mcq_eval import build_prompt_with_choices
+        from edge_slm_ace.eval.mcq import build_prompt_with_choices
 
         prompt = build_prompt_with_choices(
             question="What is 2+2?",
@@ -374,7 +374,7 @@ class TestEvaluateMCQWithIndices:
 
     def test_evaluate_correct_prediction(self):
         """Test evaluation when prediction matches gold option."""
-        from edge_slm_ace.utils.mcq_eval import evaluate_mcq_with_indices, MCQEvaluator
+        from edge_slm_ace.eval.mcq import evaluate_mcq_with_indices, MCQEvaluator
 
         # Reset singleton for testing
         MCQEvaluator._instance = None
@@ -408,7 +408,7 @@ class TestEvaluateMCQWithIndices:
 
     def test_evaluate_incorrect_prediction(self):
         """Test evaluation when prediction matches wrong option."""
-        from edge_slm_ace.utils.mcq_eval import evaluate_mcq_with_indices, MCQEvaluator
+        from edge_slm_ace.eval.mcq import evaluate_mcq_with_indices, MCQEvaluator
 
         # Reset singleton for testing
         MCQEvaluator._instance = None
@@ -446,7 +446,7 @@ class TestComputeMCQAggregateMetrics:
 
     def test_aggregate_with_valid_results(self):
         """Test aggregation with valid MCQ results."""
-        from edge_slm_ace.utils.mcq_eval import compute_mcq_aggregate_metrics
+        from edge_slm_ace.eval.mcq import compute_mcq_aggregate_metrics
 
         results = [
             {"oma_correct": 1, "gom": 0.5, "acr_hit": 1},
@@ -463,7 +463,7 @@ class TestComputeMCQAggregateMetrics:
 
     def test_aggregate_with_empty_results(self):
         """Test aggregation with empty results."""
-        from edge_slm_ace.utils.mcq_eval import compute_mcq_aggregate_metrics
+        from edge_slm_ace.eval.mcq import compute_mcq_aggregate_metrics
 
         agg = compute_mcq_aggregate_metrics([])
 
@@ -473,7 +473,7 @@ class TestComputeMCQAggregateMetrics:
 
     def test_aggregate_with_mixed_results(self):
         """Test aggregation with mixed (some non-MCQ) results."""
-        from edge_slm_ace.utils.mcq_eval import compute_mcq_aggregate_metrics
+        from edge_slm_ace.eval.mcq import compute_mcq_aggregate_metrics
 
         results = [
             {"oma_correct": 1, "gom": 0.5, "acr_hit": 1},

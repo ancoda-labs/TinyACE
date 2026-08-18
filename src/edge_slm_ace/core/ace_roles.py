@@ -89,7 +89,7 @@ def build_generator_prompt(
         Formatted prompt string.
     """
     # Get strategies from playbook based on mode
-    from edge_slm_ace.utils.mcq_eval import format_choices_block
+    from edge_slm_ace.eval.mcq import format_choices_block
 
     if ace_mode == "ace_working_memory":
         # Use token-budgeted selection for working memory mode

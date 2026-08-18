@@ -14,7 +14,7 @@ New Metrics:
       choice marker (A/B/C/D) in its response.
 
 Usage:
-    from edge_slm_ace.utils.mcq_eval import MCQEvaluator, is_sciq_task
+    from edge_slm_ace.eval.mcq import MCQEvaluator, is_sciq_task
 
     if is_sciq_task(task_name):
         evaluator = MCQEvaluator.get_instance()
@@ -430,7 +430,7 @@ class MCQEvaluator:
         """Load the semantic model (reuse from SemanticEvaluator if available)."""
         # Try to reuse existing model from SemanticEvaluator
         try:
-            from edge_slm_ace.utils.metrics import SemanticEvaluator
+            from edge_slm_ace.eval.metrics import SemanticEvaluator
 
             se = SemanticEvaluator.get_instance()
             # Access the class-level model
