@@ -251,12 +251,14 @@ def run_dataset_baseline(
         try:
             semantic_score = semantic_answer_score(answer, ground_truth)
         except Exception:
-            semantic_score = 0.0
+            semantic_score = None
 
         try:
             bleu_score = compute_bleu_score(answer, ground_truth)
         except Exception:
-            bleu_score = 0.0
+            # None, not 0.0: a missing sacrebleu is "not measured", and
+            # recording it as a real zero would drag any average down.
+            bleu_score = None
 
         # Progress output
         print(f"[{idx}/{total_examples}] latency={latency_ms:.0f}ms correct={correct}")
@@ -568,12 +570,12 @@ def run_dataset_self_refine(
         try:
             semantic_score = semantic_answer_score(final_answer, ground_truth)
         except Exception:
-            semantic_score = 0.0
+            semantic_score = None
 
         try:
             bleu_score = compute_bleu_score(final_answer, ground_truth)
         except Exception:
-            bleu_score = 0.0
+            bleu_score = None
 
         # Progress output
         print(f"[{idx}/{total_examples}] latency={total_latency_ms:.0f}ms correct={correct}")
@@ -854,12 +856,14 @@ def run_dataset_ace(
         try:
             score = semantic_answer_score(answer, ground_truth)
         except Exception:
-            score = 0.0
+            score = None
         
         try:
             bleu_score = compute_bleu_score(answer, ground_truth)
         except Exception:
-            bleu_score = 0.0
+            # None, not 0.0: a missing sacrebleu is "not measured", and
+            # recording it as a real zero would drag any average down.
+            bleu_score = None
         
         # Set result_mode based on ace_mode
         result_mode = ace_mode  # Use ace_mode directly (ace_full or ace_working_memory)

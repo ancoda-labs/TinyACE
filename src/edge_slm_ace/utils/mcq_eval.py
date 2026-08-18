@@ -480,9 +480,11 @@ class MCQEvaluator:
             pred_emb = embeddings[0]
             option_embs = embeddings[1:]
             
-            # Compute cosine similarities (already normalized)
+            # Cosine similarities in [-1, 1]. Not clipped to [0, 1]: GOM is a
+            # margin between gold and distractor similarity, and flooring the
+            # distractor side at zero compresses that margin.
             similarities = np.dot(option_embs, pred_emb)
-            return np.clip(similarities, 0.0, 1.0)
+            return np.clip(similarities, -1.0, 1.0)
             
         except Exception as e:
             print(f"[MCQEvaluator] Warning: Similarity computation failed: {e}")

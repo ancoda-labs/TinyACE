@@ -4,6 +4,7 @@ from typing import List, Optional, Tuple, Dict
 from contextlib import contextmanager
 import re
 import math
+import sys
 from collections import Counter
 from difflib import SequenceMatcher
 import numpy as np
@@ -45,6 +46,9 @@ try:
 except ImportError:
     sacrebleu = None
     _BLEU_AVAILABLE = False
+
+# BLEU-4 needs at least a 4-gram in the reference to be defined.
+_MIN_BLEU_REFERENCE_TOKENS = 4
 
 
 # ------------------------------
@@ -204,12 +208,19 @@ def semantic_answer_score(pred: str, label: str) -> float:
     Combines:
       1) Case-insensitive exact match (fast path)
       2) Numeric/unit-aware comparison (e.g., '5kg' vs '5000 g', '50%' vs '0.5')
-      3) Token-level F1
-      4) Character-level similarity (SequenceMatcher.ratio)
+      3) Containment of the reference in the prediction
+      4) Token-level F1
+      5) Character-level similarity (SequenceMatcher.ratio)
 
     Final score is the max of:
       - numeric/unit score
+      - containment score
       - the average of (token_f1, sequence_ratio)
+
+    Note on interpretation: this is a lexical overlap measure, not a
+    correctness measure. Do not report it as a quality metric across arms
+    whose outputs differ in length -- use OMA (or exact match on short-form
+    tasks) for that.
 
     Examples:
         semantic_answer_score("5kg", "5.0 kg")          -> 1.0
@@ -228,37 +239,57 @@ def semantic_answer_score(pred: str, label: str) -> float:
     # 2) numeric/unit-aware comparison
     num_score = compare_numbers_with_units(pred, label)
 
-    # 3) token-level F1
+    # 3) containment: a correct answer stated inside a longer explanation is
+    #    correct. Both the token-F1 and the character-ratio terms below are
+    #    length-penalised, so without this a verbose-but-right answer scores
+    #    lower than a terse-but-wrong one -- which systematically penalised
+    #    the chain-of-thought arm relative to the terse baseline arm.
+    containment = 0.0
+    if a and b:
+        if b in a:
+            containment = 1.0
+        elif a in b:
+            containment = len(a) / len(b)
+
+    # 4) token-level F1
     f1 = _token_f1(pred, label)
 
-    # 4) character-level similarity
+    # 5) character-level similarity
     seq = SequenceMatcher(None, a, b).ratio()
 
     # combine non-numeric signals
     text_score = (f1 + seq) / 2.0
 
     # final: take the best signal
-    return max(num_score, text_score)
+    return max(num_score, containment, text_score)
 
 
 # ------------------------------
 # BLEU score (Archit's addition)
 # ------------------------------
 
-def compute_bleu_score(prediction: str, reference: str) -> float:
+def compute_bleu_score(prediction: str, reference: str) -> Optional[float]:
     """
-    Compute BLEU score between a prediction and reference using sacrebleu.
+    Compute BLEU between a prediction and a reference using sacrebleu.
 
     Args:
         prediction: The predicted/generated text.
         reference: The ground truth/reference text.
 
     Returns:
-        BLEU score as a float between 0 and 100.
+        BLEU score in [0, 100], or None when the reference is too short for
+        BLEU-4 to mean anything (fewer than four tokens).
     """
     if not _BLEU_AVAILABLE:
         raise ImportError("sacrebleu is required for BLEU scores. Install with: pip install sacrebleu")
-    
+
+    # BLEU-4 is 0 (or undefined) whenever the reference is shorter than four
+    # tokens, which is almost every answer in these datasets -- SciQ gold
+    # answers are typically one or two words. Reporting it would be reporting
+    # noise, so return None and let callers omit the column.
+    if len(str(reference).split()) < _MIN_BLEU_REFERENCE_TOKENS:
+        return None
+
     # sacrebleu expects references as a list of lists
     # Each reference needs to be a list (for multiple references per prediction)
     # We only have one reference per prediction
@@ -460,6 +491,24 @@ def compute_semantic_accuracy(
 # Peak Memory Tracking (Edge Feasibility)
 # ------------------------------
 
+def _max_rss_mb() -> Optional[float]:
+    """
+    Process high-water-mark RSS in MB, from the OS.
+
+    Unlike periodic sampling this cannot miss a transient peak. Returns None
+    on platforms where `resource` is unavailable (Windows).
+    """
+    try:
+        import resource
+    except ImportError:
+        return None
+
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # Linux reports kilobytes; macOS and the BSDs report bytes.
+    divisor = 1024 if sys.platform == "darwin" else 1
+    return peak / divisor / 1024
+
+
 class PeakMemoryTracker:
     """
     Context manager for tracking peak RAM usage during code execution.
@@ -511,11 +560,17 @@ class PeakMemoryTracker:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Stop tracking and record peak memory."""
         self._tracking = False
-        
-        # Final CPU RAM check
+
+        # Final CPU RAM check. Sampling RSS at enter/exit/update cannot see a
+        # peak that occurs between samples, so prefer the OS high-water mark,
+        # which is a true maximum over the process lifetime.
         if _PSUTIL_AVAILABLE and self.process:
             current_memory_mb = self.process.memory_info().rss / (1024 * 1024)
             self.peak_memory_mb = max(self.peak_memory_mb, current_memory_mb)
+
+        high_water = _max_rss_mb()
+        if high_water is not None:
+            self.peak_memory_mb = max(self.peak_memory_mb, high_water)
         
         # Final GPU VRAM check
         if _TORCH_AVAILABLE and torch.cuda.is_available():
@@ -626,11 +681,11 @@ class SemanticEvaluator:
                 normalize_embeddings=True
             )
             
-            # Compute cosine similarity (since embeddings are normalized)
-            similarity = np.dot(pred_embedding, ref_embedding)
-            
-            # Clamp to [0, 1] (should already be in this range for normalized embeddings)
-            return float(np.clip(similarity, 0.0, 1.0))
+            # Cosine similarity of normalised embeddings, in [-1, 1].
+            # Not clipped to [0, 1]: negative similarity is a real signal, and
+            # clipping it away compresses GOM toward zero and hides the case
+            # where a prediction is actively unlike the reference.
+            return float(np.clip(similarity, -1.0, 1.0))
             
         except Exception as e:
             # Fallback to rule-based similarity if embedding fails
