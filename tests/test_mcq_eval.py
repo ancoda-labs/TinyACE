@@ -8,6 +8,11 @@ import pytest
 import numpy as np
 from unittest.mock import MagicMock, patch
 
+from edge_slm_ace.utils.mcq_eval import (
+    extract_mcq_options,
+    extract_mcq_options_with_indices,
+)
+
 
 class TestDetectChoiceMarker:
     """Tests for the ACR choice marker detection."""
@@ -474,3 +479,63 @@ class TestComputeMCQAggregateMetrics:
         assert agg["oma_accuracy"] == 0.5  # 1/2
         assert agg["avg_gom"] == 0.2  # (0.5 - 0.1) / 2
         assert agg["acr_rate"] == 0.5  # 1/2
+
+
+class TestOptionPermutation:
+    """Gold-answer position must not be predictable from storage order."""
+
+    def _example(self, idx):
+        return {
+            "id": f"sciq_{idx}",
+            "question": "q?",
+            "correct_answer": "gold",
+            "distractor1": "d1",
+            "distractor2": "d2",
+            "distractor3": "d3",
+        }
+
+    def test_storage_order_puts_gold_first(self):
+        """Without a seed the legacy layout pins gold to slot 0 (A)."""
+        for i in range(20):
+            _, gold_idx = extract_mcq_options_with_indices(self._example(i))
+            assert gold_idx == 0
+
+    def test_seeded_shuffle_spreads_gold_across_slots(self):
+        """With a seed, gold lands on every slot across a population."""
+        positions = {
+            extract_mcq_options_with_indices(self._example(i), shuffle_seed=42)[1]
+            for i in range(200)
+        }
+        assert positions == {0, 1, 2, 3}, \
+            f"Gold answer never reached some slots: {sorted(positions)}"
+
+    def test_permutation_is_deterministic(self):
+        """The same (seed, example) must render identically on every call."""
+        for i in range(20):
+            first = extract_mcq_options_with_indices(self._example(i), shuffle_seed=42)
+            second = extract_mcq_options_with_indices(self._example(i), shuffle_seed=42)
+            assert first == second
+
+    def test_permutation_preserves_content(self):
+        """Shuffling must not lose, duplicate or mislabel any option."""
+        for i in range(50):
+            example = self._example(i)
+            options, gold_idx = extract_mcq_options_with_indices(example, shuffle_seed=7)
+            assert sorted(options) == ["d1", "d2", "d3", "gold"]
+            assert options[gold_idx] == "gold"
+
+    def test_legacy_dict_extractor_also_shuffles(self):
+        """extract_mcq_options (A/B/C/D dict form) must shuffle too."""
+        letters = {
+            extract_mcq_options(self._example(i), shuffle_seed=42)[1]
+            for i in range(200)
+        }
+        assert letters == {"A", "B", "C", "D"}
+
+    def test_legacy_dict_extractor_keeps_gold_consistent(self):
+        """The returned gold letter must index the correct option text."""
+        for i in range(50):
+            options, gold_letter, gold_text = extract_mcq_options(
+                self._example(i), shuffle_seed=42
+            )
+            assert options[gold_letter] == gold_text == "gold"

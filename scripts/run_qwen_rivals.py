@@ -171,6 +171,7 @@ def run_single_experiment(
     contract: Dict[str, Any],
     device: str,
     output_dir: Path,
+    seed: int = DEFAULT_SEED,
 ) -> Tuple[List[Dict], Dict[str, Any]]:
     """
     Run a single experiment and return results with stability tracking.
@@ -228,6 +229,7 @@ def run_single_experiment(
                 model_id=model_id,
                 task_name=task_name,
                 mode="baseline",
+                option_shuffle_seed=seed,
             )
         else:  # ACE mode
             # Setup playbook
@@ -254,6 +256,7 @@ def run_single_experiment(
                 reflect_on_correct_every_n=contract["reflection"]["reflect_on_correct_every_n"],
                 prune_every_n=contract["reflection"]["prune_every_n"],
                 max_entries_per_domain=contract["reflection"]["max_entries_per_domain"],
+                option_shuffle_seed=seed,
             )
     
     wall_time = time.time() - start_time
@@ -786,6 +789,7 @@ def main():
                     contract=contract,
                     device=args.device,
                     output_dir=results_dir,
+                    seed=seed,
                 )
                 
                 all_results.extend(results)

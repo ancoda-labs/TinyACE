@@ -37,6 +37,27 @@ from edge_slm_ace.models.model_manager import generate, count_tokens
 from edge_slm_ace.memory.playbook import Playbook
 
 
+def _index_distribution(values, n: int = 4) -> Dict[str, float]:
+    """
+    Fraction of predictions landing on each option slot.
+
+    Used to detect positional answering: if the gold answer is uniform over
+    slots but predictions are not, the model is answering by position.
+    """
+    counts = [0] * n
+    total = 0
+    for value in values:
+        if value is None:
+            continue
+        idx = int(value)
+        if 0 <= idx < n:
+            counts[idx] += 1
+            total += 1
+    if total == 0:
+        return {}
+    return {"ABCD"[i]: counts[i] / total for i in range(n)}
+
+
 def run_dataset_baseline(
     model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,
@@ -46,6 +67,7 @@ def run_dataset_baseline(
     model_id: str,
     task_name: str,
     mode: str = "baseline",
+    option_shuffle_seed: Optional[int] = None,
 ) -> tuple[List[Dict], Dict]:
     """
     Run baseline evaluation (no ACE) on a dataset.
@@ -149,10 +171,14 @@ def run_dataset_baseline(
         if is_mcq_task and has_mcq_options(example):
             # Try new format first (options list + gold_option_idx)
             try:
-                mcq_options_list, gold_option_idx = extract_mcq_options_with_indices(example)
+                mcq_options_list, gold_option_idx = extract_mcq_options_with_indices(
+                    example, shuffle_seed=option_shuffle_seed
+                )
             except (ValueError, KeyError):
                 # Fall back to legacy format (correct_answer + distractors)
-                mcq_options_dict, gold_option, _ = extract_mcq_options(example)
+                mcq_options_dict, gold_option, _ = extract_mcq_options(
+                    example, shuffle_seed=option_shuffle_seed
+                )
         
         # Build prompt (with choices if options exist)
         if mcq_options_list:
@@ -313,6 +339,18 @@ def run_dataset_baseline(
                 summary["oma_accuracy"] = sum(oma_values) / len(oma_values)
             if gom_values:
                 summary["avg_gom"] = sum(gom_values) / len(gom_values)
+
+            # Position-bias diagnostics. With options permuted, gold should be
+            # ~uniform over slots; a lopsided `chosen_option_distribution`
+            # against a uniform `gold_option_distribution` means the model is
+            # picking by position rather than by content, and OMA should not be
+            # read as accuracy.
+            summary["chosen_option_distribution"] = _index_distribution(
+                r.get("chosen_option_idx") for r in results
+            )
+            summary["gold_option_distribution"] = _index_distribution(
+                r.get("gold_option_idx") for r in results
+            )
         
         if has_legacy_format:
             # Compute legacy format metrics (including acr_rate)
@@ -535,6 +573,7 @@ def run_dataset_ace(
     reflect_on_correct_every_n: int = 5,
     prune_every_n: int = 10,
     max_entries_per_domain: int = 32,
+    option_shuffle_seed: Optional[int] = None,
 ) -> tuple[List[Dict], Dict]:
     """
     Run ACE-style adaptive evaluation on a dataset.
@@ -650,10 +689,14 @@ def run_dataset_ace(
         if is_mcq_task and has_mcq_options(example):
             # Try new format first (options list + gold_option_idx)
             try:
-                mcq_options_list, gold_option_idx = extract_mcq_options_with_indices(example)
+                mcq_options_list, gold_option_idx = extract_mcq_options_with_indices(
+                    example, shuffle_seed=option_shuffle_seed
+                )
             except (ValueError, KeyError):
                 # Fall back to legacy format (correct_answer + distractors)
-                mcq_options_dict, gold_option, _ = extract_mcq_options(example)
+                mcq_options_dict, gold_option, _ = extract_mcq_options(
+                    example, shuffle_seed=option_shuffle_seed
+                )
         
         # Capture playbook state before processing
         playbook_before = {
@@ -960,6 +1003,18 @@ def run_dataset_ace(
                 summary["oma_accuracy"] = sum(oma_values) / len(oma_values)
             if gom_values:
                 summary["avg_gom"] = sum(gom_values) / len(gom_values)
+
+            # Position-bias diagnostics. With options permuted, gold should be
+            # ~uniform over slots; a lopsided `chosen_option_distribution`
+            # against a uniform `gold_option_distribution` means the model is
+            # picking by position rather than by content, and OMA should not be
+            # read as accuracy.
+            summary["chosen_option_distribution"] = _index_distribution(
+                r.get("chosen_option_idx") for r in results
+            )
+            summary["gold_option_distribution"] = _index_distribution(
+                r.get("gold_option_idx") for r in results
+            )
         
         if has_legacy_format:
             # Compute legacy format metrics (including acr_rate)

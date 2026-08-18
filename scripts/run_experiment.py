@@ -439,6 +439,7 @@ Examples:
                         model_id=config.model_id,
                         task_name=task_name,
                         mode=args.mode,
+                        option_shuffle_seed=args.seed,
                     )
                     playbook_stats = None
                     
@@ -501,6 +502,7 @@ Examples:
                         top_k=args.top_k,
                         prune_every_n=args.prune_every_n,
                         max_entries_per_domain=args.max_entries_per_domain,
+                        option_shuffle_seed=args.seed,
                     )
                     
                     playbook_stats = {

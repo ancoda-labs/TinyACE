@@ -25,9 +25,66 @@ Usage:
         )
 """
 
+import random
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
+
+
+def permutation_for(
+    example_id: str,
+    n_options: int = 4,
+    shuffle_seed: Optional[int] = None,
+) -> List[int]:
+    """
+    Return a deterministic permutation of option indices for one example.
+
+    SciQ (and the legacy `correct_answer` + `distractor1..3` layout it uses)
+    stores the gold answer first. Emitting options in storage order puts the
+    correct answer at position (A) for 100% of examples, which rewards any
+    model with a first-option bias and penalises any model without one. That
+    bias is not constant across prompt formats, so it does not cancel out
+    between a terse baseline arm and a verbose chain-of-thought arm.
+
+    Seeding on `(shuffle_seed, example_id)` keeps the permutation stable
+    across runs and across arms -- every arm sees the identical rendering of
+    each question -- while removing the positional artefact.
+
+    Args:
+        example_id: Stable identifier for the example.
+        n_options: Number of options (4 for SciQ).
+        shuffle_seed: Run seed. If None, storage order is preserved
+            (identity permutation) for backwards compatibility.
+
+    Returns:
+        List of source indices in presentation order, so presentation slot i
+        shows source option `perm[i]`.
+    """
+    if shuffle_seed is None:
+        return list(range(n_options))
+    order = list(range(n_options))
+    random.Random(f"{shuffle_seed}:{example_id}").shuffle(order)
+    return order
+
+
+def apply_permutation(
+    options: Sequence[str],
+    gold_idx: int,
+    perm: Sequence[int],
+) -> Tuple[List[str], int]:
+    """
+    Reorder options by `perm` and return the gold answer's new index.
+
+    Args:
+        options: Options in source order.
+        gold_idx: Index of the correct option in source order.
+        perm: Presentation order from `permutation_for`.
+
+    Returns:
+        Tuple of (reordered_options, new_gold_idx).
+    """
+    reordered = [options[i] for i in perm]
+    return reordered, list(perm).index(gold_idx)
 
 
 def is_sciq_task(task_name: str) -> bool:
@@ -75,79 +132,98 @@ def has_mcq_options(example: Dict) -> bool:
     )
 
 
-def extract_mcq_options(example: Dict) -> Tuple[Dict[str, str], str, str]:
+def extract_mcq_options(
+    example: Dict,
+    shuffle_seed: Optional[int] = None,
+) -> Tuple[Dict[str, str], str, str]:
     """
-    Extract MCQ options from a SciQ-format example (legacy format).
-    
+    Extract MCQ options from a SciQ-format example (legacy dict format).
+
     Converts SciQ format (correct_answer + 3 distractors) to standard
-    A/B/C/D option format. The correct answer is placed at a consistent
-    position (A) for deterministic behavior.
-    
+    A/B/C/D option format, with the gold answer placed at a per-example
+    pseudo-random position rather than always at (A). See `permutation_for`
+    for why the fixed position was a problem.
+
     Args:
         example: A SciQ-format example dict with keys:
             - correct_answer: The correct answer text
             - distractor1, distractor2, distractor3: Incorrect option texts
-            
+        shuffle_seed: Run seed for the position permutation. If None, the
+            gold answer stays at (A) -- only appropriate for unit tests.
+
     Returns:
         Tuple of (options_dict, gold_option, gold_text):
             - options_dict: {"A": text, "B": text, "C": text, "D": text}
-            - gold_option: The letter of the correct option (always "A")
+            - gold_option: The letter of the correct option
             - gold_text: The text of the correct answer
     """
     correct = example.get("correct_answer", "")
     d1 = example.get("distractor1", "")
     d2 = example.get("distractor2", "")
     d3 = example.get("distractor3", "")
-    
-    # Place correct answer at A for consistency
-    # Note: This is deterministic to ensure reproducible evaluation.
-    # In real MCQ scenarios, you might randomize option order.
-    options = {
-        "A": correct,
-        "B": d1,
-        "C": d2,
-        "D": d3,
-    }
-    
-    return options, "A", correct
+
+    perm = permutation_for(
+        str(example.get("id", "unknown")), n_options=4, shuffle_seed=shuffle_seed
+    )
+    ordered, gold_idx = apply_permutation([correct, d1, d2, d3], 0, perm)
+
+    letters = ["A", "B", "C", "D"]
+    options = {letter: text for letter, text in zip(letters, ordered)}
+
+    return options, letters[gold_idx], correct
 
 
-def extract_mcq_options_with_indices(example: Dict) -> Tuple[List[str], int]:
+def extract_mcq_options_with_indices(
+    example: Dict,
+    shuffle_seed: Optional[int] = None,
+) -> Tuple[List[str], int]:
     """
-    Extract MCQ options from an example in the new format (options list + gold_option_idx).
-    
-    Supports two formats:
+    Extract MCQ options as a (options, gold_index) pair.
+
+    Supports two storage formats:
     1. New format: options (list of 4 strings) + gold_option_idx (int 0-3)
-    2. Legacy format: correct_answer + distractor1/2/3 (converted to new format)
-    
+    2. Legacy format: correct_answer + distractor1/2/3
+
+    In both cases the options are re-ordered by a deterministic per-example
+    permutation, because both formats in this repo store the gold answer
+    first: every row of sciq_test.json is legacy format, and every row of
+    sciq_mcq_test.jsonl has gold_option_idx == 0. Presenting them in storage
+    order puts the answer at (A) 100% of the time.
+
     Args:
-        example: A dataset example dict with either:
-            - New format: "options" (list) and "gold_option_idx" (int)
-            - Legacy format: "correct_answer" and "distractor1/2/3"
-            
+        example: A dataset example dict in either format.
+        shuffle_seed: Run seed for the position permutation. If None, storage
+            order is preserved -- only appropriate for unit tests.
+
     Returns:
-        Tuple of (options_list, gold_option_idx):
-            - options_list: List of 4 option strings ["option0", "option1", "option2", "option3"]
-            - gold_option_idx: Integer index (0-3) of the correct option
+        Tuple of (options_list, gold_option_idx) in presentation order.
     """
+    options = None
+    gold_idx = None
+
     # Check for new format first
     if "options" in example and isinstance(example.get("options"), list):
-        options = example["options"]
-        if len(options) == 4 and "gold_option_idx" in example:
-            gold_idx = example["gold_option_idx"]
-            if 0 <= gold_idx < 4:
-                return options, gold_idx
-    
+        candidate = example["options"]
+        if len(candidate) == 4 and "gold_option_idx" in example:
+            candidate_gold = example["gold_option_idx"]
+            if 0 <= candidate_gold < 4:
+                options, gold_idx = list(candidate), candidate_gold
+
     # Fall back to legacy format: correct_answer + distractors
-    if "correct_answer" in example and "distractor1" in example:
-        correct = example.get("correct_answer", "")
-        d1 = example.get("distractor1", "")
-        d2 = example.get("distractor2", "")
-        d3 = example.get("distractor3", "")
-        
-        # Convert to list format: correct answer at index 0
-        options = [correct, d1, d2, d3]
-        return options, 0
+    if options is None and "correct_answer" in example and "distractor1" in example:
+        options = [
+            example.get("correct_answer", ""),
+            example.get("distractor1", ""),
+            example.get("distractor2", ""),
+            example.get("distractor3", ""),
+        ]
+        gold_idx = 0
+
+    if options is not None:
+        perm = permutation_for(
+            str(example.get("id", "unknown")), n_options=4, shuffle_seed=shuffle_seed
+        )
+        return apply_permutation(options, gold_idx, perm)
     
     # No options found
     raise ValueError("Example does not contain MCQ options in supported formats")
