@@ -65,6 +65,7 @@ from edge_slm_ace.core.runner import run_dataset_baseline, run_dataset_ace
 from edge_slm_ace.utils.device_utils import get_device, resolve_device_override
 from edge_slm_ace.utils.metrics import PeakMemoryTracker, SemanticEvaluator
 from edge_slm_ace.utils.repro import DEFAULT_SEED, capture_environment, set_seed
+from edge_slm_ace.utils.stats import wilson_interval
 
 
 # Default contract configuration
@@ -289,6 +290,17 @@ def run_single_experiment(
     summary["peak_memory_mb"] = memory_tracker.peak_memory_mb
     summary["peak_gpu_memory_mb"] = memory_tracker.peak_gpu_memory_mb
     
+    # Semantic similarity. Previously never computed here -- it is only
+    # produced by run_experiment.py -- so the SemSim column of the generated
+    # LaTeX table was silently 0.000 for every row, courtesy of a
+    # `.get("avg_semantic_similarity", 0) or 0` fallback downstream.
+    semantic_scores = [
+        r["semantic_score"] for r in results if r.get("semantic_score") is not None
+    ]
+    summary["avg_semantic_similarity"] = (
+        float(np.mean(semantic_scores)) if semantic_scores else None
+    )
+
     # Compute mean tokens
     if results:
         summary["avg_prompt_tokens"] = np.mean([r.get("prompt_tokens", 0) for r in results])
@@ -510,11 +522,13 @@ def generate_latex_table(summaries: List[Dict], output_path: Path):
     latex_lines = [
         r"\begin{table}[h]",
         r"\centering",
-        r"\caption{Qwen2.5 Rival Comparison on SciQ (n=50). OMA = Option-Mapped Accuracy, SemSim = Semantic Similarity.}",
+        r"\caption{Qwen2.5 Rival Comparison on SciQ. OMA = Option-Mapped "
+        r"Accuracy with a 95\% Wilson interval; SemSim = lexical overlap with "
+        r"the reference, not a correctness measure.}",
         r"\label{tab:qwen_rivals}",
         r"\begin{tabular}{llcccc}",
         r"\toprule",
-        r"Model & Config & OMA & SemSim & Latency (s) & WM Tokens \\",
+        r"Model & Config & OMA [95\% CI] & SemSim & Latency (s) & WM Tokens \\",
         r"\midrule",
     ]
     
@@ -523,9 +537,21 @@ def generate_latex_table(summaries: List[Dict], output_path: Path):
         model = row["model_name"]
         config = row["mode_name"].replace("_", " ").replace("tinyace ", "TinyACE ")
         oma = row.get("oma_accuracy", row.get("accuracy", 0))
-        semsim = row.get("avg_semantic_similarity", 0) or 0
         latency = row.get("avg_latency_sec", row.get("avg_latency_ms", 0) / 1000)
         wm_tokens = row.get("wm_tokens", 0)
+
+        # A missing metric renders as "--", never as 0.000. Silent defaults
+        # are how a column of zeros reached a paper-ready table unnoticed.
+        semsim = row.get("avg_semantic_similarity")
+        semsim_cell = "--" if semsim is None or pd.isna(semsim) else f"{semsim:.3f}"
+
+        # Wilson interval, so the table carries its own noise floor.
+        n = int(row.get("num_examples", 0) or 0)
+        if n > 0 and oma is not None:
+            low, high = wilson_interval(round(oma * n), n)
+            oma_cell = f"{oma:.3f} [{low:.2f},{high:.2f}]"
+        else:
+            oma_cell = f"{oma:.3f}" if oma is not None else "--"
         
         # Add horizontal line between model groups
         if prev_model and model != prev_model:
@@ -533,7 +559,8 @@ def generate_latex_table(summaries: List[Dict], output_path: Path):
         prev_model = model
         
         latex_lines.append(
-            f"{model} & {config} & {oma:.3f} & {semsim:.3f} & {latency:.2f} & {wm_tokens} \\\\"
+            f"{model} & {config} & {oma_cell} & {semsim_cell} & "
+            f"{latency:.2f} & {wm_tokens} \\\\"
         )
     
     latex_lines.extend([
@@ -552,6 +579,16 @@ def generate_latex_table(summaries: List[Dict], output_path: Path):
     return latex_content
 
 
+def _oma_of(frame) -> Optional[float]:
+    """Read a frame's OMA, falling back to plain accuracy."""
+    for column in ("oma_accuracy", "accuracy"):
+        if column in frame.columns:
+            value = frame[column].values[0]
+            if value is not None and not pd.isna(value):
+                return float(value)
+    return None
+
+
 def generate_latex_summary_text(summaries: List[Dict], output_path: Path):
     """
     Generate summary text paragraph for the paper.
@@ -567,57 +604,53 @@ def generate_latex_summary_text(summaries: List[Dict], output_path: Path):
         "",
     ]
     
-    # Small model comparison
-    small_df = df[df["model_params"].isin(["1.1B", "1.5B"])]
-    if not small_df.empty:
-        for model in small_df["model_name"].unique():
-            model_df = small_df[small_df["model_name"] == model]
+    # One loop over size classes. This was three copy-pasted 20-line blocks
+    # differing only in the parameter filter and the label.
+    size_classes = [
+        ("small", ["1.1B", "1.5B"]),
+        ("medium", ["3B", "3.8B"]),
+        ("large", ["7B"]),
+    ]
+
+    for label, params in size_classes:
+        class_df = df[df["model_params"].isin(params)]
+        if class_df.empty:
+            continue
+
+        for model in class_df["model_name"].unique():
+            model_df = class_df[class_df["model_name"] == model]
             baseline = model_df[model_df["mode_name"] == "baseline"]
             wm512 = model_df[model_df["mode_name"] == "tinyace_wm_512"]
-            if len(baseline) > 0 and len(wm512) > 0:
-                baseline_oma = baseline["oma_accuracy"].values[0] if "oma_accuracy" in baseline.columns else baseline["accuracy"].values[0]
-                wm512_oma = wm512["oma_accuracy"].values[0] if "oma_accuracy" in wm512.columns else wm512["accuracy"].values[0]
-                diff = wm512_oma - baseline_oma
-                direction = "improvement" if diff > 0 else "degradation"
-                text_lines.append(
-                    f"For {model} (small class), TinyACE WM-512 shows a {abs(diff)*100:.1f}\\% {direction} "
-                    f"(baseline: {baseline_oma*100:.1f}\\%, TinyACE: {wm512_oma*100:.1f}\\%)."
-                )
-    
-    # Medium model comparison
-    medium_df = df[df["model_params"].isin(["3B", "3.8B"])]
-    if not medium_df.empty:
-        for model in medium_df["model_name"].unique():
-            model_df = medium_df[medium_df["model_name"] == model]
-            baseline = model_df[model_df["mode_name"] == "baseline"]
-            wm512 = model_df[model_df["mode_name"] == "tinyace_wm_512"]
-            if len(baseline) > 0 and len(wm512) > 0:
-                baseline_oma = baseline["oma_accuracy"].values[0] if "oma_accuracy" in baseline.columns else baseline["accuracy"].values[0]
-                wm512_oma = wm512["oma_accuracy"].values[0] if "oma_accuracy" in wm512.columns else wm512["accuracy"].values[0]
-                diff = wm512_oma - baseline_oma
-                direction = "improvement" if diff > 0 else "degradation"
-                text_lines.append(
-                    f"For {model} (medium class), TinyACE WM-512 shows a {abs(diff)*100:.1f}\\% {direction} "
-                    f"(baseline: {baseline_oma*100:.1f}\\%, TinyACE: {wm512_oma*100:.1f}\\%)."
-                )
-    
-    # Large model comparison
-    large_df = df[df["model_params"] == "7B"]
-    if not large_df.empty:
-        for model in large_df["model_name"].unique():
-            model_df = large_df[large_df["model_name"] == model]
-            baseline = model_df[model_df["mode_name"] == "baseline"]
-            wm512 = model_df[model_df["mode_name"] == "tinyace_wm_512"]
-            if len(baseline) > 0 and len(wm512) > 0:
-                baseline_oma = baseline["oma_accuracy"].values[0] if "oma_accuracy" in baseline.columns else baseline["accuracy"].values[0]
-                wm512_oma = wm512["oma_accuracy"].values[0] if "oma_accuracy" in wm512.columns else wm512["accuracy"].values[0]
-                diff = wm512_oma - baseline_oma
-                direction = "improvement" if diff > 0 else "degradation"
-                text_lines.append(
-                    f"For {model} (large class), TinyACE WM-512 shows a {abs(diff)*100:.1f}\\% {direction} "
-                    f"(baseline: {baseline_oma*100:.1f}\\%, TinyACE: {wm512_oma*100:.1f}\\%)."
-                )
-    
+            if baseline.empty or wm512.empty:
+                continue
+
+            baseline_oma = _oma_of(baseline)
+            wm512_oma = _oma_of(wm512)
+            if baseline_oma is None or wm512_oma is None:
+                continue
+
+            diff = wm512_oma - baseline_oma
+            direction = "improvement" if diff > 0 else "degradation"
+
+            # Attach the noise floor. A bare "+4.0% improvement" at these
+            # sample sizes is two questions and is not distinguishable from
+            # chance; stating it without an interval overclaims.
+            n = int(baseline["num_examples"].values[0] or 0)
+            if n > 0:
+                low, high = wilson_interval(round(wm512_oma * n), n)
+                interval = f" [95\\% CI {low * 100:.1f}--{high * 100:.1f}\\%]"
+            else:
+                interval = ""
+
+            text_lines.append(
+                f"For {model} ({label} class), TinyACE WM-512 shows a "
+                f"{abs(diff) * 100:.1f} percentage point {direction} "
+                f"(baseline: {baseline_oma * 100:.1f}\\%, "
+                f"TinyACE: {wm512_oma * 100:.1f}\\%{interval}, n={n}). "
+                f"Run scripts/compare_arms.py for the paired significance test "
+                f"before treating this as a result."
+            )
+
     text_content = "\n".join(text_lines)
     
     output_path.parent.mkdir(parents=True, exist_ok=True)
