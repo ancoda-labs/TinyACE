@@ -15,6 +15,7 @@ from edge_slm_ace.core.ace_roles import (
     build_self_refine_critique_prompt,
     build_self_refine_rewrite_prompt,
     extract_answer,
+    parse_used_strategies,
 )
 from edge_slm_ace.utils.config import ModelConfig
 from edge_slm_ace.utils.metrics import (
@@ -922,11 +923,31 @@ def run_dataset_ace(
             reflection_text = ""
             reflection_latency_ms = 0.0
         
-        # Mark used entries (for working memory recency tracking)
-        # Also update success/failure counts based on correctness
+        # Credit assignment.
+        #
+        # Crediting every retrieved entry equally means each live entry gets
+        # the same increment on every step, so their success ratios all
+        # converge to the model's running accuracy and differ only by birth
+        # time. The alpha and beta terms of the retention score then carry
+        # almost no signal that distinguishes one entry from another, which is
+        # a structural reason the scoring ablations show no effect.
+        #
+        # Prefer the entries the Generator says it applied. Fall back to
+        # crediting everything retrieved only when it gave no citation, and
+        # record which happened so the two can be told apart in analysis.
+        cited = parse_used_strategies(raw_answer, len(used_entry_ids))
+        if cited is None:
+            credited_ids = used_entry_ids
+            credit_mode = "uniform"
+        else:
+            credited_ids = [used_entry_ids[i] for i in cited if i < len(used_entry_ids)]
+            credit_mode = "cited"
+
         if enable_learning:
+            # Recency tracks what was shown; feedback tracks what was used.
             for entry_id in used_entry_ids:
                 playbook.mark_entry_used(entry_id, step)
+            for entry_id in credited_ids:
                 playbook.record_feedback(entry_id, helpful=correct)
         
         # Step 6: Occasional pruning
@@ -949,11 +970,26 @@ def run_dataset_ace(
         total_evictions = num_evictions + evictions_during_add
         
         # Log playbook stats for this step
+        # Spread of retention scores across live entries. If this stays near
+        # zero the score is not discriminating between lessons and the
+        # "retention scoring" contribution is decorative, whatever the
+        # ablation table says.
+        live_scores = [
+            e.score(step, playbook.scoring_params)
+            for e in playbook.entries
+            if e.domain == domain
+        ]
+        score_std = statistics.pstdev(live_scores) if len(live_scores) > 1 else 0.0
+
         playbook_log.append({
             "step_index": step,
             "num_entries": playbook_after["num_entries"],
             "total_tokens": playbook_after["total_tokens"],
             "num_evictions": total_evictions,
+            "retention_score_std": score_std,
+            "num_retrieved": len(used_entry_ids),
+            "num_credited": len(credited_ids),
+            "credit_mode": credit_mode,
         })
         
         # Calculate end-to-end latency
@@ -986,6 +1022,9 @@ def run_dataset_ace(
             "context": context or "",
             "reflection_latency_ms": reflection_latency_ms,
             "reflected": should_reflect,
+            "num_retrieved": len(used_entry_ids),
+            "num_credited": len(credited_ids),
+            "credit_mode": credit_mode,
             "semantic_score": score,
             "bleu_score": bleu_score,
             # Generation provenance: a truncated prompt or a missing chat
@@ -1077,6 +1116,19 @@ def run_dataset_ace(
             and LessonRelevance.get_instance().available
         ),
         "relevance_weight": playbook.scoring_params.relevance_weight,
+        # Share of steps where the Generator named the strategies it used. A
+        # low rate means credit was mostly assigned uniformly and the
+        # success/failure terms should not be read as per-lesson evidence.
+        "citation_rate": (
+            sum(1 for r in playbook_log if r["credit_mode"] == "cited") / len(playbook_log)
+            if playbook_log else 0.0
+        ),
+        # Mean spread of retention scores. Near zero means the score does not
+        # distinguish between lessons.
+        "mean_retention_score_std": (
+            statistics.mean(r["retention_score_std"] for r in playbook_log)
+            if playbook_log else 0.0
+        ),
         "playbook_size": len(playbook.entries),
         "final_playbook_num_entries": len(playbook.entries),
         "final_playbook_total_tokens": playbook.total_tokens,

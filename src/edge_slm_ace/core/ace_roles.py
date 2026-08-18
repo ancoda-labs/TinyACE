@@ -136,6 +136,14 @@ def build_generator_prompt(
     reasoning_instructions += "[Show your step-by-step reasoning here]\n\n"
     reasoning_instructions += "Answer:\n"
     reasoning_instructions += "[Provide your final answer here]\n"
+    # Ask which strategies were actually applied, so credit can be attributed
+    # to those rather than spread evenly over everything retrieved.
+    if top_strategies:
+        reasoning_instructions += "\nUsed strategies:\n"
+        reasoning_instructions += (
+            "[Numbers of the strategies above that you actually applied, "
+            'e.g. "1, 3". Write "none" if none of them helped.]\n'
+        )
     
     # Choices use the identical block the baseline arm renders, so the two
     # arms differ only in the playbook and the reasoning scaffold.
@@ -393,6 +401,46 @@ def extract_answer(raw_output: str) -> Tuple[str, Optional[str]]:
     if not answer:
         answer = (raw_output or "").strip()
     return answer, reasoning
+
+
+def parse_used_strategies(text: str, n_strategies: int) -> Optional[List[int]]:
+    """
+    Parse the strategy numbers the Generator says it applied.
+
+    Args:
+        text: Raw generator output.
+        n_strategies: How many strategies were offered, for range checking.
+
+    Returns:
+        Zero-based indices of the cited strategies; an empty list when the
+        model explicitly said "none"; or None when no citation line was found,
+        which the caller should treat as "no attribution available" rather
+        than as "nothing was used".
+    """
+    if not text or n_strategies <= 0:
+        return None
+
+    match = re.search(
+        r"used\s+strateg(?:y|ies)\s*[:\-]?\s*(.+)", text, re.IGNORECASE
+    )
+    if not match:
+        return None
+
+    line = match.group(1).splitlines()[0].strip()
+
+    if re.search(r"\bnone\b|\bn/?a\b", line, re.IGNORECASE):
+        return []
+
+    indices = []
+    for token in re.findall(r"\d+", line):
+        number = int(token)
+        if 1 <= number <= n_strategies:
+            zero_based = number - 1
+            if zero_based not in indices:
+                indices.append(zero_based)
+
+    # A citation line with no parseable numbers tells us nothing.
+    return indices or None
 
 
 def parse_reflector_output_to_lessons(text: str) -> List[str]:

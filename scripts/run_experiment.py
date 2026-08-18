@@ -582,7 +582,14 @@ Examples:
                     if playbook_log and args.metrics_path:
                         playbook_log_path = Path(args.metrics_path).parent / "playbook_log.csv"
                         with open(playbook_log_path, "w", newline="", encoding="utf-8") as f:
-                            writer = csv.DictWriter(f, fieldnames=["step_index", "num_entries", "total_tokens", "num_evictions"])
+                            writer = csv.DictWriter(
+                                f,
+                                fieldnames=[
+                                    "step_index", "num_entries", "total_tokens",
+                                    "num_evictions", "retention_score_std",
+                                    "num_retrieved", "num_credited", "credit_mode",
+                                ],
+                            )
                             writer.writeheader()
                             writer.writerows(playbook_log)
                         if not args.quiet:

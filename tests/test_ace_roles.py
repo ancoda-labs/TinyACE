@@ -3,9 +3,12 @@
 import pytest
 
 from edge_slm_ace.core.ace_roles import (
+    build_generator_prompt,
     build_self_refine_critique_prompt,
     build_self_refine_rewrite_prompt,
+    parse_used_strategies,
 )
+from edge_slm_ace.memory.playbook import Playbook
 
 from edge_slm_ace.core.ace_roles import (
     parse_generator_output,
@@ -257,3 +260,51 @@ class TestSelfRefinePrompts:
             ground_truth="carbon dioxide",
         )
         assert "Correct Answer: carbon dioxide" in prompt
+
+
+class TestParseUsedStrategies:
+    """Credit must go to the lessons the model says it applied."""
+
+    def test_parses_a_citation_list(self):
+        text = "Reasoning: ...\nAnswer: B\nUsed strategies: 1, 3"
+        assert parse_used_strategies(text, 5) == [0, 2]
+
+    def test_singular_wording_is_accepted(self):
+        assert parse_used_strategies("Used strategy: 2", 5) == [1]
+
+    def test_explicit_none_is_an_empty_credit_set(self):
+        """Distinct from 'no citation': the model said nothing helped."""
+        assert parse_used_strategies("Used strategies: none", 5) == []
+
+    def test_missing_citation_returns_none(self):
+        """None means 'no attribution available', not 'nothing was used'."""
+        assert parse_used_strategies("Answer: B", 5) is None
+
+    def test_out_of_range_numbers_are_rejected(self):
+        assert parse_used_strategies("Used strategies: 9", 5) is None
+
+    def test_duplicates_are_collapsed(self):
+        assert parse_used_strategies("Used strategies: 2, 2, 3", 5) == [1, 2]
+
+    def test_only_the_citation_line_is_read(self):
+        text = "Used strategies: 1\nThen I checked equation 4 again."
+        assert parse_used_strategies(text, 5) == [0]
+
+    def test_no_strategies_offered_means_nothing_to_cite(self):
+        assert parse_used_strategies("Used strategies: 1", 0) is None
+
+
+class TestGeneratorCitationPrompt:
+    def test_prompt_requests_citations_when_strategies_exist(self):
+        playbook = Playbook()
+        playbook.add_entry("science", "For wind questions, apply the Coriolis effect.", step=1)
+
+        prompt = build_generator_prompt("science", playbook, "Why does wind curve?")
+
+        assert "Used strategies:" in prompt
+
+    def test_prompt_omits_citation_block_when_playbook_is_empty(self):
+        """The control arm shows no strategies, so it must not ask for them."""
+        prompt = build_generator_prompt("science", Playbook(), "Why does wind curve?")
+
+        assert "Used strategies:" not in prompt
