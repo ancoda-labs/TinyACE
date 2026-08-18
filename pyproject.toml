@@ -2,20 +2,14 @@
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["edge_slm_ace"]
-
-[tool.setuptools.package-dir]
-"" = "src"
-
 [project]
 name = "edge-slm-ace"
 version = "0.1.0"
 description = "Domain-Specific Benchmarking of Small Language Models for Edge Devices with Agentic Context Engineering"
 authors = [
-    {name = "Suryodaya", email = "suryodaya@example.com"},
-    {name = "Sathwik", email = "sathwik@example.com"},
-    {name = "Archit", email = "archit@example.com"},
+    {name = "Suryodaya Shahi"},
+    {name = "Sathwik"},
+    {name = "Archit"},
 ]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,18 +17,41 @@ license = {text = "Apache-2.0"}
 dependencies = [
     "torch>=2.0.0",
     "transformers>=4.35.0",
+    "accelerate>=0.24.0",
     "pandas>=2.0.0",
-    "tqdm>=4.66.0",
+    "numpy>=1.24.0",
+    "pyyaml>=6.0",
+    "psutil>=5.9.0",
 ]
 
 [project.optional-dependencies]
+metrics = [
+    "sacrebleu>=2.3.0",
+    "sentence-transformers>=2.2.0",
+    "scikit-learn>=1.3.0",
+    "statsmodels>=0.14.0",
+]
+plots = [
+    "matplotlib>=3.7.0",
+    "seaborn>=0.12.0",
+]
 dev = [
     "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
     "black>=23.0.0",
+    "flake8>=6.1.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/SirAlchemist1/edge-slm-ace"
+Issues = "https://github.com/SirAlchemist1/edge-slm-ace/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.black]
 line-length = 100
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
