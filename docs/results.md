@@ -4,8 +4,8 @@
 >
 > Every number below was produced by a pipeline with defects that change the
 > measurements themselves. They are retained for provenance only and must not
-> be cited, quoted or carried into the paper. See `docs/code-review.md` for the
-> full analysis; the short version:
+> be cited, quoted or carried into the paper. `CHANGELOG.md` lists every defect;
+> the short version:
 >
 > 1. **The gold answer sat at option (A) in 100% of examples.** Verified:
 >    1000/1000 rows of `sciq_test.json`. Any model with a first-option bias

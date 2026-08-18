@@ -51,8 +51,8 @@ Instead of updating model weights, TinyACE evolves the prompt context through a 
 > | 7 | n=50, no confidence intervals, no significance test | Every reported delta was 1-3 questions, inside a +/-12pp noise floor |
 > | 8 | Ablations compared against **baseline** instead of full TinyACE | Under the correct reference, two of the four ablations changed *nothing* |
 >
-> See [docs/code-review.md](docs/code-review.md) for the full analysis and
-> [docs/results.md](docs/results.md) for the withdrawn tables.
+> `CHANGELOG.md` lists every defect and its fix;
+> [docs/results.md](docs/results.md) has the withdrawn tables.
 
 ### Re-running the evaluation
 
@@ -60,14 +60,23 @@ Instead of updating model weights, TinyACE evolves the prompt context through a 
 # 1. Full grid, seeded, at a sample size that can resolve an effect
 python -m scripts.run_eval_grid --config configs/experiment_grid.yaml --seed 42
 
-# 2. Check every delta before believing it
-python -m scripts.compare_arms --results-root results --reference cot_control
-
-# 3. Ablations belong against full TinyACE, not against baseline
-python -m scripts.compare_arms --results-root results --reference tinyace_wm_256
+# 2. Check every delta before believing it. With no --reference, each arm is
+#    paired with the one reporting.reference_for() names for it: ACE arms
+#    against cot_control, ablations against tinyace_wm_256. All comparisons
+#    printed together are Holm-corrected as one family.
+python -m scripts.compare_arms --results-root results
 ```
 
-Repeat step 1 with at least three seeds and report mean +/- std.
+The grid layout has no seed segment, so a multi-seed study needs one root per
+seed:
+
+```bash
+make grid SEED=42 RESULTS=results/seed42
+make grid SEED=43 RESULTS=results/seed43
+make grid SEED=44 RESULTS=results/seed44
+```
+
+Report mean +/- std across seeds.
 
 ### Arms
 
@@ -75,7 +84,8 @@ Repeat step 1 with at least three seeds and report mean +/- std.
 |---|---|
 | `baseline` | Terse prompt, no playbook |
 | `cot_control` | **The ACE prompt scaffold with an empty playbook.** The claim about the playbook is `ace - cot_control`, not `ace - baseline` |
-| `ace` | Full system (`--ace-mode ace_full` or `ace_working_memory`) |
+| `ace` | Full system (`--ace-mode ace_full` or `ace_working_memory`). Learns online from the split it is scored on |
+| `ace` + `--playbook-mode frozen` | Playbook adapted on `sciq_val`, frozen, scored read-only on `sciq_test`. **The preferred protocol** — `make adapt && make evaluate` |
 | `self_refine` | Critique-and-rewrite using only the model's own output |
 | `self_refine_oracle` | Same, but shown the gold answer. An **upper bound**, not a baseline |
 
@@ -97,7 +107,7 @@ flowchart TB
         Ret -->|Context| G[Generator]
         G -->|Answer| Eval{Evaluator}
         Eval -->|Correct| Update[Update Stats]
-        Eval -->|Incorrect| Ref[Reflector]
+        Eval -->|Incorrect, or every Nth correct| Ref[Reflector]
         Ref -->|Lessons| Cur[Curator]
         Cur -->|Filter & Add| P
         Update --> P
@@ -111,6 +121,9 @@ Lessons are scored and evicted based on:
 $$S(l_i, t) = \alpha \cdot \frac{N_{succ}}{N_{used}+\epsilon} - \beta \cdot \frac{N_{fail}}{N_{used}+\epsilon} + \gamma \cdot e^{-\lambda(t-t_{last})} - \delta \cdot V(l_i)$$
 
 Where:
+Defaults below; each is a CLI flag (`--alpha`, `--beta`, ...) forwarded from the
+config's `scoring:` block, and the resolved values are written into `metrics.json`.
+
 - **Success Term** ($\alpha=1.0$): Rewards entries leading to correct answers
 - **Failure Term** ($\beta=0.5$): Penalizes entries leading to incorrect answers
 - **Recency Term** ($\gamma=0.3$): Bonus for recently used entries
@@ -152,8 +165,8 @@ edge-slm-ace/
 ├── data/tasks/            Datasets
 ├── docs/                  See docs/README.md
 ├── paper/                 tinyace.pdf
-├── tests/                 175 tests
-└── Makefile               make check | smoke | grid | report | figures
+├── tests/                 Unit tests + static entrypoint guards
+└── Makefile               make check | smoke | adapt | evaluate | grid | report | figures
 ```
 
 ---
@@ -171,30 +184,35 @@ cd edge-slm-ace
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install dependencies
-pip install -r requirements.txt
-pip install -e .
+# Editable install with every extra. Without the `metrics` extra there is no
+# embedding backend, and retrieval silently degrades to retention-only ranking.
+make install
 ```
 
 ### Run a Single Experiment
 
 ```bash
-# Baseline evaluation
+# Baseline. --output-path is required; the {model}/{task}/{arm}/{device} layout
+# is what everything downstream reads the arm and device from.
 python -m scripts.run_experiment \
   --model-id microsoft/Phi-3-mini-4k-instruct \
-  --task-name sciq_test \
-  --mode baseline \
-  --device cuda
+  --task-name sciq_test --mode baseline --device cuda \
+  --output-path results/phi_3_mini/sciq_test/baseline/cuda/results.csv \
+  --metrics-path results/phi_3_mini/sciq_test/baseline/cuda/metrics.json \
+  --predictions-path results/phi_3_mini/sciq_test/baseline/cuda/predictions.jsonl
 
-# ACE Working Memory (256 token budget)
+# ACE working memory. --playbook-path is required for --mode ace.
 python -m scripts.run_experiment \
   --model-id microsoft/Phi-3-mini-4k-instruct \
-  --task-name sciq_test \
-  --mode ace \
-  --ace-mode ace_working_memory \
-  --token-budget 256 \
-  --device cuda
+  --task-name sciq_test --mode ace --ace-mode ace_working_memory \
+  --token-budget 256 --device cuda \
+  --playbook-path results/phi_3_mini/sciq_test/tinyace_wm_256/cuda/playbook.jsonl \
+  --output-path results/phi_3_mini/sciq_test/tinyace_wm_256/cuda/results.csv \
+  --metrics-path results/phi_3_mini/sciq_test/tinyace_wm_256/cuda/metrics.json \
+  --predictions-path results/phi_3_mini/sciq_test/tinyace_wm_256/cuda/predictions.jsonl
 ```
+
+In practice use `make grid`, which builds these paths for every cell.
 
 ### Run Full Evaluation Grid
 
@@ -222,9 +240,6 @@ Compare TinyACE against Qwen2.5 models (parameter-matched rivals to TinyLlama, P
 
 ```bash
 # Run all Qwen2.5 rival experiments
-python -m scripts.run_qwen_rivals
-
-# Or use the shell script
 python -m scripts.run_qwen_rivals
 
 # Dry run (preview what would be run)

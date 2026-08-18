@@ -134,18 +134,32 @@ At n=50 the 95% Wilson interval on an accuracy near 0.74 spans roughly ±12
 percentage points, which is wider than any effect this project has reported.
 
 - Use **n ≥ 500**. `sciq_test` has 1000 examples.
-- Run **≥ 3 seeds** and report mean ± std.
+- Run **≥ 3 seeds** and report mean ± std. The results layout has no seed
+  segment, so give each seed its own root or the second one overwrites the
+  first:
+
+  ```bash
+  make grid SEED=42 RESULTS=results/seed42
+  make grid SEED=43 RESULTS=results/seed43
+  ```
 - Every accuracy ships with a Wilson interval (`oma_ci`).
 - Compare arms with the **exact McNemar test** — the arms answer identical
   items, so the comparison is paired and only discordant pairs carry
   information.
+
+- Correct for **multiple comparisons**. Every comparison printed in one
+  invocation is one family, Holm-adjusted; ten arms against a reference give
+  roughly a 40% chance of at least one p<0.05 under the null. Splitting a sweep
+  across invocations to shrink the family hides the count rather than reducing
+  it.
 
 ```bash
 python -m scripts.compare_arms --results-root results
 ```
 
 The output states `b`, `c` and `n_discordant`, which make the effective sample
-size visible. A difference is a result only if it survives this.
+size visible, and `p_adjusted` alongside the raw p. A difference is a result
+only if it survives this.
 
 ---
 

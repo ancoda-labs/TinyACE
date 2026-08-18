@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed — follow-up review (`docs/code-review-followup.md`)
+### Fixed — second review pass
 
 A second review of the state the first audit's repairs left behind. All 14
 findings addressed, plus three defects the fixes themselves surfaced.
@@ -75,8 +75,8 @@ findings addressed, plus three defects the fixes themselves surfaced.
 
 - **All results reported in 0.1.0.** They were produced by a pipeline with
   defects that change the measurements themselves, not their presentation.
-  See `docs/results.md` for the annotated tables and `docs/code-review.md`
-  for the audit. The framework is fixed; the runs have not been redone.
+  See `docs/results.md` for the annotated tables, and the Fixed sections
+  below for the defects. The framework is fixed; the runs have not been redone.
 
 ### Fixed — measurement
 

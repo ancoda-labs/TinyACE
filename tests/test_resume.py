@@ -69,34 +69,44 @@ class TestRecomputeCorrectness:
 class TestCompletedCell:
     COMMIT = "abc123"
 
-    def complete(self, tmp_path, commit=COMMIT):
+    SEED = 42
+
+    def complete(self, tmp_path, commit=COMMIT, seed=SEED):
         (tmp_path / "results.csv").write_text("qid\nq1\n", encoding="utf-8")
         write_jsonl(tmp_path / "predictions.jsonl", [{"qid": "q1"}])
         (tmp_path / "metrics.json").write_text(
-            json.dumps({"environment": {"git_commit": commit}}), encoding="utf-8"
+            json.dumps({"seed": seed, "environment": {"git_commit": commit}}), encoding="utf-8"
         )
         return tmp_path
 
     def test_empty_directory_is_not_complete(self, tmp_path):
-        assert completed_cell(tmp_path, self.COMMIT) is False
+        assert completed_cell(tmp_path, self.COMMIT, self.SEED) is False
 
     def test_all_three_artefacts_from_this_commit(self, tmp_path):
-        assert completed_cell(self.complete(tmp_path), self.COMMIT) is True
+        assert completed_cell(self.complete(tmp_path), self.COMMIT, self.SEED) is True
 
     def test_a_different_commit_is_not_a_result_for_this_one(self, tmp_path):
-        assert completed_cell(self.complete(tmp_path, "deadbeef"), self.COMMIT) is False
+        assert completed_cell(self.complete(tmp_path, "deadbeef"), self.COMMIT, self.SEED) is False
 
     def test_truncated_metrics_are_not_a_result(self, tmp_path):
         cell = self.complete(tmp_path)
         (cell / "metrics.json").write_text('{"trunc', encoding="utf-8")
-        assert completed_cell(cell, self.COMMIT) is False
+        assert completed_cell(cell, self.COMMIT, self.SEED) is False
 
     def test_a_missing_artefact_is_not_a_result(self, tmp_path):
         cell = self.complete(tmp_path)
         (cell / "predictions.jsonl").unlink()
-        assert completed_cell(cell, self.COMMIT) is False
+        assert completed_cell(cell, self.COMMIT, self.SEED) is False
 
     def test_empty_artefact_is_not_a_result(self, tmp_path):
         cell = self.complete(tmp_path)
         (cell / "results.csv").write_text("", encoding="utf-8")
-        assert completed_cell(cell, self.COMMIT) is False
+        assert completed_cell(cell, self.COMMIT, self.SEED) is False
+
+    def test_a_different_seed_is_not_a_result_for_this_one(self, tmp_path):
+        """docs/evaluation.md asks for >=3 seeds, and the layout has no seed
+        segment -- skipping on commit alone silently no-op'd every seed after
+        the first and left the earlier seed's numbers in place."""
+        cell = self.complete(tmp_path, seed=42)
+        assert completed_cell(cell, self.COMMIT, 43) is False
+        assert completed_cell(cell, self.COMMIT, 42) is True

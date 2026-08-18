@@ -33,15 +33,15 @@ venv\Scripts\activate
 ### 3. Install Dependencies
 
 ```bash
-# Upgrade pip
 pip install --upgrade pip
 
-# Install requirements
-pip install -r requirements.txt
-
-# Install package in editable mode
-pip install -e .
+# Editable install with every extra. This is what `make install` runs.
+pip install -e ".[dev,metrics,plots]"
 ```
+
+Do not install with `[dev]` alone. Without the `metrics` extra there is no
+`sentence-transformers`, and the run degrades to retention-only retrieval and
+loses OMA entirely — it warns, but the run still completes.
 
 ### 4. Verify Installation
 
@@ -91,12 +91,11 @@ python -m scripts.smoke_test
 For development, install additional dependencies:
 
 ```bash
-pip install -e ".[dev]"
+make install    # pip install -e ".[dev,metrics,plots]"
+make check      # tests + lint + format check, the same as CI
 ```
 
-This includes:
-- `pytest` - Testing framework
-- `black` - Code formatter
+The `dev` extra provides `pytest`, `pytest-cov`, `black` and `flake8`.
 
 ## A checkout, not a library
 

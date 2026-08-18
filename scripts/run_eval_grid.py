@@ -135,9 +135,9 @@ def build_output_dir(
     return Path(results_root) / sanitize_for_path(model_name) / task_name / mode_name / device
 
 
-def completed_cell(output_dir: Path, commit: Optional[str]) -> bool:
+def completed_cell(output_dir: Path, commit: Optional[str], seed: int) -> bool:
     """
-    True when this cell already has a complete result from the current commit.
+    True when this cell already has a complete result from this commit and seed.
 
     The grid re-ran every cell from scratch on every invocation, which combines
     badly with a run that dies late: a sweep of 6 models x 2 tasks x 12 arms is
@@ -146,10 +146,17 @@ def completed_cell(output_dir: Path, commit: Optional[str]) -> bool:
     and non-empty -- a crash mid-write leaves a truncated metrics.json, which
     must not be mistaken for a result.
 
+    The seed is part of the identity. docs/evaluation.md asks for three or more
+    seeds, and the results layout has no seed segment, so a second seed writes
+    to the same directory -- which meant skipping on commit alone silently
+    no-op'd every seed after the first and left the earlier seed's numbers in
+    place. Give each seed its own --results-root.
+
     Args:
         output_dir: The cell's directory.
         commit: Current git SHA, or None outside a repository. A cell produced
             by different code is not a result for this one.
+        seed: The seed this invocation is running.
 
     Returns:
         Whether the cell can be skipped.
@@ -165,6 +172,8 @@ def completed_cell(output_dir: Path, commit: Optional[str]) -> bool:
     except (OSError, json.JSONDecodeError):
         return False  # truncated by an interrupted write
 
+    if metrics.get("seed") != seed:
+        return False
     if commit is None:
         return True
     return metrics.get("environment", {}).get("git_commit") == commit
@@ -453,6 +462,16 @@ def main() -> int:
         help="Override limit per experiment (for quick testing)",
     )
     parser.add_argument(
+        "--results-root",
+        type=str,
+        default=None,
+        help=(
+            "Where to write results, overriding the config's defaults.results_root. "
+            "The layout has no seed segment, so a multi-seed study needs one root "
+            "per seed: --seed 43 --results-root results/seed43."
+        ),
+    )
+    parser.add_argument(
         "--only-task",
         type=str,
         action="append",
@@ -609,7 +628,7 @@ def main() -> int:
                             device = fallback_device
 
                     # Build output directory
-                    results_root = defaults.get("results_root", "results")
+                    results_root = args.results_root or defaults.get("results_root", "results")
                     output_dir = build_output_dir(
                         results_root, model_name, task_name, mode_name, device
                     )
@@ -630,8 +649,15 @@ def main() -> int:
                     if args.verbose or args.dry_run:
                         print(f"  Output: {output_dir}")
 
-                    if not args.force and not args.dry_run and completed_cell(output_dir, commit):
-                        print("  = already complete for this commit, skipping (--force to re-run)")
+                    if (
+                        not args.force
+                        and not args.dry_run
+                        and completed_cell(output_dir, commit, args.seed)
+                    ):
+                        print(
+                            "  = already complete for this commit and seed, "
+                            "skipping (--force to re-run)"
+                        )
                         results["skipped"].append(
                             {"experiment": experiment_id, "reason": "already complete"}
                         )

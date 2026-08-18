@@ -24,10 +24,10 @@ This is a research repository, so the bar for the measurement path is higher
 than for the rest of the code. If your change touches prompting, parsing,
 metrics, retrieval or scoring:
 
-1. **Add a test that fails without the change.** Every blocker in
-   [docs/code-review.md](docs/code-review.md) was invisible for months because
-   nothing asserted the intended behaviour — including one that *did* have a
-   failing test, which nobody saw because CI could not fail.
+1. **Add a test that fails without the change.** Every defect listed under
+   Fixed in `CHANGELOG.md` was invisible for months because nothing asserted
+   the intended behaviour — including one that *did* have a failing test, which
+   nobody saw because CI could not fail.
 2. **Say what it does to existing results** in the PR description. A change to
    answer extraction or option handling invalidates prior runs; say so.
 3. **Do not report a delta without a significance test.** See below.

@@ -181,9 +181,12 @@ from edge_slm_ace.models.model_manager import load_model_and_tokenizer
 
 model, tokenizer = load_model_and_tokenizer(
     model_id="microsoft/Phi-3-mini-4k-instruct",
-    device="cuda"
+    device_override="cuda",   # "cuda" | "mps" | "cpu" | None to auto-detect
 )
 ```
+
+Pass the device as `device_override`, a string. The legacy `device` parameter is
+accepted and ignored.
 
 #### `generate()`
 
@@ -202,7 +205,7 @@ answer = generate(
 )
 ```
 
-### `edge_slm_ace.utils.metrics`
+### `edge_slm_ace.eval.metrics`
 
 Evaluation metrics.
 
@@ -211,7 +214,7 @@ Evaluation metrics.
 Compute semantic similarity between answers.
 
 ```python
-from edge_slm_ace.utils.metrics import semantic_answer_score
+from edge_slm_ace.eval.metrics import semantic_answer_score
 
 score = semantic_answer_score(
     predicted="The force is 20 Newtons",
@@ -224,7 +227,7 @@ score = semantic_answer_score(
 Compute exact match accuracy.
 
 ```python
-from edge_slm_ace.utils.metrics import compute_accuracy
+from edge_slm_ace.eval.metrics import compute_accuracy
 
 accuracy = compute_accuracy(
     predictions=["A", "B", "C"],
@@ -257,18 +260,79 @@ Scoring parameters for retention scoring.
 from edge_slm_ace.memory.playbook import ScoringParams
 
 params = ScoringParams(
-    alpha=1.0,           # Success ratio weight
-    beta=0.5,            # Failure ratio penalty
-    gamma=0.3,           # Recency bonus weight
-    delta=0.4,           # Vagueness penalty weight
-    lambda_decay=0.05,   # Recency decay rate
-    epsilon=1.0,         # Smoothing constant
+    alpha=1.0,             # Success ratio weight
+    beta=0.5,              # Failure ratio penalty
+    gamma=0.3,             # Recency bonus weight
+    delta=0.4,             # Vagueness penalty weight
+    lambda_decay=0.05,     # Recency decay rate
+    epsilon=1.0,           # Smoothing constant
+    relevance_weight=0.5,  # Weight on question-lesson relevance at retrieval;
+                           # 0.0 restores domain-only ranking, where every
+                           # question in a run gets the identical lesson list
     disable_vagueness_penalty=False,
     disable_recency_decay=False,
     disable_failure_penalty=False,
-    fifo_memory=False
+    fifo_memory=False,
 )
 ```
+
+Every one of these is reachable from the command line
+(`--alpha`, `--relevance-weight`, `--fifo-memory`, ...) and the resolved values
+are written into `metrics.json`.
+
+### `edge_slm_ace.eval.stats`
+
+Uncertainty and significance. Pure standard library, so it can never be skipped
+for a missing optional dependency.
+
+```python
+from edge_slm_ace.eval.stats import (
+    compare_arms,
+    holm_bonferroni,
+    mcnemar_exact,
+    summarize_accuracy,
+    wilson_interval,
+)
+
+summarize_accuracy([1, 0, 1, 1])       # accuracy + Wilson interval + halfwidth
+mcnemar_exact(arm_a, arm_b)            # exact paired test on the same items
+compare_arms(rows_a, rows_b)           # both, plus a one-line verdict
+holm_bonferroni([0.01, 0.04])          # family-wise correction for a sweep
+```
+
+`ci_halfwidth` is what a claimed improvement has to be compared against.
+
+### `edge_slm_ace.reporting`
+
+One vocabulary for arms, models and columns, and one reader for results.
+
+```python
+from edge_slm_ace.reporting import (
+    arm_label,
+    load_predictions,
+    load_run_metrics,
+    reference_for,
+    summarize_predictions,
+)
+
+reference_for("tinyace_ablate_no_curator")  # -> "tinyace_wm_256"
+reference_for("ace_full")                   # -> "cot_control"
+```
+
+`reference_for` answers "which arm should this be compared against" -- an
+ablation belongs against full TinyACE, not against baseline.
+
+### `edge_slm_ace.utils.repro`
+
+```python
+from edge_slm_ace.utils.repro import capture_environment, set_seed
+
+set_seed(42)                # every RNG that can affect a run
+capture_environment()       # versions, hardware, git SHA and dirty state
+```
+
+Every entrypoint must call `set_seed` before loading a model and record
+`capture_environment()` in its metadata.
 
 ## Examples
 

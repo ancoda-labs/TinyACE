@@ -1,25 +1,12 @@
-# TinyACE Architecture Documentation
+# TinyACE Architecture
 
-> **Updated.** Two things this document described were not true of the code as
-> shipped, and are now implemented rather than merely documented:
->
-> - The **Curator** stage (`build_curator_prompt` / `parse_curator_output`) was
->   never called from the ACE loop. What ran was a six-substring keyword
->   filter. It is now invoked, and switchable via `--no-curator`.
-> - **Retrieval** did not depend on the question. Entries were filtered by
->   domain and ranked by a query-independent score, and since every SciQ task
->   maps to the single domain "science", every question in a run received the
->   identical lesson list. Retrieval is now query-conditioned
->   (`memory/relevance.py`, weight via `--relevance-weight`).
->
-> Also note that the store capacity and the prompt token budget are now
-> separate numbers. They were previously the same, which made retrieval
-> ranking a no-op: everything that survived eviction always fitted in the
-> prompt.
+How the loop and the playbook work, and which failure mode each design decision
+prevents.
 
-
-**Last Updated:** December 2024  
-**Version:** 1.0
+> **This document describes the mechanism, not its effect.** No accuracy number
+> appears below. The 0.1.0 results are withdrawn (see
+> [results.md](results.md)), so any claim that a component "helps" is open until
+> the evaluation is redone. `CHANGELOG.md` records what changed and why.
 
 ---
 
@@ -69,9 +56,13 @@ class PlaybookEntry:
     success_count: int = 0
     failure_count: int = 0
     last_used_at: int = 0
-    token_count: int = 0
-    vagueness_score: float = 0.0
+    token_count: Optional[int] = None      # None = not computed yet
+    vagueness_score: Optional[float] = None
 ```
+
+`token_count` and `vagueness_score` default to `None`, not `0`. With `0` as the
+sentinel, a genuinely non-vague entry was rescored on every load and a one-token
+entry could never cache its count.
 
 ### 2. ACE Roles (`src/edge_slm_ace/core/ace_roles.py`)
 
@@ -88,9 +79,10 @@ Three roles orchestrate the ACE loop:
 - Filters out generic/vague advice
 
 **Curator:**
-- Filters and deduplicates lessons
-- Adds lessons to playbook without initial feedback
-- Ensures only specific, actionable rules are stored
+- Screens candidate lessons with one extra generation, marking the generic ones
+- Costs one model call per reflection step; ablate with `--no-curator`
+- Deduplication is the playbook's job, not the Curator's: it compares a
+  candidate against the incumbent and keeps whichever is more specific
 
 ### 3. Runner (`src/edge_slm_ace/core/runner.py`)
 
@@ -107,36 +99,50 @@ Orchestrates the evaluation pipeline:
 The ACE loop processes each example through these steps:
 
 ```python
-for step, example in enumerate(dataset):
-    # 1. RETRIEVE: Get relevant lessons from playbook
+for step, example in enumerate(dataset, start=1):
+    # 1. RETRIEVE: rank this domain's entries against the question. Ranking is
+    #    query-conditioned; with relevance_weight=0 every question in a run
+    #    would receive the identical lesson list.
     if ace_mode == "ace_working_memory":
-        used_entries = playbook.get_top_entries_for_budget(
-            domain, token_budget, current_step
-        )
+        used = playbook.get_top_entries_for_budget(domain, token_budget, step, query=question)
     else:
-        used_entries = playbook.get_top_k(domain, k=top_k, current_step)
-    
-    # 2. GENERATE: Build prompt with lessons → generate answer
-    prompt = build_generator_prompt(domain, playbook, question, context, ...)
-    answer, reasoning = parse_generator_output(generate(model, prompt))
-    
-    # 3. EVALUATE: Check correctness
-    correct = (answer.lower() == ground_truth.lower())
-    
-    # 4. REFLECT: Generate lessons if incorrect or periodically
-    if not correct or (step % reflect_every_n == 0):
-        lessons = generate_and_parse_reflection(...)
-        for lesson in filtered_lessons:
-            playbook.add_entry(domain, lesson, step)
-    
-    # 5. FEEDBACK: Record success/failure for USED entries only
-    for entry_id in used_entry_ids:
-        playbook.mark_entry_used(entry_id, step)
-        playbook.record_feedback(entry_id, helpful=correct)
-    
-    # 6. PRUNE: Periodically remove low-scoring entries
-    if step % prune_every_n == 0:
-        playbook.prune(max_entries_per_domain)
+        used = playbook.get_top_k(domain, k=top_k, current_step=step, query=question)
+
+    # 2. GENERATE. extract_answer is the single parser every arm goes through;
+    #    an asymmetry here shows up as an effect attributed to the playbook.
+    raw = generate(model, tokenizer, build_generator_prompt(...))
+    answer, reasoning = extract_answer(raw)
+
+    # 3. EVALUATE
+    correct = answer.strip().lower() == ground_truth.strip().lower()
+
+    # 4. REFLECT, then CURATE. Skipped entirely when enable_learning is False,
+    #    which is what makes cot_control a prompt-matched control and what
+    #    makes a frozen playbook frozen.
+    if enable_learning and (not correct or step % reflect_on_correct_every_n == 0):
+        lessons = choose_lessons_for_playbook(parse_reflector_output_to_lessons(...))
+        if use_curator:
+            lessons = [l for l, generic in zip(lessons, curate(lessons)) if not generic]
+        for lesson in lessons:
+            playbook.add_entry(domain, lesson, step)   # no feedback at creation
+
+    # 5. CREDIT. Prefer the entries the Generator says it applied; fall back to
+    #    crediting everything retrieved only when it cited nothing, and record
+    #    which happened (`credit_mode`). Crediting everything uniformly makes
+    #    every entry's success ratio converge to the run's accuracy, so the
+    #    alpha and beta terms stop distinguishing between lessons.
+    cited = parse_used_strategies(raw, len(used))
+    credited = used if cited is None else [used[i] for i in cited]
+    for entry in used:
+        playbook.mark_entry_used(entry.id, step)       # recency: what was shown
+    for entry in credited:
+        playbook.record_feedback(entry.id, helpful=correct)   # what was used
+
+    # 6. PRUNE. current_step is required: defaulted to 0, every entry's age
+    #    came out 0 and the recency term became a constant, so pruning ignored
+    #    recency entirely.
+    if enable_learning and step % prune_every_n == 0:
+        playbook.prune(max_entries_per_domain, current_step=step)
 ```
 
 ### Critical Design Decision: Feedback on Use, Not Creation
@@ -154,7 +160,8 @@ S(l_i, t) = α·(N_succ/(N_used+ε)) - β·(N_fail/(N_used+ε))
           + γ·exp(-λ·(t-t_last)) - δ·V(l_i)
 ```
 
-**Hyperparameters:**
+**Hyperparameters** (defaults; each is a CLI flag, and the resolved values are
+written into `metrics.json`):
 - `α = 1.0`: Success ratio weight
 - `β = 0.5`: Failure ratio penalty weight
 - `γ = 0.3`: Recency bonus weight
@@ -171,20 +178,22 @@ S(l_i, t) = α·(N_succ/(N_used+ε)) - β·(N_fail/(N_used+ε))
 2. **Failure Term**: `-β · (N_fail / (N_used + ε))`
    - Penalizes entries that lead to incorrect answers
    - Higher failure rate → lower score
-   - **Critical**: Ablation shows OMA drops 4% without this term
+   - Ablate with `--disable-failure-penalty`
 
 3. **Recency Term**: `γ · exp(-λ · (t - t_last))`
    - Bonus for recently used entries
-   - Decays exponentially with time since last use
-   - Trade-off: Helps accuracy but may reduce semantic quality
+   - Decays exponentially with steps since last use
+   - Ablate with `--disable-recency-decay`
 
 4. **Vagueness Term**: `-δ · V(l_i)`
    - Penalizes vague/generic lessons
    - `V(l_i)` computed from:
      - Generic phrases ("think carefully", "pay attention")
      - Short text (< 5 words)
-     - Lack of specificity (no numbers, formulas, domain terms)
-   - Prevents playbook bloat
+     - Lack of specificity (no numbers, operators applied to numbers, or
+       procedural terms). An operator has to touch a digit to count -- testing
+       for the bare characters meant any hyphenated word read as a formula
+   - Ablate with `--disable-vagueness-penalty`
 
 ### Implementation
 
@@ -219,25 +228,41 @@ def score(self, current_step: int, params: ScoringParams) -> float:
 
 ## Modes of Operation
 
-### 1. Baseline Mode
+The arm registry is [`reporting/schema.py`](../src/edge_slm_ace/reporting/schema.py);
+[evaluation.md](evaluation.md) says which arm each one should be compared
+against. The distinct behaviours behind those arms are:
 
-- **No playbook**: Vanilla prompting
-- **Prompt**: `Question: {question}\nAnswer:`
-- **Use Case**: Baseline comparison, strong models that don't need context
+| Behaviour | Prompt | Playbook | Learns? |
+|---|---|---|---|
+| `baseline` | `Question: ...\nAnswer:` plus the shared choices block | none | no |
+| `cot_control` | Full ACE scaffold — role preamble, domain hints, mandated reasoning | **empty** | no |
+| `ace_full` | Full ACE scaffold | top-k by rank | yes |
+| `ace_working_memory` | Full ACE scaffold | token-budgeted | yes |
+| frozen (`--playbook-mode frozen`) | Full ACE scaffold | loaded, read-only | **no** |
+| `self_refine` | Generate → critique own answer → rewrite | none | no |
 
-### 2. ACE Full Mode
+Two of these exist to make the others interpretable:
 
-- **Retrieval**: Top-k entries by retention score
-- **Playbook**: Unbounded (pruned periodically)
-- **Use Case**: Full context available, no token constraints
-- **Configuration**: `ace_mode: ace_full`, `top_k: 5`
+- **`cot_control`** receives the identical scaffold over an empty playbook, so
+  `ace - cot_control` isolates the playbook. `ace - baseline` also varies the
+  chain-of-thought instruction, the domain hints and the answer parser, which is
+  four changes at once.
+- **frozen** adapts on one split and scores read-only on another. Every other
+  ACE arm learns online from the split it is scored on, and 82% of `sciq_test`
+  examples contain the gold answer verbatim in their `support` field, so a
+  lesson written after seeing gold can carry answer content forward.
 
-### 3. ACE Working Memory Mode
+### Store capacity vs prompt budget
 
-- **Retrieval**: Token-budgeted entries (256 or 512 tokens)
-- **Eviction**: Lowest-scoring entries evicted when over budget
-- **Use Case**: Edge devices, limited context windows
-- **Configuration**: `ace_mode: ace_working_memory`, `token_budget: 256`
+Two different numbers, and conflating them made retrieval a no-op:
+
+- `token_budget` — how many tokens of lessons to **show** the Generator.
+- `store_token_capacity` — how many to **keep**, defaulting to 4x the budget.
+
+When they were equal, eviction held the store at or below the budget and
+retrieval then filled up to that same budget, so every surviving entry was
+always retrieved and ranking never selected anything. WM-256 vs WM-512 compared
+how many lessons *survived*, not which were *chosen*.
 
 ---
 
@@ -247,21 +272,26 @@ The codebase supports ablation studies through scoring parameter flags:
 
 ### Available Ablations
 
-1. **No Failure Penalty** (`disable_failure_penalty=True`)
-   - Sets `β=0`, removes failure term
-   - **Result**: OMA drops 4% (critical component)
+Each disables one term, so the comparison against full TinyACE isolates that
+term. Results are not listed here: the 0.1.0 ablation numbers are withdrawn.
 
-2. **No Recency Decay** (`disable_recency_decay=True`)
-   - Sets `γ=0`, removes recency term
-   - **Result**: Lower OMA but best semantic similarity (trade-off)
+| Arm | Flag | Isolates |
+|---|---|---|
+| `tinyace_ablate_no_failure` | `--disable-failure-penalty` | beta = 0 |
+| `tinyace_ablate_no_recency` | `--disable-recency-decay` | gamma = 0 |
+| `tinyace_ablate_no_vagueness` | `--disable-vagueness-penalty` | delta = 0 |
+| `tinyace_ablate_no_relevance` | `--relevance-weight 0` | Domain-only retrieval — every question gets the same lessons |
+| `tinyace_ablate_no_curator` | `--no-curator` | The Curator screening pass |
+| `tinyace_fifo` | `--fifo-memory` | Oldest-first eviction instead of lowest-score |
 
-3. **No Vagueness Penalty** (`disable_vagueness_penalty=True`)
-   - Sets `δ=0`, removes vagueness term
-   - **Result**: Playbook grows larger, slight OMA drop
+`fifo_memory` changes **eviction only**. Retrieval always ranks by retention
+score, so the ablation varies one thing. Note that this arm previously
+implemented LIFO -- `score()` returned `-created_at`, so it evicted the *newest*
+entry -- which is why its old numbers are not evidence about FIFO.
 
-4. **FIFO Eviction** (`fifo_memory=True`)
-   - Bypasses scoring entirely, uses insertion order
-   - **Result**: Best OMA (78%), simple and effective
+An ablation belongs against `tinyace_wm_256`, not against `baseline`.
+Comparing it to baseline measures ACE *plus* the ablation.
+`scripts/compare_arms.py` pairs them correctly by default.
 
 ### Configuration
 
@@ -286,31 +316,58 @@ modes:
 ```
 src/edge_slm_ace/
 ├── core/
-│   ├── ace_roles.py      # Generator, Reflector, Curator prompts
-│   └── runner.py          # Main evaluation loop
+│   ├── ace_roles.py      Generator/Reflector/Curator prompts + parsers
+│   └── runner.py          Baseline / control / ACE / self-refine loops
 ├── memory/
-│   └── playbook.py       # Playbook storage and scoring
+│   ├── playbook.py       Retention scoring, eviction, token budgets
+│   └── relevance.py      Query-conditioned retrieval
+├── eval/                 The measurement layer
+│   ├── metrics.py        Answer scoring, peak memory
+│   ├── mcq.py            Option permutation, OMA / GOM / ACR, mapping cascade
+│   └── stats.py          Wilson intervals, exact McNemar, Holm correction
+├── reporting/
+│   ├── schema.py         Arm registry + which arm to compare against
+│   └── load.py           One reader for metrics.json / predictions.jsonl
 ├── models/
-│   └── model_manager.py  # HuggingFace model loading
+│   └── model_manager.py  Loading, chat templates, prompt-length bounds
 └── utils/
-    ├── config.py         # Model/task configurations
-    ├── metrics.py        # Evaluation metrics
-    └── mcq_eval.py       # MCQ-specific evaluation
+    ├── config.py         Model and task registries
+    ├── device_utils.py   Device selection
+    └── repro.py          Seeding and environment capture
 ```
+
+`eval/` and `reporting/` were carved out of `utils/`. Anything that reads
+results imports its labels from `reporting/schema.py` rather than re-deriving
+them -- three scripts previously carried their own copies and disagreed, so the
+same run appeared under two different names depending on which script rendered
+it.
 
 ---
 
-## Key Design Insights
+## Key Design Decisions
 
-1. **Feedback on Use**: Lessons evaluated on future examples, not creation context
-2. **Strategic Forgetting**: Token budgets force prioritization
-3. **Component Importance**: Failure tracking is critical; FIFO can match complex scoring
-4. **Model-Dependent**: ACE helps medium models (Phi-3) more than strong (Mistral) or weak (TinyLlama)
+Mechanism, not measured effect:
+
+1. **Feedback on use, not creation.** A new lesson enters with no
+   success/failure record. Crediting it for the example it was derived from
+   would score it on its own training case.
+2. **Credit to cited lessons.** Crediting everything retrieved gives every live
+   entry the same increment on every step, so all success ratios converge to the
+   run's accuracy and the alpha/beta terms stop distinguishing between lessons.
+   `citation_rate` in `metrics.json` says how often attribution was available.
+3. **Strategic forgetting.** A token budget forces a choice, but only when the
+   store is larger than the budget.
+4. **One parser for every arm.** `extract_answer` is shared, because a parsing
+   difference between arms is indistinguishable from an effect of the playbook.
+5. **Invalidating conditions travel with the data.** `prompt_truncated` and
+   `used_chat_template` are columns, not log lines, so a broken run is visible
+   in `metrics.json` rather than only in scrollback.
 
 ---
 
 ## References
 
-- See `docs/results.md` for detailed experimental results
-- See `README.md` for quick start guide
-- See `configs/experiment_grid.yaml` for configuration options
+- [evaluation.md](evaluation.md) -- the protocol: arms, splits, metrics, statistics
+- [results.md](results.md) -- the withdrawn 0.1.0 tables, and why
+- `CHANGELOG.md` -- what changed and which failure mode it addressed
+- `configs/experiment_grid.yaml` -- the grid
