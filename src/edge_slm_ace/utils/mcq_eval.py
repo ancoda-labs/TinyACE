@@ -557,6 +557,28 @@ class MCQEvaluator:
         }
 
 
+def format_choices_block(options: Sequence[str]) -> str:
+    """
+    Render the choices section of an MCQ prompt.
+
+    Single source of truth for this block. The baseline and ACE arms used to
+    build it separately with different wording, which made the arms differ in
+    a way unrelated to the playbook under test.
+
+    Args:
+        options: Option texts in presentation order.
+
+    Returns:
+        The rendered block, including the answer-format instruction.
+    """
+    lines = ["", "Choices:"]
+    for letter, option in zip("ABCD", options):
+        lines.append(f"({letter}) {option}")
+    lines.append("")
+    lines.append("Answer with the exact choice text or the letter (A, B, C, or D):")
+    return "\n".join(lines)
+
+
 def build_prompt_with_choices(
     question: str,
     context: Optional[str] = None,
@@ -584,14 +606,7 @@ def build_prompt_with_choices(
     prompt_parts.append(f"Question: {question}")
     
     if options and len(options) == 4:
-        prompt_parts.append("")
-        prompt_parts.append("Choices:")
-        prompt_parts.append(f"(A) {options[0]}")
-        prompt_parts.append(f"(B) {options[1]}")
-        prompt_parts.append(f"(C) {options[2]}")
-        prompt_parts.append(f"(D) {options[3]}")
-        prompt_parts.append("")
-        prompt_parts.append("Answer with the exact choice text or the letter (A, B, C, or D):")
+        prompt_parts.append(format_choices_block(options))
     else:
         prompt_parts.append("")
         prompt_parts.append("Answer:")

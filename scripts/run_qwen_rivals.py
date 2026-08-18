@@ -231,12 +231,12 @@ def run_single_experiment(
                 mode="baseline",
                 option_shuffle_seed=seed,
             )
-        else:  # ACE mode
-            # Setup playbook
+        else:  # ACE mode, or the prompt-matched control
+            enable_learning = mode_config["mode"] == "ace"
             token_budget = mode_config.get("working_memory_token_budget", 256)
             playbook_path = output_dir / f"playbook_{model_name}_{mode_name}.jsonl"
             playbook = Playbook(token_budget=token_budget)
-            
+
             ace_mode = mode_config.get("ace_mode", "ace_working_memory")
             
             results, summary = run_dataset_ace(
@@ -257,6 +257,7 @@ def run_single_experiment(
                 prune_every_n=contract["reflection"]["prune_every_n"],
                 max_entries_per_domain=contract["reflection"]["max_entries_per_domain"],
                 option_shuffle_seed=seed,
+                enable_learning=enable_learning,
             )
     
     wall_time = time.time() - start_time

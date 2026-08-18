@@ -104,8 +104,9 @@ def build_experiment_command(
         "--device", device,
     ]
     
-    # Add ACE-specific parameters
-    if mode_config["mode"] == "ace":
+    # Add ACE-specific parameters. cot_control shares the ACE prompt path
+    # (that is the point of it), so it takes the same scaffold arguments.
+    if mode_config["mode"] in ("ace", "cot_control"):
         ace_mode = mode_config.get("ace_mode", "ace_full")
         cmd.extend(["--ace-mode", ace_mode])
         
@@ -131,7 +132,7 @@ def build_experiment_command(
         if "max_entries_per_domain" in mode_config:
             cmd.extend(["--max-entries-per-domain", str(mode_config["max_entries_per_domain"])])
         
-        # Ablation flags
+        # Ablation flags (learning-only; a control has nothing to ablate)
         if mode_config.get("disable_vagueness_penalty"):
             cmd.extend(["--disable-vagueness-penalty"])
         if mode_config.get("disable_recency_decay"):

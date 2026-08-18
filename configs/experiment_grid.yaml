@@ -105,6 +105,18 @@ modes:
   - name: baseline
     mode: baseline
     description: "No ACE, vanilla prompting"
+
+  # CoT control: the full ACE prompt scaffold with an EMPTY playbook and no
+  # learning. Required for attribution -- "ace" vs "baseline" varies the
+  # playbook, the chain-of-thought instruction, the domain hints and the
+  # answer parser all at once. The claim about the playbook is
+  # (ace - cot_control), not (ace - baseline).
+  - name: cot_control
+    mode: cot_control
+    ace_mode: ace_working_memory
+    working_memory_token_budget: 256
+    top_k: 5
+    description: "ACE prompt scaffold, empty playbook, no learning"
     
   # ACE Full: Top-k entries from playbook
   - name: ace_full

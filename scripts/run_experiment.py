@@ -153,10 +153,13 @@ Examples:
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["baseline", "ace", "self_refine", "self_refine_oracle"],
+        choices=["baseline", "cot_control", "ace", "self_refine", "self_refine_oracle"],
         required=True,
         help=(
-            "Run mode. 'self_refine' critiques and rewrites using only the "
+            "Run mode. 'cot_control' is the prompt-matched control: the full "
+            "ACE prompt scaffold with an empty playbook and no learning, so "
+            "that 'ace' minus 'cot_control' isolates the playbook. "
+            "'self_refine' critiques and rewrites using only the "
             "model's own output. 'self_refine_oracle' additionally reveals the "
             "correct answer during refinement, which makes it an upper bound "
             "rather than a comparable baseline."
@@ -470,11 +473,23 @@ Examples:
                     )
                     playbook_stats = None
                     
-                else:  # ACE mode
+                else:  # ACE mode, or the prompt-matched control
+                    enable_learning = args.mode == "ace"
                     if not args.quiet:
-                        print(f"Running ACE evaluation (mode: {args.ace_mode})...")
-                    
-                    playbook_path = Path(args.playbook_path)
+                        if enable_learning:
+                            print(f"Running ACE evaluation (mode: {args.ace_mode})...")
+                        else:
+                            print(
+                                "Running CoT control: ACE prompt scaffold, empty "
+                                "playbook, no reflection or playbook writes."
+                            )
+
+                    # The control never writes, but still needs a path for the
+                    # shared code path; keep it out of the ACE playbook dir.
+                    playbook_path = Path(
+                        args.playbook_path
+                        or (Path(args.output_path).parent / "playbook_control.jsonl")
+                    )
                     
                     # Create scoring params with ablation flags
                     scoring_params = ScoringParams(
@@ -484,8 +499,10 @@ Examples:
                         fifo_memory=args.fifo_memory,
                     )
                     
-                    # Load or create playbook
-                    if playbook_path.exists():
+                    # Load or create playbook. The control arm always starts
+                    # empty -- loading a previous run's lessons would defeat
+                    # the point of it being a control.
+                    if enable_learning and playbook_path.exists():
                         if not args.quiet:
                             print(f"Loading playbook from {playbook_path}")
                         playbook = Playbook.load(playbook_path, token_budget=args.token_budget)
@@ -515,6 +532,7 @@ Examples:
                         prune_every_n=args.prune_every_n,
                         max_entries_per_domain=args.max_entries_per_domain,
                         option_shuffle_seed=args.seed,
+                        enable_learning=enable_learning,
                     )
                     
                     playbook_stats = {

@@ -14,7 +14,7 @@ from edge_slm_ace.core.ace_roles import (
     choose_lessons_for_playbook,
     build_self_refine_critique_prompt,
     build_self_refine_rewrite_prompt,
-    parse_generator_output,
+    extract_answer,
 )
 from edge_slm_ace.utils.config import ModelConfig
 from edge_slm_ace.utils.metrics import (
@@ -229,7 +229,11 @@ def run_dataset_baseline(
         )
         latency_ms = (time.time() - start_time) * 1000
         end_to_end_latency_sec = time.time() - query_start_time
-        
+
+        # Same extraction as every other arm -- see extract_answer().
+        raw_answer = answer
+        answer, _ = extract_answer(raw_answer)
+
         # Count tokens
         prompt_tokens = count_tokens(tokenizer, prompt)
         output_tokens = count_tokens(tokenizer, answer)
@@ -527,7 +531,8 @@ def run_dataset_self_refine(
                 top_p=config.top_p,
             )
             rewrite_latency_ms = (time.time() - rewrite_start) * 1000
-            
+            final_answer, _ = extract_answer(final_answer)
+
             total_latency_ms = initial_latency_ms + critique_latency_ms + rewrite_latency_ms
         else:
             # Nothing to refine
@@ -628,6 +633,7 @@ def run_dataset_ace(
     prune_every_n: int = 10,
     max_entries_per_domain: int = 32,
     option_shuffle_seed: Optional[int] = None,
+    enable_learning: bool = True,
 ) -> tuple[List[Dict], Dict]:
     """
     Run ACE-style adaptive evaluation on a dataset.
@@ -644,6 +650,20 @@ def run_dataset_ace(
     ACE modes:
     - ace_full: Uses top-k entries (unbounded playbook)
     - ace_working_memory: Uses token-budgeted entries (limited playbook)
+
+    Control arm
+    -----------
+    With `enable_learning=False` the loop reflects nothing, writes nothing to
+    the playbook and records no feedback, so the playbook stays empty. The
+    Generator still receives the full ACE scaffold: the role preamble, the
+    domain-specific instructions, the mandated step-by-step reasoning, the
+    same choices block and the same answer parser.
+
+    That arm exists because "ACE vs baseline" otherwise varies five things at
+    once, only one of which is the playbook. The claim the playbook helps is
+    `ace - cot_control`, not `ace - baseline`. If `ace - cot_control` is flat
+    while `cot_control - baseline` is large, the finding is that chain-of-
+    thought prompting helps and the playbook does not.
     
     TODO(Sathwik): Improve ACE logic in ace_roles.py:
     - Refine generator prompts to better incorporate playbook strategies
@@ -679,7 +699,10 @@ def run_dataset_ace(
         reflect_on_correct_every_n: Reflect on correct answers every N examples (for learning).
         prune_every_n: Prune playbook every N examples to limit size.
         max_entries_per_domain: Maximum entries per domain after pruning (default: 32).
-        
+        option_shuffle_seed: Seed for MCQ option-order permutation.
+        enable_learning: If False, run as the prompt-matched control arm --
+            same prompt scaffold, no reflection, no playbook writes.
+
     Returns:
         Tuple of (results, summary):
         - results: List[Dict] with consistent schema. Each dict contains:
@@ -758,7 +781,10 @@ def run_dataset_ace(
             "total_tokens": playbook.total_tokens,
         }
         
-        # Step 1: Generator - build prompt with playbook context
+        # Step 1: Generator - build prompt with playbook context.
+        # Choices are rendered by build_generator_prompt via the same shared
+        # block the baseline arm uses, rather than appended here with
+        # different wording.
         generator_prompt = build_generator_prompt(
             domain=domain,
             playbook=playbook,
@@ -768,18 +794,8 @@ def run_dataset_ace(
             token_budget=token_budget,
             top_k=top_k,
             current_step=step,
+            options=mcq_options_list,
         )
-        
-        # If options exist, modify prompt to include choices
-        if mcq_options_list:
-            # Append choices to the prompt
-            choices_text = "\n\nChoices:\n"
-            choices_text += f"(A) {mcq_options_list[0]}\n"
-            choices_text += f"(B) {mcq_options_list[1]}\n"
-            choices_text += f"(C) {mcq_options_list[2]}\n"
-            choices_text += f"(D) {mcq_options_list[3]}\n"
-            choices_text += "\nAnswer with the exact choice text or the letter (A, B, C, or D):"
-            generator_prompt = generator_prompt.rstrip() + choices_text
         
         # Track which entries were used (retrieved and included in prompt)
         # This is done BEFORE generation so we know exactly which lessons were used
@@ -811,10 +827,7 @@ def run_dataset_ace(
         latency_ms = (time.time() - start_time) * 1000
         
         # Extract reasoning and answer from generator output
-        answer, reasoning = parse_generator_output(raw_answer)
-        # If parsing failed, use raw answer
-        if not answer:
-            answer = raw_answer.strip()
+        answer, reasoning = extract_answer(raw_answer)
         
         # Step 3: Check correctness
         correct = answer.strip().lower() == ground_truth.strip().lower()
@@ -848,8 +861,12 @@ def run_dataset_ace(
         # Also count original context if provided
         original_context_tokens = count_tokens(tokenizer, context or "")
         
-        # Step 4: Reflector - generate lessons
-        should_reflect = not correct or (step % reflect_on_correct_every_n == 0)
+        # Step 4: Reflector - generate lessons.
+        # The control arm never reflects, so its playbook stays empty and the
+        # only difference from the ACE arm is the absence of learned content.
+        should_reflect = enable_learning and (
+            not correct or (step % reflect_on_correct_every_n == 0)
+        )
         
         if should_reflect:
             reflector_prompt = build_reflector_prompt(
@@ -899,13 +916,14 @@ def run_dataset_ace(
         
         # Mark used entries (for working memory recency tracking)
         # Also update success/failure counts based on correctness
-        for entry_id in used_entry_ids:
-            playbook.mark_entry_used(entry_id, step)
-            playbook.record_feedback(entry_id, helpful=correct)
+        if enable_learning:
+            for entry_id in used_entry_ids:
+                playbook.mark_entry_used(entry_id, step)
+                playbook.record_feedback(entry_id, helpful=correct)
         
         # Step 6: Occasional pruning
         num_evictions = 0
-        if step % prune_every_n == 0:
+        if enable_learning and step % prune_every_n == 0:
             entries_before_prune = len(playbook.entries)
             playbook.prune(max_entries_per_domain=max_entries_per_domain)
             num_evictions = entries_before_prune - len(playbook.entries)
@@ -1022,8 +1040,10 @@ def run_dataset_ace(
         prompt_tokens_list.append(prompt_tokens)
         prompt_output_tokens_list.append(output_tokens)
     
-    # Save playbook after run
-    playbook.save(playbook_path)
+    # Save playbook after run. The control arm learns nothing, so writing its
+    # empty playbook would only risk clobbering a real one.
+    if enable_learning:
+        playbook.save(playbook_path)
     
     # Compute summary
     accuracy = compute_accuracy(predictions, labels)
@@ -1041,6 +1061,7 @@ def run_dataset_ace(
         "median_latency_sec": median_latency_sec,
         **_generation_health(results),
         "num_examples": len(dataset),
+        "enable_learning": enable_learning,
         "playbook_size": len(playbook.entries),
         "final_playbook_num_entries": len(playbook.entries),
         "final_playbook_total_tokens": playbook.total_tokens,

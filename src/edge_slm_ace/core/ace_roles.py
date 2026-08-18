@@ -63,6 +63,7 @@ def build_generator_prompt(
     token_budget: int = 500,
     top_k: int = 5,
     current_step: int = 0,
+    options: Optional[List[str]] = None,
 ) -> str:
     """
     Build a prompt for the Generator role (model that answers questions).
@@ -79,15 +80,19 @@ def build_generator_prompt(
         context: Optional context/background information.
         ace_mode: ACE mode ("ace_full" or "ace_working_memory").
         token_budget: Token budget for working memory mode (default: 500).
+        top_k: Number of playbook entries to use in ace_full mode.
         current_step: Current step counter for recency calculation.
-        
+        options: Optional MCQ options, rendered with the same shared block
+            the baseline arm uses.
+
     Returns:
         Formatted prompt string.
     """
     # Get strategies from playbook based on mode
+    from edge_slm_ace.utils.mcq_eval import format_choices_block
+
     if ace_mode == "ace_working_memory":
         # Use token-budgeted selection for working memory mode
-        from edge_slm_ace.utils.config import ACE_MODE_WORKING
         top_strategies = playbook.get_top_entries_for_budget(
             domain=domain,
             token_budget=token_budget,
@@ -129,8 +134,17 @@ def build_generator_prompt(
     reasoning_instructions += "Answer:\n"
     reasoning_instructions += "[Provide your final answer here]\n"
     
-    prompt = f"{domain_header}{playbook_section}{question_section}{reasoning_instructions}"
-    
+    # Choices use the identical block the baseline arm renders, so the two
+    # arms differ only in the playbook and the reasoning scaffold.
+    choices_section = ""
+    if options:
+        choices_section = "\n" + format_choices_block(options) + "\n"
+
+    prompt = (
+        f"{domain_header}{playbook_section}{question_section}"
+        f"{choices_section}{reasoning_instructions}"
+    )
+
     return prompt
 
 
@@ -350,6 +364,32 @@ def parse_generator_output(text: str) -> Tuple[str, Optional[str]]:
         answer = answer.strip()
     
     return answer or "", reasoning
+
+
+def extract_answer(raw_output: str) -> Tuple[str, Optional[str]]:
+    """
+    Extract the final answer from a model generation.
+
+    Every arm must go through this one function. Previously the ACE arm ran
+    parse_generator_output while the baseline arm scored the raw generation,
+    so a difference attributed to the playbook could just as easily have been
+    a difference in parsing. That asymmetry was most damaging for small
+    models: parse_generator_output falls through to "return the whole cleaned
+    text" when no `Answer:` header is emitted, which is exactly what a 1.1B
+    model does, so the ACE arm was scored on a full reasoning dump while the
+    baseline arm was scored on a short answer.
+
+    Args:
+        raw_output: The raw generation.
+
+    Returns:
+        Tuple of (answer, reasoning). `answer` falls back to the stripped raw
+        output rather than the empty string.
+    """
+    answer, reasoning = parse_generator_output(raw_output)
+    if not answer:
+        answer = (raw_output or "").strip()
+    return answer, reasoning
 
 
 def parse_reflector_output_to_lessons(text: str) -> List[str]:
