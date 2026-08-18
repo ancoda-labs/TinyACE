@@ -140,3 +140,19 @@ class TestSummarizeAccuracy:
     def test_ignores_missing_values(self):
         summary = summarize_accuracy([1, 0, None, 1])
         assert summary["n"] == 3
+
+
+class TestTaskRegistry:
+    """Every registered task must point at a file that ships with the repo."""
+
+    def test_no_dangling_task_entries(self):
+        from edge_slm_ace.utils.config import validate_task_registry
+
+        missing = validate_task_registry()
+        assert not missing, f"Task registry references missing files: {missing}"
+
+    def test_paths_resolve_independently_of_cwd(self, tmp_path, monkeypatch):
+        from edge_slm_ace.utils.config import resolve_task_path
+
+        monkeypatch.chdir(tmp_path)
+        assert resolve_task_path("sciq_test").exists()

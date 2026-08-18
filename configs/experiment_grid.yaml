@@ -71,31 +71,21 @@ models:
 # -----------------------------------------------------------------------------
 # Tasks / Datasets
 # -----------------------------------------------------------------------------
+# Only tasks whose data files ship with the repository. medqa_train,
+# math_train and sciq_train were listed here but have no file in data/tasks,
+# so two of the three tasks in this grid could never run.
 tasks:
-  - name: medqa_train
-    task_name: medqa_train
-    domain: medical
-    description: "Medical QA training set (full MedQA dataset)"
-
-  - name: math_train
-    task_name: math_train
-    domain: math
-    description: "Math word problems training set"
-
-#  - name: sciq_train
-#    task_name: sciq_train
-#    domain: science
-#    description: "Science QA training set (11,679 examples)"
-#
-#  - name: sciq_val
-#    task_name: sciq_val
-#    domain: science
-#    description: "Science QA validation set (1,000 examples)"
-
   - name: sciq_test
     task_name: sciq_test
     domain: science
     description: "Science QA test set (1,000 examples)"
+
+  # Adaptation split. Build a playbook here, freeze it, then evaluate on
+  # sciq_test -- the two share no questions.
+  - name: sciq_val
+    task_name: sciq_val
+    domain: science
+    description: "Science QA adaptation split (1,000 examples)"
 
 # -----------------------------------------------------------------------------
 # Evaluation Modes
@@ -226,9 +216,13 @@ defaults:
   # Root directory for results
   results_root: results
   
-  # Default limit per experiment (None = all examples)
-  # Set to small number for quick smoke tests
-  #limit: 2000 # Limit to 100 examples per task for reasonable runtime
+  # Default limit per experiment (None = all examples).
+  #
+  # Leave this unset for reported runs. sciq_test has 1000 examples; at n=50
+  # the 95% CI on an accuracy near 0.74 is about +/-12 percentage points, so
+  # a "+4%" result is two questions and is indistinguishable from noise.
+  # Use scripts/compare_arms.py to check any delta before reporting it.
+  # limit: 100  # smoke tests only
   
   # Generation parameters
   max_new_tokens: 256

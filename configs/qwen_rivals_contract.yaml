@@ -5,7 +5,7 @@
 # between Qwen2.5 models and existing baselines (TinyLlama, Phi-3, Mistral-7B).
 #
 # Ensures identical conditions across all model families:
-# - Same SciQ slice (n=50, fixed indices, deterministic order)
+# - Same SciQ slice (fixed indices, deterministic order)
 # - Same prompt template for baseline and TinyACE
 # - Same decoding settings (temperature, top_p, max_new_tokens, seed)
 # - Same reflection trigger policy
@@ -23,7 +23,10 @@ experiment_contract:
   dataset:
     task_name: sciq_test
     domain: science
-    slice_size: 50  # Fixed n=50 examples
+    # n=500. At n=50 the 95% CI on an accuracy near 0.74 spans roughly
+    # +/-12 percentage points, which is wider than every effect this study
+    # reports. sciq_test has 1000 examples available.
+    slice_size: 500
     slice_start: 0  # Start at index 0
     deterministic_order: true  # Fixed sequential order, no shuffling
     seed: 42  # RNG seed for any stochastic operations

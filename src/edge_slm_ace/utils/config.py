@@ -1,6 +1,7 @@
 """Configuration utilities for models and device settings."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Optional
 
 import torch
@@ -26,7 +27,16 @@ class ModelConfig:
         assert self.max_new_tokens > 0, "max_new_tokens must be positive"
 
 
-# Default model configurations mapped to HuggingFace model IDs
+# Default model configurations mapped to HuggingFace model IDs.
+#
+# Decoding is identical across every entry: greedy (temperature=0.0,
+# top_p=1.0) with the same max_new_tokens. Previously mistral-7b and
+# llama-3.2-1b defaulted to temperature=0.7 while everything else was greedy,
+# and mistral-7b generated twice as many tokens, so any cross-model table
+# mixed sampled and deterministic decoding at different output lengths.
+# Override per run with --temperature/--top-p/--max-new-tokens if a study
+# genuinely needs sampling, and record it (run_experiment writes the resolved
+# values into metrics.json).
 MODEL_CONFIGS: Dict[str, ModelConfig] = {
     "phi3-mini": ModelConfig(
         model_id="microsoft/Phi-3-mini-4k-instruct",
@@ -37,37 +47,27 @@ MODEL_CONFIGS: Dict[str, ModelConfig] = {
     "llama-3.2-1b": ModelConfig(
         model_id="meta-llama/Llama-3.2-1B-Instruct",
         max_new_tokens=256,
-        temperature=0.7,
-        top_p=0.95,
+        temperature=0.0,
+        top_p=1.0,
     ),
     "mistral-7b": ModelConfig(
         model_id="mistralai/Mistral-7B-Instruct-v0.3",
-        max_new_tokens=512,
-        temperature=0.7,
-        top_p=0.95,
+        max_new_tokens=256,
+        temperature=0.0,
+        top_p=1.0,
     ),
     "llama-3-8b": ModelConfig(
         model_id="meta-llama/Meta-Llama-3-8B-Instruct",
-        max_new_tokens=512,
-        temperature=0.7,
-        top_p=0.95,
+        max_new_tokens=256,
+        temperature=0.0,
+        top_p=1.0,
     ),
     # Tiny model for testing
     "tiny-gpt2": ModelConfig(
         model_id="sshleifer/tiny-gpt2",
         max_new_tokens=50,
-        temperature=0.7,
-        top_p=0.95,
-    ),
-    # Pre-fine-tuned small model for comparison (fine-tuned upper bound)
-    # This represents a small model that has been fine-tuned on domain-specific QA data
-    # For medical QA, we use a small model fine-tuned on medical question answering
-    # Note: This is our "fine-tuned small upper bound" for comparison with ACE methods
-    "medqa_finetuned_small": ModelConfig(
-        model_id="microsoft/DialoGPT-small",  # Small conversational model as placeholder for fine-tuned QA model
-        max_new_tokens=256,
-        temperature=0.3,  # Lower temperature for more focused answers
-        top_p=0.9,
+        temperature=0.0,
+        top_p=1.0,
     ),
     # Qwen models - use greedy decoding to avoid CUDA numerical instability
     # These are parameter-matched rivals to TinyLlama (1.1B), Phi-3 (3.8B), and Mistral (7B)
@@ -135,23 +135,20 @@ def get_model_config(model_id_or_key: str) -> ModelConfig:
         return ModelConfig(model_id=model_id_or_key, temperature=0.0, top_p=1.0)
 
 
-# Task registry: maps task names to dataset paths and domains
-# Available tasks:
-#   - tatqa_tiny: Finance QA (3 examples)
-#   - medqa_tiny: Medical QA (3 examples)
-#   - iot_tiny: IoT/Anomaly Detection (5 examples)
-#   - sciq_tiny: Science MCQ (5 examples) - for MCQ-aware evaluation
-#   - sciq_test: Science MCQ (5 examples) - alias for testing
-#   - medqa_train: Medical QA training set (full MedQA dataset)
-#   - math_train: Math word problems training set
-#   - sciq_train: Science QA training set (11,679 examples)
-#   - sciq_val: Science QA validation set (1,000 examples)
+# Repository root, so task paths resolve from anywhere rather than from the
+# caller's working directory.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+# Task registry: maps task names to dataset paths and domains.
+#
+# Every entry here must correspond to a file that ships with the repository.
+# The registry previously advertised tatqa_tiny, medqa_train, math_train and
+# sciq_train, none of which exist in data/tasks -- so the README's own example
+# (--task-name tatqa_tiny) failed, and two of the three tasks in
+# experiment_grid.yaml could not run. Use `validate_task_registry()` (and the
+# accompanying test) to keep that from recurring.
 TASK_CONFIGS: Dict[str, Dict[str, str]] = {
     # Tiny datasets for smoke tests
-    "tatqa_tiny": {
-        "path": "data/tasks/tatqa_tiny.json",
-        "domain": "finance",
-    },
     "medqa_tiny": {
         "path": "data/tasks/medqa_tiny.json",
         "domain": "medical",
@@ -164,19 +161,11 @@ TASK_CONFIGS: Dict[str, Dict[str, str]] = {
         "path": "data/tasks/sciq_tiny.json",
         "domain": "science",
     },
-    # HPC full datasets
-    "medqa_train": {
-        "path": "data/tasks/train_med.jsonl",
-        "domain": "medical",
-    },
-    "math_train": {
-        "path": "data/tasks/test_math.jsonl",
-        "domain": "math",
-    },
-    "sciq_train": {
-        "path": "data/tasks/sciq_train.jsonl",
-        "domain": "science",
-    },
+    # Full SciQ splits.
+    #
+    # sciq_val is the adaptation split: build and freeze a playbook here, then
+    # evaluate read-only on sciq_test. The two share no questions (verified),
+    # so this keeps the playbook off the scored set.
     "sciq_val": {
         "path": "data/tasks/sciq_val.json",
         "domain": "science",
@@ -190,6 +179,36 @@ TASK_CONFIGS: Dict[str, Dict[str, str]] = {
         "domain": "science",
     },
 }
+
+
+def resolve_task_path(task_name: str) -> Path:
+    """
+    Absolute path to a task's dataset file.
+
+    Args:
+        task_name: Task name from TASK_CONFIGS.
+
+    Returns:
+        Absolute path, resolved against the repo root rather than the caller's
+        working directory.
+    """
+    path = Path(get_task_config(task_name)["path"])
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
+def validate_task_registry() -> Dict[str, str]:
+    """
+    Check that every registered task points at a file that exists.
+
+    Returns:
+        Mapping of task name -> missing path, empty when the registry is
+        consistent.
+    """
+    return {
+        name: str(resolve_task_path(name))
+        for name in TASK_CONFIGS
+        if not resolve_task_path(name).exists()
+    }
 
 
 def get_task_config(task_name: str) -> Dict[str, str]:

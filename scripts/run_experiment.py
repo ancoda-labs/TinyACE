@@ -38,7 +38,12 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from edge_slm_ace.utils.config import get_model_config, get_task_config, ModelConfig
+from edge_slm_ace.utils.config import (
+    get_model_config,
+    get_task_config,
+    resolve_task_path,
+    ModelConfig,
+)
 from edge_slm_ace.models.model_manager import load_model_and_tokenizer
 from edge_slm_ace.memory.playbook import Playbook, ScoringParams
 from edge_slm_ace.core.runner import run_dataset_baseline, run_dataset_ace, run_dataset_self_refine
@@ -382,14 +387,10 @@ Examples:
         if args.task_name:
             try:
                 task_config = get_task_config(args.task_name)
-                dataset_path_str = task_config["path"]
                 domain = task_config["domain"]
                 task_name = args.task_name
-                
-                # Resolve relative paths
-                if not Path(dataset_path_str).is_absolute():
-                    repo_root = Path(__file__).parent.parent
-                    dataset_path_str = str(repo_root / dataset_path_str)
+                # Resolved against the repo root, not the caller's cwd.
+                dataset_path_str = str(resolve_task_path(args.task_name))
             except KeyError as e:
                 print(f"Error: {e}")
                 return 1
