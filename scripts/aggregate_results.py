@@ -24,6 +24,7 @@ from pathlib import Path
 import pandas as pd
 
 from edge_slm_ace.reporting import (
+    health_issues,
     load_predictions,
     load_run_metrics,
     summarize_predictions,
@@ -46,57 +47,37 @@ _RUN_COLUMNS = [
 ]
 
 
-def print_health_warnings(runs: pd.DataFrame) -> None:
+def print_health_warnings(runs: pd.DataFrame) -> int:
     """
     Surface conditions that invalidate a run, rather than burying them.
 
+    Invalidating and limiting issues are distinguished by
+    `reporting.health`, not re-derived here: `compare_arms` acts on the same
+    classification when it decides what enters the test family, and two
+    definitions of "invalid" is how a confounded delta reaches a table.
+
     Args:
         runs: Frame from `load_run_metrics`.
+
+    Returns:
+        How many runs carry an invalidating issue.
     """
     if runs.empty:
-        return
+        return 0
 
-    if "truncation_rate" in runs.columns:
-        bad = runs[runs["truncation_rate"].fillna(0) > 0]
-        for _, row in bad.iterrows():
-            print(
-                f"  WARNING {row.get('arm_label', '?')} / {row.get('model_label', '?')}: "
-                f"{row['truncation_rate']:.1%} of prompts truncated -- results invalid",
-                file=sys.stderr,
-            )
+    invalid = 0
+    for _, row in runs.iterrows():
+        issues = health_issues(row.to_dict())
+        if not issues:
+            continue
+        label = f"{row.get('arm_label', '?')} / {row.get('model_label', '?')}"
+        if any(issue.invalidating for issue in issues):
+            invalid += 1
+        for issue in issues:
+            severity = "INVALID " if issue.invalidating else "limitation"
+            print(f"  {severity} {label}: {issue.message}", file=sys.stderr)
 
-    if "tokens_dropped" in runs.columns:
-        bad = runs[runs["tokens_dropped"].fillna(0) > 0]
-        for _, row in bad.iterrows():
-            print(
-                f"  WARNING {row.get('arm_label', '?')} / {row.get('model_label', '?')}: "
-                f"{row['tokens_dropped']:.0f} tokens dropped from the passage. A longer "
-                f"prefix truncates more, so this arm is not comparable with a shorter one",
-                file=sys.stderr,
-            )
-
-    if "relevance_active" in runs.columns:
-        inactive = runs[runs["relevance_active"] == False]  # noqa: E712
-        if not inactive.empty:
-            print(
-                f"  WARNING {len(inactive)} run(s) had no embedding backend, so "
-                f"retrieval was not query-conditioned",
-                file=sys.stderr,
-            )
-
-    # Estimated token counts are word-based, and words per lesson is roughly
-    # language-independent. Devanagari fertility is tokens per word, so an
-    # estimated count cannot see it -- it reports Nepali lessons as cheaper than
-    # English ones, which is the effect with its sign reversed.
-    if "token_counts_exact" in runs.columns:
-        estimated = runs[runs["token_counts_exact"] == False]  # noqa: E712
-        if not estimated.empty:
-            print(
-                f"  WARNING {len(estimated)} run(s) counted playbook tokens with "
-                f"the words * 1.3 estimate, which is fertility-blind -- do not "
-                f"compare their playbook_tokens across languages",
-                file=sys.stderr,
-            )
+    return invalid
 
 
 def main() -> int:
@@ -125,6 +106,13 @@ def main() -> int:
         help="Confidence level",
     )
     parser.add_argument("--quiet", action="store_true", help="Suppress the printed tables")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit non-zero if any run carries an invalidating health issue. "
+        "Off by default so `make report` still reaches compare_arms on a tree "
+        "with one bad cell; turn it on for CI or a pre-publication check.",
+    )
 
     args = parser.parse_args()
 
@@ -168,12 +156,22 @@ def main() -> int:
             print(display.to_string(index=False))
 
     print("\nRun health:", file=sys.stderr)
-    print_health_warnings(runs)
+    invalid = print_health_warnings(runs)
 
     print(
         "\nA difference between two arms is only a result if it survives "
-        "scripts/compare_arms.py.",
+        "scripts/compare_arms.py, which excludes an invalidated run from the "
+        "test family rather than testing it.",
     )
+
+    if invalid and args.strict:
+        print(
+            f"\nError: {invalid} run(s) carry an invalidating health issue and "
+            f"--strict was given. Do not report these numbers; re-run those "
+            f"cells.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

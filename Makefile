@@ -7,6 +7,7 @@
 #   make screen     Nepali screening run; gates entry to the main grid
 #   make grid       every arm, both languages, one seed
 #   make report     aggregate, then test every delta for significance
+#                   (STRICT=1 also fails on an invalidating health issue)
 #   make clean      remove caches and build artifacts
 #
 # A multi-seed study needs one results root per seed, because the layout has no
@@ -51,8 +52,13 @@ grid:
 
 # compare_arms is what decides whether a difference is a result. Never report a
 # delta that has not been through it.
+#
+# `make report STRICT=1` also fails the build on an invalidating health issue.
+# It is off by default because a non-zero aggregate_results stops make before
+# compare_arms runs, which would cost the whole tree's comparisons over one bad
+# cell. Either way compare_arms excludes an invalidated run from the family.
 report:
-	$(PY) -m scripts.aggregate_results --results-root $(RESULTS)
+	$(PY) -m scripts.aggregate_results --results-root $(RESULTS) $(if $(STRICT),--strict)
 	$(PY) -m scripts.compare_arms --results-root $(RESULTS)
 
 clean:
