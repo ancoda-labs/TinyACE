@@ -131,6 +131,35 @@ class TestHarnessIndices:
         with pytest.raises(KeyError):
             harness_indices("en", ["bel-deadbeefff-q1"])
 
+    def test_a_blank_line_does_not_shift_the_positions(self, tmp_path):
+        """Positions must number records, the way the harness loads them.
+
+        `enumerate(f)` counted blank lines the filter then dropped, so one blank
+        line shifted every position after it and the run scored a different
+        document while reporting a clean accuracy.
+        """
+        rows = [
+            {
+                "link": f"http://example.invalid/passage-{i}",
+                "question_number": 1,
+                "flores_passage": "p",
+                "question": "q",
+                "mc_answer1": "a",
+                "mc_answer2": "b",
+                "mc_answer3": "c",
+                "mc_answer4": "d",
+                "correct_answer_num": "1",
+            }
+            for i in range(3)
+        ]
+        path = tmp_path / "gappy.jsonl"
+        path.write_text(
+            "\n".join([json.dumps(rows[0]), "", json.dumps(rows[1]), json.dumps(rows[2])]) + "\n",
+            encoding="utf-8",
+        )
+        ids = [item_id(r) for r in rows]
+        assert harness_indices("en", ids, path=path) == [0, 1, 2]
+
 
 class TestSchema:
     def test_examples_carry_what_the_runner_needs(self, languages):

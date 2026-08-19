@@ -262,8 +262,16 @@ def harness_indices(
         KeyError: If an id is absent from this language file.
     """
     source = path or belebele_path(language)
+    # Number the records, not the lines. `enumerate(f)` counted blank lines that
+    # the filter then dropped, so one blank line anywhere in the file shifted
+    # every position after it -- and the harness, which skips blanks when it
+    # loads the split, would have scored the wrong document while reporting a
+    # clean accuracy. That is the failure this whole function exists to prevent.
+    positions = {}
     with open(source, "r", encoding="utf-8") as f:
-        positions = {item_id(json.loads(line)): i for i, line in enumerate(f) if line.strip()}
+        for line in f:
+            if line.strip():
+                positions[item_id(json.loads(line))] = len(positions)
 
     wanted = set(item_ids)
     missing = wanted - positions.keys()
