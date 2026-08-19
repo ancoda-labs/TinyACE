@@ -210,7 +210,8 @@ def align_on_key(
         results_a: Per-item result dicts for arm A.
         results_b: Per-item result dicts for arm B.
         metric: Correctness field to compare. "is_correct" is what the runners
-            write; "oma_correct" appears only in results from the old pipeline.
+            write. Any other column has to be named explicitly, because the
+            only other one that ever existed belongs to the withdrawn results.
         key: Identifier field to join on.
 
     Returns:

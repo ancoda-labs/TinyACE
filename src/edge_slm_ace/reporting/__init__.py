@@ -8,6 +8,7 @@ re-derived by each consumer.
 
 from edge_slm_ace.reporting.layout import CELL_DEPTH, Cell, cell_dir, parse_cell
 from edge_slm_ace.reporting.load import (
+    PRIMARY_METRIC,
     load_predictions,
     load_run_metrics,
     normalize_columns,
@@ -33,6 +34,7 @@ __all__ = [
     "CELL_DEPTH",
     "Arm",
     "Cell",
+    "PRIMARY_METRIC",
     "arm_label",
     "arm_order",
     "cell_dir",

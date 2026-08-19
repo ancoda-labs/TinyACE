@@ -170,7 +170,11 @@ class TestHolmBonferroni:
 
 
 class TestLegacyMetricNameIsStillReadable:
-    """`oma_correct` is not written by any current runner, but old trees have it."""
+    """An old tree is readable, but only when the column is named explicitly.
+
+    Nothing picks `oma_correct` on its own any more. It is not written by any
+    current runner, and the trees that carry it are the withdrawn results.
+    """
 
     def test_an_old_results_file_can_still_be_compared(self):
         a = [{"qid": "q1", "oma_correct": 1}, {"qid": "q2", "oma_correct": 0}]

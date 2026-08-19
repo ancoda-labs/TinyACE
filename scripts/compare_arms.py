@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from edge_slm_ace.eval.stats import compare_arms, format_comparison, holm_bonferroni
-from edge_slm_ace.reporting import arm_label, get_arm, parse_cell, reference_for
+from edge_slm_ace.reporting import PRIMARY_METRIC, arm_label, get_arm, parse_cell, reference_for
 
 
 def load_predictions(path: Path) -> List[Dict]:
@@ -159,13 +159,15 @@ def pair_with_explicit_reference(
 
 
 def _pick_metric(rows: List[Dict], requested: Optional[str]) -> str:
-    """Choose the correctness field to compare on."""
-    if requested:
-        return requested
-    # Prefer OMA on MCQ tasks; exact match is ~0 for any verbose model.
-    if any(r.get("oma_correct") is not None for r in rows):
-        return "oma_correct"
-    return "is_correct"
+    """
+    Choose the correctness field to compare on.
+
+    `PRIMARY_METRIC` unless the caller names something else. This used to
+    prefer `oma_correct` whenever any row carried it, which after the move to
+    loglikelihood scoring could only ever mean one thing: a withdrawn SciQ
+    result quietly deciding a live comparison.
+    """
+    return requested or PRIMARY_METRIC
 
 
 def main() -> int:
@@ -195,8 +197,9 @@ def main() -> int:
         "--metric",
         type=str,
         default=None,
-        choices=["oma_correct", "is_correct"],
-        help="Correctness field (default: oma_correct when present)",
+        help=f"Correctness column to compare on (default: {PRIMARY_METRIC}, "
+        f"which is what every runner writes). Naming another one is how a "
+        f"pre-harness results tree is read, deliberately and on the record.",
     )
     parser.add_argument(
         "--confidence",

@@ -157,16 +157,16 @@ def load_predictions(results_root: Path) -> pd.DataFrame:
     return df
 
 
-def _primary_metric(df: pd.DataFrame) -> str:
-    """
-    Pick the correctness column to aggregate.
-
-    OMA where available; exact match otherwise. Exact match is near zero for
-    any verbose model, so it must not be chosen when OMA exists.
-    """
-    if "oma_correct" in df.columns and df["oma_correct"].notna().any():
-        return "oma_correct"
-    return "is_correct"
+# The correctness column every current runner writes.
+#
+# There used to be a preference for `oma_correct` here, and in
+# `compare_arms._pick_metric`, on the reasoning that exact match is near zero
+# for a verbose model. Nothing is generated any more -- correctness is the
+# loglikelihood of A-D, decided by the harness -- so no runner writes that
+# column, and the only trees that carry it are the withdrawn SciQ results. The
+# preference could therefore do exactly one thing: silently report a withdrawn
+# metric in place of the live one whenever both were present.
+PRIMARY_METRIC = "is_correct"
 
 
 def summarize_predictions(
@@ -185,21 +185,29 @@ def summarize_predictions(
     Returns:
         One row per group with n, accuracy, ci_low, ci_high and ci_halfwidth.
         `ci_halfwidth` is what a claimed improvement must be compared against.
+
+    Raises:
+        KeyError: If the rows carry no `is_correct` column, which means they
+            were not written by this pipeline.
     """
     from edge_slm_ace.eval.stats import summarize_accuracy
 
     if df.empty:
         return pd.DataFrame()
 
+    if PRIMARY_METRIC not in df.columns:
+        raise KeyError(
+            f"No '{PRIMARY_METRIC}' column in these predictions. Every current "
+            f"runner writes it; a tree without it is from the retired pipeline, "
+            f"whose results are withdrawn and must not be aggregated."
+        )
+
     group_by = group_by or [c for c in ("model_label", "language", "arm") if c in df.columns]
 
     rows = []
     for keys, group in df.groupby(group_by, dropna=False):
         keys = keys if isinstance(keys, tuple) else (keys,)
-        # Chosen per group, not per frame. Choosing once over the whole frame
-        # picked oma_correct as soon as any MCQ run was present, so a non-MCQ
-        # task in the same results root reported 0.0% accuracy with n=0.
-        metric = _primary_metric(group)
+        metric = PRIMARY_METRIC
         stats = summarize_accuracy(group[metric].dropna(), confidence=confidence)
         row = dict(zip(group_by, keys))
         row.update(

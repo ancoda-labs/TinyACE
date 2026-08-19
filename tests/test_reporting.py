@@ -228,7 +228,14 @@ class TestSummarize:
         assert set(summary["arm"]) == {"baseline", "tinyace"}
         assert set(summary["n"]) == {50}
 
-    def test_prefers_oma_over_exact_match(self):
+    def test_a_withdrawn_metric_does_not_displace_the_live_one(self):
+        """`oma_correct` used to win here, which is the whole defect.
+
+        No runner has written that column since scoring moved to the harness,
+        so the only rows carrying it come from the withdrawn SciQ results. A
+        preference for it could therefore only ever report a withdrawn number
+        in place of the live one.
+        """
         df = pd.DataFrame(
             [
                 {"qid": f"q{i}", "arm": "baseline", "is_correct": 1, "oma_correct": 0}
@@ -236,12 +243,18 @@ class TestSummarize:
             ]
         )
         summary = summarize_predictions(df, group_by=["arm"])
-        assert summary["metric"].iloc[0] == "oma_correct"
+        assert summary["metric"].iloc[0] == "is_correct"
+        assert summary["accuracy"].iloc[0] == 1.0
 
-    def test_falls_back_to_exact_match_without_oma(self):
+    def test_the_metric_is_the_one_every_runner_writes(self):
         df = pd.DataFrame([{"qid": f"q{i}", "arm": "baseline", "is_correct": 1} for i in range(4)])
         summary = summarize_predictions(df, group_by=["arm"])
         assert summary["metric"].iloc[0] == "is_correct"
+
+    def test_predictions_without_the_metric_are_refused(self):
+        df = pd.DataFrame([{"qid": f"q{i}", "arm": "baseline", "oma_correct": 1} for i in range(4)])
+        with pytest.raises(KeyError, match="retired pipeline"):
+            summarize_predictions(df, group_by=["arm"])
 
     def test_empty_input_yields_empty_output(self):
         assert summarize_predictions(pd.DataFrame()).empty
