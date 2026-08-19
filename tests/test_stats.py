@@ -89,30 +89,30 @@ class TestMcNemar:
 
 class TestAlignment:
     def test_aligns_on_shared_ids_regardless_of_order(self):
-        a = [{"qid": "q2", "oma_correct": 1}, {"qid": "q1", "oma_correct": 0}]
-        b = [{"qid": "q1", "oma_correct": 1}, {"qid": "q2", "oma_correct": 1}]
+        a = [{"qid": "q2", "is_correct": 1}, {"qid": "q1", "is_correct": 0}]
+        b = [{"qid": "q1", "is_correct": 1}, {"qid": "q2", "is_correct": 1}]
         a_vals, b_vals, keys = align_on_key(a, b)
         assert keys == ["q1", "q2"]
         assert a_vals == [0, 1]
         assert b_vals == [1, 1]
 
     def test_drops_items_missing_from_either_arm(self):
-        a = [{"qid": "q1", "oma_correct": 1}, {"qid": "q2", "oma_correct": 1}]
-        b = [{"qid": "q1", "oma_correct": 0}]
+        a = [{"qid": "q1", "is_correct": 1}, {"qid": "q2", "is_correct": 1}]
+        b = [{"qid": "q1", "is_correct": 0}]
         a_vals, b_vals, keys = align_on_key(a, b)
         assert keys == ["q1"]
         assert len(a_vals) == len(b_vals) == 1
 
     def test_drops_items_with_a_missing_metric(self):
-        a = [{"qid": "q1", "oma_correct": None}, {"qid": "q2", "oma_correct": 1}]
-        b = [{"qid": "q1", "oma_correct": 1}, {"qid": "q2", "oma_correct": 1}]
+        a = [{"qid": "q1", "is_correct": None}, {"qid": "q2", "is_correct": 1}]
+        b = [{"qid": "q1", "is_correct": 1}, {"qid": "q2", "is_correct": 1}]
         _, _, keys = align_on_key(a, b)
         assert keys == ["q2"]
 
 
 class TestCompareArms:
     def _rows(self, n_correct, n=50):
-        return [{"qid": f"q{i}", "oma_correct": 1 if i < n_correct else 0} for i in range(n)]
+        return [{"qid": f"q{i}", "is_correct": 1 if i < n_correct else 0} for i in range(n)]
 
     def test_verdict_refuses_to_rank_noise(self):
         comparison = compare_arms(
@@ -167,3 +167,14 @@ class TestHolmBonferroni:
 
     def test_empty_family(self):
         assert holm_bonferroni([]) == []
+
+
+class TestLegacyMetricNameIsStillReadable:
+    """`oma_correct` is not written by any current runner, but old trees have it."""
+
+    def test_an_old_results_file_can_still_be_compared(self):
+        a = [{"qid": "q1", "oma_correct": 1}, {"qid": "q2", "oma_correct": 0}]
+        b = [{"qid": "q1", "oma_correct": 1}, {"qid": "q2", "oma_correct": 1}]
+
+        result = compare_arms(a, b, metric="oma_correct")
+        assert result["n_compared"] == 2

@@ -2,212 +2,24 @@
 
 The Generator is gone. Under loglikelihood option scoring the model never
 produces an answer to parse -- it ranks four fixed continuations -- so the
-generator prompt and the citation machinery it carried have no role in the
-primary track. parse_generator_output and extract_answer are kept because the
-secondary generative track still has text to parse.
+generator prompt and the citation machinery it carried have no role here.
+
+`parse_generator_output` and `extract_answer` were kept against a generative
+track that does not exist: `generative_cot` is registered `implemented=False`,
+nothing imported them but their own tests, and they parse the SciQ answer
+formats ("$100,000", a trailing numeric) rather than the letter/option-text
+cascade that track would need. They are gone; a generative arm will want a
+different parser, written against its own prompt.
 """
 
 import re
-from typing import List, Optional, Tuple
+from typing import List
 
 from edge_slm_ace.memory.playbook import (
     _GENERIC_FLOOR,
     Playbook,
     compute_vagueness_score,
 )
-
-# Lines that end a section without starting one.
-#
-# Retained for the secondary generative track, where the model is asked to name
-# the strategies it applied. That block arrives *after* the answer, and without
-# a terminator the section parser folds it into the answer -- which corrupts the
-# scored prediction in the arm that cites and leaves the arm that does not
-# untouched.
-SECTION_TERMINATORS = ["used strategies:", "used strategy:"]
-
-
-def _drop_from_terminator(lines: List[str]) -> List[str]:
-    """
-    Truncate at the first terminator line.
-
-    Args:
-        lines: Non-empty, stripped output lines.
-
-    Returns:
-        Everything before the citation block. The whole list when there is
-        none, so non-ACE output is unaffected.
-    """
-    for i, line in enumerate(lines):
-        if any(line.lower().startswith(k) for k in SECTION_TERMINATORS):
-            return lines[:i]
-    return lines
-
-
-def parse_generator_output(text: str) -> Tuple[str, Optional[str]]:
-    """
-    Parse the Generator's output to extract reasoning and answer.
-
-    This parser is designed to be robust to various output formats:
-    - Explicit "Reasoning:" and "Answer:" sections
-    - Just an answer without structure
-    - Malformed outputs with missing delimiters
-    - Numeric answers embedded in text
-
-    The Generator output ideally has the format:
-        Reasoning:
-        [reasoning text]
-
-        Answer:
-        [answer text]
-
-    But we try to recover even when the format is different.
-
-    Args:
-        text: Raw output from the Generator model.
-
-    Returns:
-        Tuple of (answer, reasoning).
-        - answer: The extracted answer (never None, at worst returns cleaned text)
-        - reasoning: The extracted reasoning (may be None if not found)
-    """
-    if not text or not text.strip():
-        return "", None
-
-    text = text.strip()
-    reasoning = None
-    answer = None
-
-    import re
-
-    # Strategy 1: Section-based parsing (most reliable for structured output)
-    reasoning_keywords = ["reasoning:", "step-by-step:", "steps:", "solution:"]
-    answer_keywords = ["answer:", "final answer:", "result:", "therefore:"]
-
-    lines = text.split("\n")
-    current_section = None
-    reasoning_lines = []
-    answer_lines = []
-
-    for line in lines:
-        line_stripped = line.strip()
-        line_lower = line_stripped.lower()
-
-        # Check if this line starts a new section
-        is_reasoning_header = any(line_lower.startswith(k) for k in reasoning_keywords)
-        is_answer_header = any(line_lower.startswith(k) for k in answer_keywords)
-        is_terminator = any(line_lower.startswith(k) for k in SECTION_TERMINATORS)
-
-        if is_terminator:
-            # Closes whatever section is open and contributes nothing. The
-            # answer section is last in the Generator's response format, so
-            # without this the citation block the ACE prompt asks for was
-            # appended to the answer -- and only the ACE arm is asked for it,
-            # so exact match was destroyed in one arm and intact in the other.
-            current_section = None
-        elif is_answer_header:
-            current_section = "answer"
-            # Extract text after the keyword
-            for keyword in answer_keywords:
-                if line_lower.startswith(keyword):
-                    after_keyword = line_stripped[len(keyword) :].strip()
-                    if after_keyword:
-                        answer_lines.append(after_keyword)
-                    break
-        elif is_reasoning_header:
-            current_section = "reasoning"
-            for keyword in reasoning_keywords:
-                if line_lower.startswith(keyword):
-                    after_keyword = line_stripped[len(keyword) :].strip()
-                    if after_keyword:
-                        reasoning_lines.append(after_keyword)
-                    break
-        elif current_section == "reasoning" and line_stripped:
-            reasoning_lines.append(line_stripped)
-        elif current_section == "answer" and line_stripped:
-            answer_lines.append(line_stripped)
-
-    if reasoning_lines:
-        reasoning = "\n".join(reasoning_lines).strip()
-
-    if answer_lines:
-        answer = "\n".join(answer_lines).strip()
-
-    # Strategy 3: Fallback - extract last meaningful content
-    if not answer:
-        lines = [l.strip() for l in text.split("\n") if l.strip()]
-        # Drop the citation block and everything under it before scanning
-        # backwards. When the model emits no "Answer:" header at all -- routine
-        # for a 1.1B model -- the last line is the citation the prompt asked
-        # for, and a reverse scan would return "1, 3" as the answer.
-        lines = _drop_from_terminator(lines)
-
-        if lines:
-            # Try to find the last line that looks like an answer
-            # (contains a number, is short, or is after "therefore"/"so"/"thus")
-            for i in range(len(lines) - 1, -1, -1):
-                line = lines[i]
-                line_lower = line.lower()
-
-                # Skip lines that are clearly just labels
-                if line_lower in ["reasoning:", "answer:", "steps:", "solution:"]:
-                    continue
-
-                # Found a content line
-                # If it starts with a transition word, take what follows
-                for prefix in ["therefore,", "so,", "thus,", "hence,"]:
-                    if line_lower.startswith(prefix):
-                        answer = line[len(prefix) :].strip()
-                        break
-
-                if not answer:
-                    answer = line
-                break
-
-    # Strategy 4: Last resort - just clean and return the text
-    if not answer:
-        # Remove common prefixes and return
-        answer = text.strip()
-        # Try to extract just the final value if text ends with a number
-        final_number = re.search(r"(\$?[\d,]+\.?\d*%?)\s*$", answer)
-        if final_number:
-            answer = final_number.group(1)
-
-    # Clean up the answer
-    if answer:
-        # Remove trailing punctuation except for % and .
-        answer = answer.rstrip(".,;:!?")
-        if answer.endswith(".") or answer.endswith("%"):
-            pass  # Keep these
-        answer = answer.strip()
-
-    return answer or "", reasoning
-
-
-def extract_answer(raw_output: str) -> Tuple[str, Optional[str]]:
-    """
-    Extract the final answer from a model generation.
-
-    Every arm must go through this one function. Previously the ACE arm ran
-    parse_generator_output while the baseline arm scored the raw generation,
-    so a difference attributed to the playbook could just as easily have been
-    a difference in parsing. That asymmetry was most damaging for small
-    models: parse_generator_output falls through to "return the whole cleaned
-    text" when no `Answer:` header is emitted, which is exactly what a 1.1B
-    model does, so the ACE arm was scored on a full reasoning dump while the
-    baseline arm was scored on a short answer.
-
-    Args:
-        raw_output: The raw generation.
-
-    Returns:
-        Tuple of (answer, reasoning). `answer` falls back to the stripped raw
-        output rather than the empty string.
-    """
-    answer, reasoning = parse_generator_output(raw_output)
-    if not answer:
-        answer = (raw_output or "").strip()
-    return answer, reasoning
-
 
 # Lines that introduce a list rather than being one of its items.
 _PREAMBLE_RE = re.compile(

@@ -197,7 +197,7 @@ def summarize_accuracy(
 def align_on_key(
     results_a: Sequence[Dict],
     results_b: Sequence[Dict],
-    metric: str = "oma_correct",
+    metric: str = "is_correct",
     key: str = "qid",
 ) -> Tuple[List[int], List[int], List[str]]:
     """
@@ -209,7 +209,8 @@ def align_on_key(
     Args:
         results_a: Per-item result dicts for arm A.
         results_b: Per-item result dicts for arm B.
-        metric: Correctness field to compare ("oma_correct" or "is_correct").
+        metric: Correctness field to compare. "is_correct" is what the runners
+            write; "oma_correct" appears only in results from the old pipeline.
         key: Identifier field to join on.
 
     Returns:
@@ -238,7 +239,7 @@ def compare_arms(
     results_b: Sequence[Dict],
     name_a: str = "A",
     name_b: str = "B",
-    metric: str = "oma_correct",
+    metric: str = "is_correct",
     key: str = "qid",
     confidence: float = 0.95,
 ) -> Dict:
