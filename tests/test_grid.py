@@ -150,3 +150,49 @@ class TestLanguageOrdering:
 
     def test_the_grid_names_the_language_it_borrows_from(self):
         assert source_languages(GRID) == ["en"]
+
+
+class TestUnscorableRunWritesNothing:
+    """A run the harness reported no accuracy for must not leave a cell behind.
+
+    `metrics.json` and `predictions.jsonl` were written before the accuracy was
+    formatted for the console, so a run whose task no longer reports `acc` died
+    on the format string with both artefacts already on disk. `is_complete`
+    reads that as a finished result for this commit and seed, so the rerun
+    skipped the cell and it stayed empty for the rest of the study.
+    """
+
+    def run(self, tmp_path, monkeypatch):
+        from scripts import run_arm
+
+        # The harness ran and logged samples; it just no longer reports `acc`,
+        # which is what a renamed metric upstream looks like from here.
+        results = {
+            "results": {"belebele_eng_Latn": {"acc_norm,none": 0.5}},
+            "tinyace": {"truncated_prompts": 0, "truncation_rate": 0.0, "tokens_dropped": 0},
+        }
+        monkeypatch.setattr(run_arm, "run_frozen_eval", lambda *a, **k: results)
+        monkeypatch.setattr(run_arm, "per_item_correctness", lambda *a, **k: {"q1": 1, "q2": 0})
+        return run_arm.main(
+            [
+                "--model",
+                "tiny-gpt2",
+                "--language",
+                "en",
+                "--arm",
+                "scaffold_control",
+                "--output-dir",
+                str(tmp_path),
+                "--limit",
+                "2",
+            ]
+        )
+
+    def test_a_missing_accuracy_fails_the_run(self, tmp_path, monkeypatch):
+        assert self.run(tmp_path, monkeypatch) == 1
+
+    def test_a_missing_accuracy_leaves_no_cell(self, tmp_path, monkeypatch):
+        self.run(tmp_path, monkeypatch)
+        assert not (tmp_path / "metrics.json").exists()
+        assert not (tmp_path / "predictions.jsonl").exists()
+        assert is_complete(tmp_path, 42, None) is False

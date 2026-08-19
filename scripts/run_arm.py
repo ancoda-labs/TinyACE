@@ -219,6 +219,20 @@ def main(argv=None, lm=None) -> int:
     )
 
     accuracy = accuracy_of(results, args.language)
+    if accuracy is None:
+        # Fail here, before anything is written. `metrics.json` and
+        # `predictions.jsonl` used to be written first and the run then died
+        # formatting a None accuracy -- which left a cell that
+        # `run_grid.is_complete()` reads as a finished result for this commit
+        # and seed, so the rerun skipped it and the cell stayed empty.
+        print(
+            f"Error: the harness reported no 'acc' for this run. The task's "
+            f"metric list changed upstream, or the task produced no results. "
+            f"Nothing was written to {args.output_dir}.",
+            file=sys.stderr,
+        )
+        return 1
+
     # Verifies the harness scored the split we asked for, not merely n of them.
     per_item = per_item_correctness(results, args.language, expected_ids=eval_ids)
 
