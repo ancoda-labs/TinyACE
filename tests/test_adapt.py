@@ -171,3 +171,41 @@ class TestFrozenLessons:
 
     def test_empty_playbook_gives_the_control_prefix(self):
         assert frozen_lessons(Playbook(), "belebele_en") == []
+
+
+class TestFrozenLessonsAgeTheirCandidates:
+    """
+    frozen_lessons() passed current_step=0, so every entry's age was 0 and the
+    recency bonus gamma was a constant across candidates. A constant cannot
+    reorder anything, so recency had no effect on the prefix the model is
+    actually shown -- and tinyace_ablate_no_recency was ablating a term that was
+    already inert there. Playbook.prune carried the identical defect and was
+    fixed; this one survived in the function that decides what ships.
+    """
+
+    def _playbook(self):
+        playbook = Playbook()
+        stale = playbook.add_entry("d", "Compare the option against the passage wording", 1)
+        fresh = playbook.add_entry("d", "Eliminate an option that reverses the cause", 2)
+        # Same everything except when they were last used.
+        stale.last_used_at = 1
+        fresh.last_used_at = 200
+        return playbook, stale, fresh
+
+    def test_the_recently_used_lesson_ranks_first(self):
+        playbook, _, fresh = self._playbook()
+        assert frozen_lessons(playbook, "d", top_k=1) == [fresh.text]
+
+    def test_an_explicit_step_is_honoured(self):
+        playbook, _, fresh = self._playbook()
+        assert frozen_lessons(playbook, "d", top_k=1, current_step=500) == [fresh.text]
+
+    def test_recency_actually_changes_the_ranking(self):
+        """The regression: with step 0 both orderings were identical."""
+        playbook, stale, fresh = self._playbook()
+        aged = frozen_lessons(playbook, "d", top_k=2)
+
+        stale.last_used_at, fresh.last_used_at = 200, 1
+        reversed_ = frozen_lessons(playbook, "d", top_k=2)
+
+        assert aged != reversed_

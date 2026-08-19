@@ -279,7 +279,12 @@ def _default_generate(scorer: OptionScorer) -> Callable[[str, int], str]:
     return generate
 
 
-def frozen_lessons(playbook: Playbook, domain: str, top_k: int = 5) -> List[str]:
+def frozen_lessons(
+    playbook: Playbook,
+    domain: str,
+    top_k: int = 5,
+    current_step: Optional[int] = None,
+) -> List[str]:
     """
     The lessons a frozen evaluation will show, in rank order.
 
@@ -287,15 +292,29 @@ def frozen_lessons(playbook: Playbook, domain: str, top_k: int = 5) -> List[str]
     `system_instruction` is one static prefix for the whole split. This selects
     the top entries by retention score alone, which is what that prefix holds.
 
+    `current_step` matters and used to be hardcoded to 0. Every entry's age was
+    then `max(0, 0 - last_used_at) == 0`, so every candidate received the
+    identical recency bonus gamma -- a constant, which cannot reorder anything.
+    Recency was inert in the one selection whose output is actually shown to the
+    model, and `tinyace_ablate_no_recency` was ablating a term that had no
+    effect on the frozen prefix. This is the same defect `Playbook.prune` was
+    fixed for, in the function that decides what ships.
+
     Args:
         playbook: The adapted playbook.
         domain: Domain to draw from.
         top_k: How many lessons the prefix carries.
+        current_step: The step to age entries against. Defaults to the last step
+            any entry was used at, which is the end of adaptation -- and is
+            recoverable from a playbook loaded off disk, so the cross-lingual
+            arm gets the same treatment as a freshly adapted one.
 
     Returns:
         Lesson texts, best first.
     """
-    entries = playbook.get_top_k(domain, k=top_k, current_step=0, query=None)
+    if current_step is None:
+        current_step = max((e.last_used_at for e in playbook.entries), default=0)
+    entries = playbook.get_top_k(domain, k=top_k, current_step=current_step, query=None)
     return [e.text for e in entries]
 
 
