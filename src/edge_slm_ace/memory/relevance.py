@@ -81,7 +81,8 @@ class LessonRelevance:
         print(
             f"[relevance] could not load '{name}' ({reason}); playbook "
             f"retrieval falls back to retention-only ranking and is NOT "
-            f"query-conditioned. Install the 'metrics' extra to enable it."
+            f"query-conditioned. Install the 'retrieval' extra to enable it: "
+            f'pip install -e ".[retrieval]"'
         )
 
     @property

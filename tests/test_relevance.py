@@ -5,6 +5,7 @@ import pytest
 
 from edge_slm_ace.memory.playbook import Playbook, ScoringParams
 from edge_slm_ace.memory.relevance import LessonRelevance, blend
+from edge_slm_ace.utils import REPO_ROOT
 
 
 class _FakeEncoder:
@@ -119,3 +120,23 @@ class TestQueryConditionedRetrieval:
 
         assert len(top) == 2, "Retrieval must still work without an encoder"
         LessonRelevance.reset()
+
+
+class TestFallbackMessage:
+    def test_it_names_an_extra_pyproject_actually_defines(self):
+        """The message said 'metrics'; the extra is 'retrieval'.
+
+        This is the one instruction a user gets at the moment retrieval
+        silently stops being query-conditioned, so it has to name an extra
+        that installs.
+        """
+        import re
+        import tomllib
+
+        source = (REPO_ROOT / "src/edge_slm_ace/memory/relevance.py").read_text(encoding="utf-8")
+        pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        defined = set(pyproject["project"]["optional-dependencies"])
+
+        named = set(re.findall(r"the '([a-z]+)' extra", source))
+        assert named, "the fallback message must tell the user how to fix it"
+        assert named <= defined, f"{named - defined} is not an extra pyproject defines"
