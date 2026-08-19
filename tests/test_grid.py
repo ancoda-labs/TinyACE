@@ -13,7 +13,14 @@ from edge_slm_ace.memory.playbook import Playbook
 from edge_slm_ace.adapt import frozen_lessons
 from edge_slm_ace.reporting import get_arm
 from edge_slm_ace.utils import CHANCE_FLOOR, SCREENING_FLOOR, SCREENING_N, screening_verdict
-from scripts.run_grid import GRID, cell_dir, is_complete, plan
+from scripts.run_grid import (
+    GRID,
+    cell_dir,
+    is_complete,
+    order_languages,
+    plan,
+    source_languages,
+)
 
 
 class TestGridPlan:
@@ -116,3 +123,30 @@ class TestScreeningRule:
 
         low, _ = wilson_interval(int(0.35 * SCREENING_N), SCREENING_N)
         assert low > CHANCE_FLOOR, "a 35% model must be distinguishable from chance"
+
+
+class TestLanguageOrdering:
+    """
+    Ordering the arms was not enough; the languages need ordering too.
+
+    `tinyace_playbook_en` borrows English specifically. On `--languages ne en`
+    Nepali ran first and the arm failed on a missing path, and on
+    `--languages ne` the source was never going to exist at all -- both silently,
+    one cell at a time, after a model had been loaded.
+    """
+
+    def test_a_borrowed_from_language_runs_first(self):
+        ordered = order_languages(["ne", "en"], GRID)
+        assert ordered.index("en") < ordered.index("ne")
+
+    def test_the_requested_order_is_otherwise_kept(self):
+        assert order_languages(["en", "ne"], GRID) == ["en", "ne"]
+
+    def test_the_source_cell_is_planned_before_the_borrower(self):
+        jobs = plan(["m"], ["ne", "en"], GRID)
+        order = [(j["language"], j["arm"].key) for j in jobs]
+
+        assert order.index(("en", "tinyace")) < order.index(("ne", "tinyace_playbook_en"))
+
+    def test_the_grid_names_the_language_it_borrows_from(self):
+        assert source_languages(GRID) == ["en"]

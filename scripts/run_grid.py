@@ -99,15 +99,43 @@ def is_complete(directory: Path, seed: int, commit: Optional[str]) -> bool:
     return commit is None or recorded.get("environment", {}).get("git_commit") == commit
 
 
+def source_languages(arms: List[ArmSpec]) -> List[str]:
+    """Languages some arm borrows a playbook from, by name."""
+    return sorted({a.playbook_from[1] for a in arms if a.playbook_from and a.playbook_from[1]})
+
+
+def order_languages(languages: List[str], arms: List[ArmSpec]) -> List[str]:
+    """
+    Put every borrowed-from language ahead of the rest.
+
+    Ordering arms was not enough. `tinyace_playbook_en` borrows English
+    specifically, so on `--languages ne en` -- or on `--languages ne` alone --
+    Nepali ran first, found no English playbook, and the arm was recorded as a
+    failure with no explanation beyond a missing path.
+
+    Args:
+        languages: The requested languages, in the requested order.
+        arms: The grid.
+
+    Returns:
+        The same languages, with any that another language's arm borrows from
+        moved to the front. Relative order is otherwise preserved.
+    """
+    sources = set(source_languages(arms))
+    return [l for l in languages if l in sources] + [l for l in languages if l not in sources]
+
+
 def plan(models: List[str], languages: List[str], arms: List[ArmSpec]) -> List[Dict]:
     """
     Build the ordered job list.
 
     Returns:
         One dict per cell, model-outer so a model is loaded once, and with any
-        borrowing arm placed after the arm it borrows from.
+        borrowing arm placed after the arm it borrows from -- in both
+        dimensions, arm and language.
     """
     jobs = []
+    languages = order_languages(languages, arms)
     for model_key in models:
         # Arms that adapt run first, so a borrowing arm always finds its source.
         ordered = [a for a in arms if a.playbook_from is None] + [
@@ -176,6 +204,17 @@ def main(argv=None) -> int:
             f"Error: no runner for: {', '.join(unimplemented)}. Remove them "
             f"from GRID or implement them; running one writes another arm's "
             f"result under its label.",
+            file=sys.stderr,
+        )
+        return 1
+
+    absent = [l for l in source_languages(GRID) if l not in args.languages]
+    if absent:
+        # Every borrowing arm would fail one at a time on a missing path; say it
+        # once, before a model is loaded.
+        print(
+            f"Error: arms borrow a playbook from {', '.join(absent)}, which is "
+            f"not in --languages. Add it, or drop the arms that need it.",
             file=sys.stderr,
         )
         return 1
