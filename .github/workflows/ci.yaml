@@ -44,10 +44,32 @@ jobs:
 
     # One real adapt-then-evaluate run. The unit tests stub the model, so only
     # this exercises the harness integration end to end.
-    - name: Smoke test one arm end to end
+    #
+    # The arm has to be one that adapts. This ran `scaffold_control`, which is
+    # in NO_PLAYBOOK_ARMS, so the loop this project owns -- Reflector, Curator,
+    # add_entry, prune, freeze, save -- was never executed in CI at all,
+    # underneath a comment claiming it was.
+    - name: Smoke test the adapt-then-evaluate loop
       run: |
         python -m scripts.run_arm \
-          --model tiny-gpt2 --language en --arm scaffold_control \
+          --model tiny-gpt2 --language en --arm tinyace \
           --output-dir "$RUNNER_TEMP/arm" --limit 4 --device cpu --no-chat-template
         test -s "$RUNNER_TEMP/arm/metrics.json"
         test -s "$RUNNER_TEMP/arm/predictions.jsonl"
+        test -f "$RUNNER_TEMP/arm/playbook.jsonl"
+        test -s "$RUNNER_TEMP/arm/adaptation_log.csv"
+
+    # The control arm takes the other branch through run_arm, so it is not
+    # covered by the run above.
+    - name: Smoke test the no-playbook branch
+      run: |
+        python -m scripts.run_arm \
+          --model tiny-gpt2 --language en --arm scaffold_control \
+          --output-dir "$RUNNER_TEMP/control" --limit 4 --device cpu --no-chat-template
+        test -s "$RUNNER_TEMP/control/metrics.json"
+
+    # Every arm the grid plans must at least be reachable, in the order it
+    # plans them. Cheap, and it catches an unregistered or unrunnable arm
+    # before a GPU is booked.
+    - name: Check the grid plan
+      run: python -m scripts.run_grid --models tiny-gpt2 --dry-run --results-root "$RUNNER_TEMP/grid"
