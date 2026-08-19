@@ -110,7 +110,15 @@ def main(argv=None, lm=None) -> int:
         print(f"  frozen playbook from {args.init_playbook}: {len(playbook.entries)} entries")
 
     elif needs_playbook:
-        scorer = OptionScorer(spec.hf_id, device=args.device, batch_size=args.batch_size, lm=lm)
+        # The scorer must render prompts the way this arm's evaluation will,
+        # so the same flag drives both.
+        scorer = OptionScorer(
+            spec.hf_id,
+            device=args.device,
+            batch_size=args.batch_size,
+            lm=lm,
+            apply_chat_template=not args.no_chat_template,
+        )
         print("  adapting...")
         adapt_summary = adapt_playbook(
             scorer,

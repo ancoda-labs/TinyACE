@@ -251,10 +251,22 @@ def adapt_playbook(
 
 
 def _default_generate(scorer: OptionScorer) -> Callable[[str, int], str]:
-    """Generation through the scorer's own model, so one checkpoint serves both."""
+    """
+    Generation through the scorer's own model, so one checkpoint serves both.
+
+    The Reflector and Curator prompts are instructions, so they go through the
+    model's chat template whenever scoring does. An instruct checkpoint handed a
+    raw completion prompt continues the text instead of answering it, which for
+    the Reflector means lessons that are a continuation of the question rather
+    than a strategy for reading it.
+    """
+    chat_template = getattr(scorer.lm, "apply_chat_template", None)
 
     def generate(prompt: str, max_new_tokens: int) -> str:
         from lm_eval.api.instance import Instance
+
+        if scorer.apply_chat_template and chat_template is not None:
+            prompt = chat_template([{"role": "user", "content": prompt}])
 
         request = Instance(
             request_type="generate_until",

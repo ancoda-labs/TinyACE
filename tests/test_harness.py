@@ -15,15 +15,48 @@ from edge_slm_ace.harness.prompts import (
     CHOICE_LETTERS,
     TARGET_DELIMITER,
     assert_matches_harness,
+    build_context,
     build_system_instruction,
     choice_continuations,
     render_question,
 )
-from edge_slm_ace.harness.scorer import option_margin
+from edge_slm_ace.harness.scorer import OptionScorer, option_margin
 
 lm_eval = pytest.importorskip("lm_eval", reason="lm-eval not installed")
 
 needs_data = pytest.mark.skipif(not belebele_path("en").exists(), reason="Belebele not fetched")
+
+
+def fake_chat_template(messages, add_generation_prompt=True):
+    """A chat template with visible markers, so a missing wrap is obvious."""
+    body = "|".join(f"{m['role']}:{m['content']}" for m in messages)
+    return f"<CHAT>{body}" + ("<GEN>" if add_generation_prompt else "")
+
+
+@pytest.fixture(scope="module")
+def local_belebele_task():
+    """
+    A real `ConfigurableTask` over the committed English file.
+
+    The point is to compare against the harness's *own* prompt assembly rather
+    than against our description of it, without needing the Hub. The config
+    mirrors `belebele_eng_Latn`; `assert_matches_harness` is what keeps that
+    mirror honest.
+    """
+    from lm_eval.api.task import ConfigurableTask
+
+    return ConfigurableTask(
+        config={
+            "task": "belebele_local_parity_probe",
+            "dataset_path": "json",
+            "dataset_kwargs": {"data_files": {"test": str(belebele_path("en"))}},
+            "test_split": "test",
+            "output_type": "multiple_choice",
+            "doc_to_text": BELEBELE_DOC_TO_TEXT,
+            "doc_to_choice": CHOICE_LETTERS,
+            "doc_to_target": "{{['1', '2', '3', '4'].index(correct_answer_num)}}",
+        }
+    )
 
 
 class TestHarnessParity:
@@ -34,6 +67,10 @@ class TestHarnessParity:
     def test_continuations_use_the_harness_delimiter(self):
         assert choice_continuations() == [f"{TARGET_DELIMITER}{c}" for c in CHOICE_LETTERS]
         assert choice_continuations() == [" A", " B", " C", " D"]
+
+    def test_a_chat_template_drops_the_target_delimiter(self):
+        """construct_requests zeroes it when the task has no gen_prefix."""
+        assert choice_continuations(apply_chat_template=True) == ["A", "B", "C", "D"]
 
     @needs_data
     def test_rendered_question_matches_the_template_shape(self):
@@ -49,6 +86,75 @@ class TestHarnessParity:
         """The constant is documentation; keep it honest."""
         assert "{{flores_passage}}" in BELEBELE_DOC_TO_TEXT
         assert BELEBELE_DOC_TO_TEXT.endswith("Answer:")
+
+    @needs_data
+    @pytest.mark.parametrize("apply_chat_template", [False, True])
+    @pytest.mark.parametrize("instruction", [None, "Read the passage."])
+    def test_context_is_byte_identical_to_the_harness(
+        self, local_belebele_task, apply_chat_template, instruction
+    ):
+        """
+        The check that matters, and the one that was missing.
+
+        Adaptation scored a hand-assembled string while evaluation ran through
+        `fewshot_context`. In completion mode the two differed by the "\n\n"
+        this module inserted and the harness does not; with a chat template they
+        differed by the whole template. Both shift the loglikelihoods, and more
+        for the arm carrying the longer prefix.
+        """
+        doc = list(local_belebele_task.test_docs())[0]
+        expected = local_belebele_task.fewshot_context(
+            doc,
+            0,
+            system_instruction=instruction,
+            apply_chat_template=apply_chat_template,
+            chat_template=fake_chat_template if apply_chat_template else None,
+        )
+        # load_belebele sorts by id, the raw file does not; join on the passage.
+        example = next(e for e in load_belebele("en") if e["context"] == doc["flores_passage"])
+
+        assert (
+            build_context(
+                render_question(example),
+                instruction,
+                apply_chat_template=apply_chat_template,
+                chat_template=fake_chat_template,
+            )
+            == expected
+        )
+
+    @needs_data
+    @pytest.mark.parametrize("apply_chat_template", [False, True])
+    def test_continuations_are_the_harness_continuations(
+        self, local_belebele_task, apply_chat_template
+    ):
+        doc = list(local_belebele_task.test_docs())[0]
+        requests = local_belebele_task.construct_requests(
+            doc, "ctx", apply_chat_template=apply_chat_template
+        )
+        assert [r.arguments[1] for r in requests] == choice_continuations(apply_chat_template)
+
+    @needs_data
+    def test_the_scorer_sends_the_harness_prompt(self):
+        """End to end: what OptionScorer puts on the wire, not just a helper."""
+        seen = []
+
+        class RecordingLM:
+            def apply_chat_template(self, messages, add_generation_prompt=True):
+                return fake_chat_template(messages, add_generation_prompt)
+
+            def loglikelihood(self, requests):
+                seen.extend(r.arguments for r in requests)
+                return [(0.0, False)] * len(requests)
+
+        example = load_belebele("en")[0]
+        scorer = OptionScorer("stub", lm=RecordingLM(), apply_chat_template=True)
+        scorer.score_one(example, lessons=["Lesson one."])
+
+        contexts = {context for context, _ in seen}
+        assert len(contexts) == 1
+        assert contexts.pop().startswith("<CHAT>system:")
+        assert [continuation for _, continuation in seen] == ["A", "B", "C", "D"]
 
     def test_task_names_exist_in_the_harness(self):
         from lm_eval.tasks import TaskManager

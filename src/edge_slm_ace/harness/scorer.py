@@ -8,11 +8,20 @@ look exactly like an effect of the playbook.
 So adaptation does not generate an answer and parse it. It scores the same four
 continuations through the same `HFLM`, and only calls generation for the
 Reflector, whose job is to explain a decision that has already been made.
+
+Sameness has to include the prompt. This class used to assemble its own context
+by string interpolation while evaluation ran with `apply_chat_template=True`, so
+adaptation scored in completion mode what evaluation scored in chat mode, on a
+different separator, against continuations with a leading space evaluation does
+not use. Context assembly is now `prompts.build_context`, which calls lm-eval's
+own helpers, and `apply_chat_template` is carried on the scorer so it cannot be
+set on one path and not the other.
 """
 
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from edge_slm_ace.harness.prompts import (
+    build_context,
     build_system_instruction,
     choice_continuations,
     render_question,
@@ -33,6 +42,7 @@ class OptionScorer:
         device: Optional[str] = None,
         batch_size: int = 8,
         lm=None,
+        apply_chat_template: bool = True,
     ):
         """
         Args:
@@ -40,6 +50,10 @@ class OptionScorer:
             device: "cuda", "mps", "cpu", or None to let the harness decide.
             batch_size: Requests per forward batch.
             lm: A pre-built LM, for tests. Bypasses model loading.
+            apply_chat_template: Must match what the evaluation of this arm will
+                pass to `simple_evaluate`. It is a constructor argument rather
+                than a per-call one so a caller cannot adapt in one mode and
+                evaluate in the other.
         """
         if lm is not None:
             self.lm = lm
@@ -51,11 +65,16 @@ class OptionScorer:
                 kwargs["device"] = device
             self.lm = HFLM(**kwargs)
         self.model_id = model_id
+        self.apply_chat_template = apply_chat_template
 
     def _context(self, example: Dict, system_instruction: str) -> str:
-        """Prepend the instruction the way the harness does: a blank line between."""
-        question = render_question(example)
-        return f"{system_instruction}\n\n{question}" if system_instruction else question
+        """Assemble the context exactly as `fewshot_context` would, at 0-shot."""
+        return build_context(
+            render_question(example),
+            system_instruction,
+            apply_chat_template=self.apply_chat_template,
+            chat_template=getattr(self.lm, "apply_chat_template", None),
+        )
 
     def score(
         self,
@@ -80,7 +99,7 @@ class OptionScorer:
             return []
 
         instruction = build_system_instruction(lessons, include_scaffold=include_scaffold)
-        continuations = choice_continuations()
+        continuations = choice_continuations(self.apply_chat_template)
 
         requests = []
         for example in examples:
