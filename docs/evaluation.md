@@ -121,6 +121,23 @@ that sentence itself.
 
 ## Health checks that invalidate a run
 
+Two severities, distinguished in `reporting/health.py` and acted on by both
+tools:
+
+| | Meaning | `compare_arms` | `aggregate_results --strict` |
+|---|---|---|---|
+| **Invalidating** | The measurement is corrupted, asymmetrically between arms | Pair is excluded from the test family and its verdict reads NOT REPORTABLE | Exits non-zero |
+| **Limiting** | The measurement is sound; what it supports is narrower | Pair is tested normally | Warns, exits 0 |
+
+Truncation is the only invalidating condition. `relevance_active: false` and
+`token_counts_exact: false` are limitations — the run really did score what it
+scored, it just supports a narrower claim.
+
+`compare_arms` reads each cell's `metrics.json` for this. It previously read
+only `predictions.jsonl`, so the one tool the project points at as the gate on
+whether a delta is a result could not see the condition that makes a delta
+uninterpretable.
+
 ### Truncation
 
 lm-eval truncates an over-long prompt **from the left**, and the Belebele prompt
@@ -136,6 +153,11 @@ not noise. Devanagari fertility pushes the Nepali side further again.
 `truncated_prompts`, `truncation_rate` and `tokens_dropped` travel with every
 result. **A run with a non-zero truncation rate is not comparable across arms
 and must not be reported as one.**
+
+`compare_arms` acts on this: a pair where either arm truncated is excluded from
+the Holm family and printed with a NOT REPORTABLE verdict rather than a
+direction. It cannot consume family power, and it cannot be counted as a
+survivor.
 
 ### Relevance backend
 
@@ -207,7 +229,11 @@ loader can seed away.
 - [ ] The reported p-value is the **Holm-adjusted** one, and the family size is
       stated.
 - [ ] `n_discordant` is reported alongside `n`.
-- [ ] Truncation is zero on every arm in the table, or the table says so.
+- [ ] Truncation is zero on every arm in the table. A truncated arm is not
+      "reported with a caveat" — `compare_arms` excludes it from the family,
+      and there is no p-value to quote.
+- [ ] `make report STRICT=1` passes, or every invalidating issue it names is
+      accounted for.
 - [ ] `relevance_active` is true, or the limitation is stated.
 - [ ] `token_counts_exact` is true on every run whose token counts are compared
       across languages.

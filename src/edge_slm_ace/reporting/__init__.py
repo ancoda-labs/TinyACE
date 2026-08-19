@@ -6,6 +6,13 @@ Scripts in `scripts/` are thin CLIs over this package, so that the vocabulary
 re-derived by each consumer.
 """
 
+from edge_slm_ace.reporting.health import (
+    HealthIssue,
+    health_issues,
+    invalidating_issues,
+    is_reportable,
+    load_metrics,
+)
 from edge_slm_ace.reporting.layout import CELL_DEPTH, Cell, cell_dir, parse_cell
 from edge_slm_ace.reporting.load import (
     PRIMARY_METRIC,
@@ -33,13 +40,18 @@ __all__ = [
     "CELL_DEPTH",
     "Arm",
     "Cell",
+    "HealthIssue",
     "PRIMARY_METRIC",
     "arm_label",
     "arm_order",
     "cell_dir",
     "get_arm",
+    "health_issues",
     "implemented_arms",
+    "invalidating_issues",
+    "is_reportable",
     "is_ablation",
+    "load_metrics",
     "load_predictions",
     "load_run_metrics",
     "model_label",

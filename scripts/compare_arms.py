@@ -28,11 +28,20 @@ Usage:
 import argparse
 import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from edge_slm_ace.eval.stats import compare_arms, format_comparison, holm_bonferroni
-from edge_slm_ace.reporting import PRIMARY_METRIC, arm_label, get_arm, parse_cell, reference_for
+from edge_slm_ace.reporting import (
+    PRIMARY_METRIC,
+    arm_label,
+    get_arm,
+    invalidating_issues,
+    load_metrics,
+    parse_cell,
+    reference_for,
+)
 
 
 def load_predictions(path: Path) -> List[Dict]:
@@ -158,6 +167,21 @@ def pair_with_explicit_reference(
     return pairs, []
 
 
+def health_of(path: Path) -> List:
+    """
+    Invalidating issues for the run whose predictions live at `path`.
+
+    This script used to read `predictions.jsonl` and nothing else, so the one
+    tool the project points at as the gate on whether a delta is a result could
+    not see the condition that makes a delta uninterpretable. Truncation is not
+    noise: lm-eval truncates from the left, which for Belebele eats the passage,
+    and a longer prefix truncates more -- so an ACE arm loses passages its
+    control keeps, on the same items. That is a difference in how much each arm
+    got to read, reported as a difference in what the playbook did.
+    """
+    return invalidating_issues(load_metrics(path.parent))
+
+
 def _pick_metric(rows: List[Dict], requested: Optional[str]) -> str:
     """
     Choose the correctness field to compare on.
@@ -217,18 +241,22 @@ def main() -> int:
     comparisons = []
 
     if len(args.arms) == 2:
-        rows_a = load_predictions(Path(args.arms[0]))
-        rows_b = load_predictions(Path(args.arms[1]))
-        comparisons.append(
-            compare_arms(
-                rows_a,
-                rows_b,
-                name_a=Path(args.arms[0]).parent.name,
-                name_b=Path(args.arms[1]).parent.name,
-                metric=_pick_metric(rows_a + rows_b, args.metric),
-                confidence=args.confidence,
-            )
+        path_a, path_b = Path(args.arms[0]), Path(args.arms[1])
+        rows_a = load_predictions(path_a)
+        rows_b = load_predictions(path_b)
+        comparison = compare_arms(
+            rows_a,
+            rows_b,
+            name_a=path_a.parent.name,
+            name_b=path_b.parent.name,
+            metric=_pick_metric(rows_a + rows_b, args.metric),
+            confidence=args.confidence,
         )
+        comparison["health"] = {
+            comparison["name_a"]: health_of(path_a),
+            comparison["name_b"]: health_of(path_b),
+        }
+        comparisons.append(comparison)
 
     elif args.results_root:
         root = Path(args.results_root)
@@ -263,16 +291,19 @@ def main() -> int:
         for reference_label, label in pairs:
             reference_rows = load_predictions(arms[reference_label])
             rows = load_predictions(arms[label])
-            comparisons.append(
-                compare_arms(
-                    reference_rows,
-                    rows,
-                    name_a=arm_label(arm_key_of(reference_label)),
-                    name_b=arm_label(arm_key_of(label)),
-                    metric=_pick_metric(reference_rows + rows, args.metric),
-                    confidence=args.confidence,
-                )
+            comparison = compare_arms(
+                reference_rows,
+                rows,
+                name_a=arm_label(arm_key_of(reference_label)),
+                name_b=arm_label(arm_key_of(label)),
+                metric=_pick_metric(reference_rows + rows, args.metric),
+                confidence=args.confidence,
             )
+            comparison["health"] = {
+                comparison["name_a"]: health_of(arms[reference_label]),
+                comparison["name_b"]: health_of(arms[label]),
+            }
+            comparisons.append(comparison)
     else:
         parser.error("Provide two predictions.jsonl paths, or --results-root")
 
@@ -280,15 +311,34 @@ def main() -> int:
     # p<0.05 on its own across a 10-arm sweep gives roughly a 40% chance of at
     # least one false positive, so the adjusted value is what decides.
     #
-    # A pair with no comparable items carries a forced p=1.0 and no evidence.
-    # Counting it would inflate the family size and cost the real comparisons
-    # power for nothing, so it sits outside the correction and is marked
-    # not-significant directly.
-    testable = [c for c in comparisons if c["mcnemar"]["n"] > 0]
+    # Two kinds of pair sit outside the family:
+    #
+    # - No comparable items. A forced p=1.0 carrying no evidence; counting it
+    #   would inflate the family size and cost the real comparisons power for
+    #   nothing.
+    # - An arm with an invalidating health issue. Truncation is arm-asymmetric
+    #   -- the longer prefix truncates more -- so the pair carries *biased*
+    #   evidence, which is worse than none. It must not consume family power and
+    #   must not be counted as a survivor.
     for comparison in comparisons:
-        comparison["mcnemar"]["in_test_family"] = comparison["mcnemar"]["n"] > 0
+        unhealthy = sorted(name for name, issues in comparison["health"].items() if issues)
+        comparison["not_reportable"] = unhealthy
+        comparison["mcnemar"]["in_test_family"] = comparison["mcnemar"]["n"] > 0 and not unhealthy
         comparison["mcnemar"]["p_adjusted"] = 1.0
         comparison["mcnemar"]["significant_05_adjusted"] = False
+        if unhealthy:
+            # Replace the verdict rather than printing a banner under it. The
+            # verdict is the line a reader takes away, and "TinyACE is better
+            # than Scaffold Control (p=0.0151)" is the wrong thing to leave at
+            # the top of a block whose numbers are confounded.
+            comparison["verdict"] = (
+                f"NOT REPORTABLE -- {', '.join(unhealthy)} failed a health check; "
+                f"this delta is confounded, not a measurement of the playbook"
+            )
+
+    testable = [c for c in comparisons if c["mcnemar"]["in_test_family"]]
+    no_items = [c for c in comparisons if c["mcnemar"]["n"] == 0]
+    invalid = [c for c in comparisons if c["not_reportable"]]
 
     adjusted = holm_bonferroni([c["mcnemar"]["p_value"] for c in testable])
     for comparison, p_adjusted in zip(testable, adjusted):
@@ -299,6 +349,12 @@ def main() -> int:
         print()
         print("=" * 72)
         print(format_comparison(comparison))
+
+        for name in comparison["not_reportable"]:
+            for issue in comparison["health"][name]:
+                print(f"     {name}: {issue.message}.")
+            print("     Excluded from the test family.")
+
         test = comparison["mcnemar"]
         if test["in_test_family"] and len(testable) > 1:
             verdict = "survives" if test["significant_05_adjusted"] else "does not survive"
@@ -316,10 +372,13 @@ def main() -> int:
         f"correction at p<0.05 ({len(raw)} before correction, "
         f"family size {len(testable)})."
     )
-    if len(comparisons) != len(testable):
+    if no_items:
+        print(f"{len(no_items)} comparison(s) had no items in common and were not tested.")
+    if invalid:
         print(
-            f"{len(comparisons) - len(testable)} comparison(s) had no items in "
-            f"common and were not tested."
+            f"{len(invalid)} comparison(s) involve a run that failed a health "
+            f"check and are NOT REPORTABLE. They are excluded from the family "
+            f"above; re-run those cells before reporting anything about them."
         )
     if testable and not survivors:
         print("Report these as 'no detectable difference', not as an ordering.")
@@ -327,8 +386,19 @@ def main() -> int:
     if args.json_out:
         out = Path(args.json_out)
         out.parent.mkdir(parents=True, exist_ok=True)
+        serialisable = []
+        for comparison in comparisons:
+            record = dict(comparison)
+            # `default=str` would stringify the dataclass into an unparseable
+            # repr; the health record is the reason a reader trusts or discards
+            # the delta next to it, so it has to survive as structured data.
+            record["health"] = {
+                name: [asdict(issue) for issue in issues]
+                for name, issues in comparison["health"].items()
+            }
+            serialisable.append(record)
         with open(out, "w", encoding="utf-8") as f:
-            json.dump(comparisons, f, indent=2, default=str)
+            json.dump(serialisable, f, indent=2, default=str)
         print(f"Wrote comparisons to {out}")
 
     return 0
