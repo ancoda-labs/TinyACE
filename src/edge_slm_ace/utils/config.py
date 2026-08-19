@@ -73,14 +73,31 @@ MODELS: Dict[str, ModelSpec] = {
     ]
 }
 
+# How many of the 900 Belebele items the playbook is built on. The rest are the
+# frozen evaluation split.
+#
+# One constant, because two of them is what let screening leak into the
+# evaluation split: `screen_models` split at 400 while `run_arm` defaulted to
+# 200, and `parallel_split` shuffles once and slices, so `shuffled[200:400]` was
+# both screened on and scored on. Models were selected on 200 of the ~500 items
+# their results are reported over.
+#
+# Screening must fit inside it, which is what the assertion below enforces.
+ADAPTATION_SIZE = 400
+
 # Belebele is 4-option, so chance is 0.25. The screening rule is stated in terms
-# of the interval rather than the point estimate: at n=200 the Wilson halfwidth
-# near 0.35 is about 6.6 points, so an observed 35% is consistent with a true
-# 28% -- barely above chance. Screen at SCREENING_N and require the lower bound
-# to clear SCREENING_FLOOR.
+# of the interval rather than the point estimate: at n=400 the Wilson halfwidth
+# near 0.35 is about 4.7 points, so an observed 35% is consistent with a true
+# 30%. Screen at SCREENING_N and require the lower bound to clear
+# SCREENING_FLOOR.
 CHANCE_FLOOR = 0.25
 SCREENING_N = 400
 SCREENING_FLOOR = 0.30
+
+assert SCREENING_N <= ADAPTATION_SIZE, (
+    f"Screening at n={SCREENING_N} cannot fit inside an adaptation split of "
+    f"{ADAPTATION_SIZE}, so it would score items the study later reports on."
+)
 
 
 def screening_verdict(ci_low: float) -> bool:

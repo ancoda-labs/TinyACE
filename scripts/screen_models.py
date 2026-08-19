@@ -4,9 +4,14 @@
 A model that cannot read Nepali at all cannot show a context-adaptation effect
 on Nepali, and including it would dilute every aggregate with noise centred on
 chance. The rule is pre-registered and stated on the interval, not the point
-estimate: Belebele is four-option, so chance is 25%, and at n=200 the Wilson
-halfwidth near 35% is about 6.6 points -- an observed 35% is consistent with a
-true 28%. Screening runs at n=400 and requires the lower bound to clear 30%.
+estimate: Belebele is four-option, so chance is 25%. Screening runs at n=400 and
+requires the Wilson lower bound to clear 30%.
+
+Screening draws from the adaptation split and nothing else, because choosing
+which models enter the study is a decision made on the outcome. That is checked
+here, not merely asserted in prose: this script and `run_arm` split at the same
+`ADAPTATION_SIZE`, and the overlap with the evaluation split is verified to be
+empty before any model is loaded.
 
 Screened-out models go in the appendix, not the bin: "current small models
 cannot read Nepali" is itself a finding, and it is the one the kill criteria
@@ -22,15 +27,16 @@ import json
 import sys
 from pathlib import Path
 
-from edge_slm_ace.data import load_belebele, parallel_split
+from edge_slm_ace.data import load_belebele, study_split
 from edge_slm_ace.eval.stats import summarize_accuracy
 from edge_slm_ace.harness import per_item_correctness, run_frozen_eval
 from edge_slm_ace.utils import (
+    ADAPTATION_SIZE,
     CHANCE_FLOOR,
+    DEFAULT_SEED,
     MODELS,
     SCREENING_FLOOR,
     SCREENING_N,
-    DEFAULT_SEED,
     capture_environment,
     resolve_model,
     screening_verdict,
@@ -51,15 +57,6 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--dtype", default=None)
     p.add_argument("--n", type=int, default=SCREENING_N, help=f"Items (default: {SCREENING_N})")
     p.add_argument(
-        "--adaptation-size",
-        type=int,
-        default=SCREENING_N,
-        help="Size of the adaptation split screening draws from. Screening must "
-        "never touch the evaluation split: it is a decision made before the "
-        "study, and deciding it on the scored items would be selection on the "
-        "outcome.",
-    )
-    p.add_argument(
         "--no-chat-template",
         action="store_true",
         help="Score as raw completion. Only correct for a base (non-instruct) model.",
@@ -73,14 +70,29 @@ def main(argv=None) -> int:
 
     keys = args.models or [k for k in MODELS if MODELS[k].generation != "debug"]
     examples = load_belebele(args.language)
-    # Screening draws from the adaptation split, so the evaluation split stays
-    # untouched by a decision made before the study starts.
-    adapt_ids, _ = (
-        parallel_split([e["id"] for e in examples], args.adaptation_size, args.seed)
-        if hasattr(args, "adaptation_size")
-        else parallel_split([e["id"] for e in examples], max(args.n, 200), args.seed)
-    )
+
+    # The study's split, the same one `run_arm` uses. Screening draws from the
+    # adaptation side only, so the evaluation split stays untouched by a
+    # decision made before the study starts.
+    adapt_ids, eval_ids = study_split([e["id"] for e in examples], args.seed)
+    if args.n > len(adapt_ids):
+        print(
+            f"Error: --n {args.n} exceeds the adaptation split ({len(adapt_ids)} "
+            f"items). Screening beyond it would score items the study reports "
+            f"on. Raise ADAPTATION_SIZE instead.",
+            file=sys.stderr,
+        )
+        return 1
     screen_ids = adapt_ids[: args.n]
+
+    leaked = set(screen_ids) & set(eval_ids)
+    if leaked:
+        print(
+            f"Error: {len(leaked)} screening item(s) are in the evaluation "
+            f"split. Model selection would be made on items the study reports.",
+            file=sys.stderr,
+        )
+        return 1
 
     out_dir = args.results_root / "screening"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -149,6 +161,8 @@ def main(argv=None) -> int:
             "floor": SCREENING_FLOOR,
             "statistic": "wilson_ci_low",
             "pre_registered": True,
+            "adaptation_size": ADAPTATION_SIZE,
+            "drawn_from": "adaptation_split",
         },
         "models": rows,
         "environment": capture_environment(),

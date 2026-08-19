@@ -5,6 +5,7 @@ from edge_slm_ace.data.belebele import (
     belebele_path,
     load_belebele,
     parallel_split,
+    study_split,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "belebele_path",
     "load_belebele",
     "parallel_split",
+    "study_split",
 ]

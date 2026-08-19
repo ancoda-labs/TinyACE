@@ -28,7 +28,7 @@ import random
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from edge_slm_ace.utils.config import REPO_ROOT
+from edge_slm_ace.utils.config import ADAPTATION_SIZE, REPO_ROOT
 
 # Short language code -> the FLORES-200 code Belebele files are named by.
 BELEBELE_LANGUAGES: Dict[str, str] = {
@@ -200,6 +200,32 @@ def parallel_split(
     shuffled = list(unique)
     random.Random(seed).shuffle(shuffled)
     return sorted(shuffled[:adaptation_size]), sorted(shuffled[adaptation_size:])
+
+
+def study_split(
+    item_ids: Sequence[str],
+    seed: int,
+    adaptation_size: Optional[int] = None,
+) -> Tuple[List[str], List[str]]:
+    """
+    The study's one split of Belebele into adaptation and evaluation.
+
+    Every entrypoint must call this rather than `parallel_split` directly.
+    Screening and the grid each chose their own size -- 400 and 200 -- and since
+    the split is one shuffle sliced at that index, the 200 items between them
+    were screened on *and* scored on. Model selection was therefore made on
+    items the study reports over.
+
+    Args:
+        item_ids: All ids in the language.
+        seed: Run seed.
+        adaptation_size: Override, for tests and debugging only. A run that
+            passes one is no longer on the study's split.
+
+    Returns:
+        (adaptation_ids, eval_ids), both sorted and disjoint.
+    """
+    return parallel_split(item_ids, adaptation_size or ADAPTATION_SIZE, seed)
 
 
 # lm-evaluation-harness task names for the language variants we use.

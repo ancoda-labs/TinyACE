@@ -26,7 +26,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from edge_slm_ace.adapt import adapt_playbook, frozen_lessons, save_adaptation_log
-from edge_slm_ace.data import load_belebele, parallel_split
+from edge_slm_ace.data import load_belebele, study_split
 from edge_slm_ace.harness import OptionScorer, accuracy_of, per_item_correctness, run_frozen_eval
 from edge_slm_ace.memory.playbook import Playbook, ScoringParams
 from edge_slm_ace.memory.relevance import LessonRelevance
@@ -46,7 +46,13 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--arm", required=True, help="Arm key from reporting/schema.py")
     p.add_argument("--output-dir", required=True, type=Path)
     p.add_argument("--seed", type=int, default=DEFAULT_SEED)
-    p.add_argument("--adaptation-size", type=int, default=200)
+    p.add_argument(
+        "--adaptation-size",
+        type=int,
+        default=None,
+        help="Override the study's adaptation split size. Debugging only: a "
+        "run that sets it is not on the split screening was gated on.",
+    )
     p.add_argument("--device", default=None, choices=["cpu", "cuda", "mps"])
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--dtype", default=None, help="Torch dtype, recorded in metadata")
@@ -90,8 +96,8 @@ def main(argv=None, lm=None) -> int:
 
     examples = load_belebele(args.language, domain=domain)
     by_id = {e["id"]: e for e in examples}
-    adapt_ids, eval_ids = parallel_split(
-        [e["id"] for e in examples], args.adaptation_size, seed=args.seed
+    adapt_ids, eval_ids = study_split(
+        [e["id"] for e in examples], seed=args.seed, adaptation_size=args.adaptation_size
     )
     if args.limit:
         adapt_ids, eval_ids = adapt_ids[: args.limit], eval_ids[: args.limit]

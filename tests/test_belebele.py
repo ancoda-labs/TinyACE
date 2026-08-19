@@ -9,6 +9,7 @@ import json
 
 import pytest
 
+from edge_slm_ace.utils import ADAPTATION_SIZE, SCREENING_N
 from edge_slm_ace.data.belebele import (
     BELEBELE_LANGUAGES,
     HARNESS_TASKS,
@@ -17,6 +18,7 @@ from edge_slm_ace.data.belebele import (
     item_id,
     load_belebele,
     parallel_split,
+    study_split,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -149,3 +151,34 @@ class TestSchema:
 
     def test_harness_task_names_cover_both_languages(self):
         assert set(HARNESS_TASKS) == set(BELEBELE_LANGUAGES)
+
+
+class TestStudySplit:
+    """One split for the whole study, so screening cannot leak into evaluation.
+
+    `screen_models` split at 400 and `run_arm` at 200. The split is one shuffle
+    sliced at that index, so the 200 items between them were screened on *and*
+    scored on: models were selected on items their own results are reported
+    over.
+    """
+
+    def test_screening_and_evaluation_never_overlap(self):
+        ids = [f"bel-{i:04d}" for i in range(900)]
+        adapt, evaluate = study_split(ids, seed=42)
+
+        screening = adapt[:SCREENING_N]
+        assert len(screening) == SCREENING_N
+        assert not set(screening) & set(evaluate)
+
+    def test_screening_fits_inside_the_adaptation_split(self):
+        """The constraint the two entrypoints have to satisfy jointly."""
+        assert SCREENING_N <= ADAPTATION_SIZE
+
+    def test_every_entrypoint_gets_the_same_split(self):
+        ids = [f"bel-{i:04d}" for i in range(900)]
+        assert study_split(ids, seed=42) == study_split(list(reversed(ids)), seed=42)
+
+    def test_an_override_is_still_available_for_debugging(self):
+        ids = [f"bel-{i:04d}" for i in range(900)]
+        adapt, _ = study_split(ids, seed=42, adaptation_size=10)
+        assert len(adapt) == 10
