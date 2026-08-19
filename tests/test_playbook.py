@@ -425,27 +425,6 @@ class TestPlaybookLegacyCompatibility:
         assert "harmful_count" in entry_dict
 
 
-# Legacy test names for backward compatibility
-def test_playbook_add_and_save():
-    """Test adding entries and saving playbook."""
-    TestPlaybook().test_add_and_save()
-
-
-def test_playbook_prune():
-    """Test pruning playbook to top entries."""
-    TestPlaybook().test_prune_keeps_top_entries()
-
-
-def test_playbook_get_top_k():
-    """Test getting top-k entries for a domain."""
-    TestPlaybook().test_get_top_k()
-
-
-def test_playbook_record_feedback():
-    """Test recording feedback for entries."""
-    TestPlaybook().test_record_feedback_only_for_used_entries()
-
-
 class TestAblationFlags:
     """Tests for retention scoring ablation flags."""
 
