@@ -179,7 +179,8 @@ def main(argv=None, lm=None) -> int:
     )
 
     accuracy = accuracy_of(results, args.language)
-    per_item = per_item_correctness(results, args.language)
+    # Verifies the harness scored the split we asked for, not merely n of them.
+    per_item = per_item_correctness(results, args.language, expected_ids=eval_ids)
 
     health = {
         k: results["tinyace"][k] for k in ("truncated_prompts", "truncation_rate", "tokens_dropped")

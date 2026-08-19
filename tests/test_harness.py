@@ -9,7 +9,7 @@ rendering and evaluation scores it against another.
 import pytest
 
 from edge_slm_ace.data import load_belebele
-from edge_slm_ace.data.belebele import HARNESS_TASKS, belebele_path
+from edge_slm_ace.data.belebele import HARNESS_TASKS, belebele_path, item_id
 from edge_slm_ace.harness.prompts import (
     BELEBELE_DOC_TO_TEXT,
     CHOICE_LETTERS,
@@ -20,6 +20,7 @@ from edge_slm_ace.harness.prompts import (
     choice_continuations,
     render_question,
 )
+from edge_slm_ace.harness.evaluate import per_item_correctness
 from edge_slm_ace.harness.scorer import OptionScorer, option_margin
 
 lm_eval = pytest.importorskip("lm_eval", reason="lm-eval not installed")
@@ -240,3 +241,62 @@ class TestTruncationCounter:
             "exceeds model's maximum length (1024). Truncating 5 tokens"
         )
         assert counter.events == 0
+
+
+class TestPerItemCorrectness:
+    """
+    The `samples` selection was never verified against what came back.
+
+    `harness_indices` maps positions in the committed jsonl; the harness loads
+    the same split from the Hub. If those orders ever diverge the run scores a
+    different question set and still reports a clean accuracy, which is the one
+    failure that would invalidate every paired comparison at once.
+    """
+
+    def _results(self, docs, accs):
+        return {
+            "samples": {
+                HARNESS_TASKS["en"]: [{"doc": doc, "acc": acc} for doc, acc in zip(docs, accs)]
+            }
+        }
+
+    @needs_data
+    def _docs(self, n):
+        import json
+
+        with open(belebele_path("en"), encoding="utf-8") as f:
+            return [json.loads(line) for _, line in zip(range(n), f)]
+
+    @needs_data
+    def test_reads_correctness_keyed_by_item_id(self):
+        docs = self._docs(3)
+        per_item = per_item_correctness(self._results(docs, [1, 0, 1]), "en")
+
+        assert set(per_item) == {item_id(d) for d in docs}
+        assert sum(per_item.values()) == 2
+
+    @needs_data
+    def test_accepts_exactly_the_requested_items(self):
+        docs = self._docs(3)
+        expected = [item_id(d) for d in docs]
+        assert per_item_correctness(self._results(docs, [1, 1, 1]), "en", expected)
+
+    @needs_data
+    def test_rejects_a_different_item_set(self):
+        docs = self._docs(3)
+        wanted = [item_id(d) for d in self._docs(4)]
+
+        with pytest.raises(ValueError, match="different item set"):
+            per_item_correctness(self._results(docs, [1, 1, 1]), "en", wanted)
+
+    @needs_data
+    def test_a_missing_metric_is_not_scored_as_a_wrong_answer(self):
+        """`.get("acc", 0)` turned an upstream metric rename into lost accuracy."""
+        results = {"samples": {HARNESS_TASKS["en"]: [{"doc": self._docs(1)[0]}]}}
+
+        with pytest.raises(ValueError, match="no 'acc' metric"):
+            per_item_correctness(results, "en")
+
+    def test_unlogged_samples_raise_rather_than_return_nothing(self):
+        with pytest.raises(ValueError, match="log_samples"):
+            per_item_correctness({"results": {}}, "en")

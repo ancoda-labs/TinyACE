@@ -195,24 +195,75 @@ def accuracy_of(results: Dict[str, Any], language: str) -> Optional[float]:
     return results.get("results", {}).get(task, {}).get("acc,none")
 
 
-def per_item_correctness(results: Dict[str, Any], language: str) -> Dict[str, int]:
+def per_item_correctness(
+    results: Dict[str, Any],
+    language: str,
+    expected_ids: Optional[Sequence[str]] = None,
+) -> Dict[str, int]:
     """
     Per-item correctness, keyed by our cross-language item id.
 
     Needed for the paired McNemar test: a per-arm accuracy cannot be paired, and
     en/ne comparisons only mean anything item by item.
 
+    This is also the only place the `samples` selection can be checked, and it
+    is the check that guards the study's largest untested assumption.
+    `harness_indices` derives document positions from the committed jsonl, while
+    the harness loads the same split from `facebook/belebele` on the Hub. Those
+    two orders agreeing is an assumption, not a fact; if it ever fails, the run
+    scores a different question set per arm and still reports a clean accuracy.
+    Recovering the ids from the logged docs and comparing them to what was asked
+    for costs nothing and closes it.
+
     Requires the run to have been made with `log_samples=True`.
 
     Args:
         results: A `run_frozen_eval` return value.
         language: "en" or "ne".
+        expected_ids: The ids the run was asked to score. When given, a mismatch
+            raises rather than returning a plausible-looking subset.
 
     Returns:
-        Mapping of item id -> 1/0. Empty when samples were not logged.
+        Mapping of item id -> 1/0.
+
+    Raises:
+        ValueError: If samples were not logged, if a sample is missing its doc
+            or its `acc` metric, or if the ids scored are not the ids requested.
     """
     from edge_slm_ace.data.belebele import item_id
 
     task = HARNESS_TASKS[language]
     samples: List[Dict] = results.get("samples", {}).get(task, [])
-    return {item_id(s["doc"]): int(s.get("acc", 0)) for s in samples if "doc" in s}
+    if not samples:
+        raise ValueError(
+            f"No logged samples for '{task}'. Per-item correctness needs "
+            f"log_samples=True; without it the paired test has nothing to pair."
+        )
+
+    correctness: Dict[str, int] = {}
+    for sample in samples:
+        if "doc" not in sample:
+            raise ValueError(f"A logged sample for '{task}' carries no doc to identify it.")
+        if "acc" not in sample:
+            # `.get("acc", 0)` recorded a missing metric as a wrong answer,
+            # which is a silent accuracy loss rather than a failure.
+            raise ValueError(
+                f"A logged sample for '{task}' has no 'acc' metric. The task's "
+                f"metric list changed upstream; do not score this run."
+            )
+        correctness[item_id(sample["doc"])] = int(sample["acc"])
+
+    if expected_ids is not None:
+        expected = set(expected_ids)
+        scored = set(correctness)
+        if scored != expected:
+            raise ValueError(
+                f"The harness scored a different item set than was requested for "
+                f"'{task}': {len(scored - expected)} unexpected, "
+                f"{len(expected - scored)} missing, of {len(expected)} requested. "
+                f"harness_indices() maps positions in the committed jsonl; the "
+                f"harness loads the split from the Hub. Those orders have "
+                f"diverged, so this run compares different questions per arm."
+            )
+
+    return correctness

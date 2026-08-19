@@ -122,7 +122,7 @@ def main(argv=None) -> int:
             rows.append({"model": key, "hf_id": spec.hf_id, "error": str(e), "passes": False})
             continue
 
-        per_item = per_item_correctness(results, args.language)
+        per_item = per_item_correctness(results, args.language, expected_ids=screen_ids)
         stats = summarize_accuracy(per_item.values())
         passes = screening_verdict(stats["ci_low"])
         health = results["tinyace"]
