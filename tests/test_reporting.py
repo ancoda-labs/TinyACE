@@ -59,7 +59,7 @@ def results_tree(tmp_path):
                 )
 
     write_run("phi_3_mini", "sciq_test", "baseline", "cuda", 37)
-    write_run("phi_3_mini", "sciq_test", "tinyace_wm_256", "cuda", 36)
+    write_run("phi_3_mini", "sciq_test", "tinyace", "cuda", 36)
     return tmp_path
 
 
@@ -81,9 +81,9 @@ class TestArmRegistry:
         assert arm_order("some_new_arm") > arm_order("baseline")
 
     def test_ace_arms_reference_the_control_not_the_baseline(self):
-        """The playbook claim is ace - cot_control."""
-        assert reference_for("ace_full") == "cot_control"
-        assert reference_for("tinyace_wm_512") == "cot_control"
+        """The playbook claim is ace - scaffold_control."""
+        assert reference_for("tinyace") == "scaffold_control"
+        assert reference_for("tinyace_retrieval") == "scaffold_control"
 
     def test_ablations_reference_full_tinyace(self):
         """Comparing an ablation to baseline measures ACE plus the ablation."""
@@ -92,6 +92,8 @@ class TestArmRegistry:
             "tinyace_ablate_no_recency",
             "tinyace_ablate_no_vagueness",
             "tinyace_fifo",
+            "tinyace_playbook_en",
+            "tinyace_equal_lessons",
         ):
             assert (
                 reference_for(arm) == ABLATION_REFERENCE
@@ -101,7 +103,7 @@ class TestArmRegistry:
         assert is_ablation("tinyace_ablate_no_curator")
         assert is_ablation("tinyace_fifo")
         assert not is_ablation("baseline")
-        assert not is_ablation("cot_control")
+        assert not is_ablation("scaffold_control")
 
 
 class TestModelLabels:
@@ -139,16 +141,16 @@ class TestLoading:
     def test_loads_every_run(self, results_tree):
         runs = load_run_metrics(results_tree)
         assert len(runs) == 2
-        assert set(runs["arm"]) == {"baseline", "tinyace_wm_256"}
+        assert set(runs["arm"]) == {"baseline", "tinyace"}
 
     def test_arm_is_recovered_from_the_directory_layout(self, results_tree):
         runs = load_run_metrics(results_tree)
-        assert "TinyACE-256" in set(runs["arm_label"])
+        assert "TinyACE" in set(runs["arm_label"])
 
     def test_loads_every_prediction_row(self, results_tree):
         predictions = load_predictions(results_tree)
         assert len(predictions) == 100
-        assert set(predictions["arm"]) == {"baseline", "tinyace_wm_256"}
+        assert set(predictions["arm"]) == {"baseline", "tinyace"}
 
     def test_missing_root_yields_empty_frames(self, tmp_path):
         assert load_run_metrics(tmp_path / "nope").empty
@@ -176,7 +178,7 @@ class TestSummarize:
         """The point of shipping the interval: 1 question is not a result."""
         summary = summarize_predictions(load_predictions(results_tree))
         accuracies = summary.set_index("arm")["accuracy"]
-        difference = abs(accuracies["baseline"] - accuracies["tinyace_wm_256"])
+        difference = abs(accuracies["baseline"] - accuracies["tinyace"])
 
         assert difference < summary["ci_halfwidth"].min()
 

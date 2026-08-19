@@ -1,25 +1,20 @@
-"""Core ACE logic: runner and role-based prompts."""
+"""ACE roles: the prompts the Reflector and Curator run on.
 
-from edge_slm_ace.core.runner import (
-    run_dataset_baseline,
-    run_dataset_ace,
-    run_dataset_self_refine,
-)
+The Generator is gone: under loglikelihood option scoring the model never
+generates an answer, so there is no generator prompt and no answer to parse.
+Only reflection and curation still need a model to write text.
+"""
+
 from edge_slm_ace.core.ace_roles import (
-    build_generator_prompt,
-    build_reflector_prompt,
-    parse_generator_output,
-    parse_reflector_output_to_lessons,
+    build_curator_prompt,
     choose_lessons_for_playbook,
+    parse_curator_output,
+    parse_reflector_output_to_lessons,
 )
 
 __all__ = [
-    "run_dataset_baseline",
-    "run_dataset_ace",
-    "run_dataset_self_refine",
-    "build_generator_prompt",
-    "build_reflector_prompt",
-    "parse_generator_output",
-    "parse_reflector_output_to_lessons",
+    "build_curator_prompt",
     "choose_lessons_for_playbook",
+    "parse_curator_output",
+    "parse_reflector_output_to_lessons",
 ]

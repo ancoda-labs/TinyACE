@@ -1,21 +1,28 @@
 """Query-conditioned relevance for playbook retrieval.
 
-Retrieval originally filtered on `entry.domain == domain` and ranked by a
-score that does not depend on the question at all. Every task in this repo
-maps to a single domain (all sciq_* tasks are "science"), so every question in
-a run received the identical lesson list. That is not retrieval -- it is a
-slowly drifting fixed prompt prefix, which is pure distraction for a small
-model and is a plausible cause of the negative results reported for
-TinyLlama.
+Retrieval that filters on domain and ranks by a question-independent score is
+not retrieval -- it is a slowly drifting fixed prefix, identical for every
+question in a run. This module scores lessons against the question so that
+retrieval selects.
 
-This module scores lessons against the question so that retrieval selects.
-The embedding model is the same MiniLM already used for OMA and semantic
-similarity, so it adds no new dependency and no second model load.
+**The encoder must be multilingual.** The previous default,
+`all-MiniLM-L6-v2`, is English-only: it maps Devanagari to near-noise, so a
+Nepali question would have been matched against Nepali lessons by an encoder
+that cannot read either. That is worse than no retrieval, because it looks like
+retrieval. The default is now a multilingual model, and `available` reports
+False rather than degrading silently when none can be loaded.
 """
 
+import os
 from typing import List, Optional, Sequence
 
 import numpy as np
+
+# Multilingual sentence encoders, best first. Both cover Nepali (Devanagari).
+# BGE-m3 is stronger and much larger; the MiniLM is the default because
+# retrieval runs once per question and the playbook is small.
+DEFAULT_ENCODER = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+ENCODER_ENV = "TINYACE_RELEVANCE_ENCODER"
 
 
 class LessonRelevance:
@@ -30,6 +37,7 @@ class LessonRelevance:
 
     _instance: Optional["LessonRelevance"] = None
     _model = None
+    _model_name: Optional[str] = None
 
     def __init__(self):
         self._cache = {}
@@ -47,44 +55,44 @@ class LessonRelevance:
         """Drop the singleton and its cache (used by tests)."""
         cls._instance = None
         cls._model = None
+        cls._model_name = None
 
     def _load_model(self) -> None:
-        """Load the shared MiniLM encoder, if one is available."""
+        """Load the multilingual encoder, if one is available."""
         if LessonRelevance._model is not None:
             return
-        try:
-            from edge_slm_ace.eval.metrics import SemanticEvaluator
 
-            SemanticEvaluator.get_instance()
-            if SemanticEvaluator._model is not None:
-                LessonRelevance._model = SemanticEvaluator._model
-                return
-        except Exception:
-            pass
-
+        name = os.environ.get(ENCODER_ENV, DEFAULT_ENCODER)
         try:
             from sentence_transformers import SentenceTransformer
 
-            LessonRelevance._model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-        except Exception:
+            LessonRelevance._model = SentenceTransformer(name)
+            LessonRelevance._model_name = name
+            return
+        except Exception as e:
             # No encoder available. `available` reports False and callers fall
             # back to retention-only ranking rather than failing the run.
             LessonRelevance._model = None
+            reason = f"{type(e).__name__}: {e}"
 
-        if LessonRelevance._model is None:
-            # Say so once. Silently degrading to retention-only ranking would
-            # turn every question's lesson list back into a fixed prefix while
-            # the config still claimed relevance_weight > 0.
-            print(
-                "[relevance] sentence-transformers unavailable; playbook "
-                "retrieval falls back to retention-only ranking and is NOT "
-                "query-conditioned. Install the 'metrics' extra to enable it."
-            )
+        # Say so once. Silently degrading would turn every question's lesson
+        # list back into a fixed prefix while the config still claimed
+        # relevance_weight > 0.
+        print(
+            f"[relevance] could not load '{name}' ({reason}); playbook "
+            f"retrieval falls back to retention-only ranking and is NOT "
+            f"query-conditioned. Install the 'metrics' extra to enable it."
+        )
 
     @property
     def available(self) -> bool:
         """True when an encoder is loaded and relevance can be computed."""
         return LessonRelevance._model is not None
+
+    @property
+    def encoder_name(self) -> Optional[str]:
+        """Which encoder is in use, for the run metadata."""
+        return LessonRelevance._model_name
 
     def _encode(self, texts: Sequence[str]) -> Optional[np.ndarray]:
         """Encode texts, reusing cached lesson embeddings where possible."""

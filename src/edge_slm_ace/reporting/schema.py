@@ -44,25 +44,58 @@ class Arm:
 
 # The registry. Order is the display order in figures and tables.
 ARMS: List[Arm] = [
-    Arm("baseline", "Baseline", "reference", "Terse prompt, no playbook."),
+    Arm("baseline", "Baseline", "reference", "Bare task prompt, no instruction prefix."),
     Arm(
-        "cot_control",
-        "CoT Control",
+        "scaffold_control",
+        "Scaffold Control",
         "control",
-        "ACE prompt scaffold with an empty playbook. The playbook claim is "
-        "ace - cot_control, not ace - baseline.",
+        "The identical instruction prefix over an empty playbook. The playbook "
+        "claim is ace - scaffold_control, not ace - baseline. Named for what it "
+        "is: under loglikelihood option scoring the model emits no text, so a "
+        "chain-of-thought control is not expressible in this track.",
     ),
-    Arm("ace_full", "ACE Full", "ace", "Top-k retrieval from an unbounded playbook."),
-    Arm("ace_working_memory", "TinyACE WM", "ace", "Token-budgeted working memory."),
-    Arm("tinyace_wm_256", "TinyACE-256", "ace", "256-token prompt budget."),
-    Arm("tinyace_wm_512", "TinyACE-512", "ace", "512-token prompt budget."),
     Arm(
-        "tinyace_wm_256_frozen",
-        "TinyACE-256 (frozen)",
+        "tinyace",
+        "TinyACE",
         "ace",
-        "Playbook adapted on sciq_val, frozen, then scored read-only on "
-        "sciq_test. The only ACE arm that does not learn from the split it is "
-        "scored on.",
+        "Scaffold plus a playbook adapted on the adaptation split and frozen " "before evaluation.",
+    ),
+    Arm(
+        "tinyace_retrieval",
+        "TinyACE (retrieved)",
+        "ace",
+        "Per-question retrieval from the frozen playbook. Needs per-item "
+        "scoring rather than a static prefix, so it runs through the scorer "
+        "path rather than simple_evaluate.",
+    ),
+    Arm(
+        "tinyace_playbook_en",
+        "Ablate: English playbook",
+        "ace",
+        "Nepali questions with an English-language playbook. Tests whether the "
+        "lessons have to be in the question's language.",
+    ),
+    Arm(
+        "tinyace_equal_lessons",
+        "Ablate: equal lessons",
+        "ace",
+        "Budget by lesson count instead of tokens, so Devanagari fertility does "
+        "not silently shrink the Nepali playbook.",
+    ),
+    Arm(
+        "tinyace_ablate_no_relevance",
+        "Ablate: No Relevance",
+        "ace",
+        "Retention-only ranking; every question receives the same lessons.",
+    ),
+    Arm("tinyace_ablate_no_vagueness", "Ablate: No Vagueness", "ace", "delta = 0."),
+    Arm("tinyace_ablate_no_recency", "Ablate: No Recency", "ace", "gamma = 0."),
+    Arm("tinyace_ablate_no_failure", "Ablate: No Failure", "ace", "beta = 0."),
+    Arm(
+        "tinyace_ablate_no_curator",
+        "Ablate: No Curator",
+        "ace",
+        "Skip the Curator screening pass.",
     ),
     Arm(
         "tinyace_fifo",
@@ -70,29 +103,13 @@ ARMS: List[Arm] = [
         "ace",
         "Oldest-first eviction instead of lowest-score.",
     ),
-    Arm("tinyace_ablate_no_vagueness", "Ablate: No Vagueness", "ace", "delta = 0."),
-    Arm("tinyace_ablate_no_recency", "Ablate: No Recency", "ace", "gamma = 0."),
-    Arm("tinyace_ablate_no_failure", "Ablate: No Failure", "ace", "beta = 0."),
     Arm(
-        "tinyace_ablate_no_curator", "Ablate: No Curator", "ace", "Skip the Curator screening pass."
-    ),
-    Arm(
-        "tinyace_ablate_no_relevance",
-        "Ablate: No Relevance",
-        "ace",
-        "Domain-only retrieval; every question gets the same lessons.",
-    ),
-    Arm(
-        "self_refine",
-        "Self-Refine",
-        "refine",
-        "Critique and rewrite using only the model's own output.",
-    ),
-    Arm(
-        "self_refine_oracle",
-        "Self-Refine (Oracle)",
-        "refine",
-        "Shown the gold answer during refinement. An upper bound, not a " "baseline.",
+        "generative_cot",
+        "Generative CoT",
+        "generative",
+        "Secondary track: the model generates reasoning and an answer, scored by "
+        "a letter/option-text cascade. The only track where chain-of-thought is "
+        "possible, and where the generative-vs-loglik gap is measured.",
     ),
 ]
 
@@ -104,11 +121,11 @@ _ARMS_BY_KEY: Dict[str, Arm] = {arm.key: arm for arm in ARMS}
 DEFAULT_REFERENCE: Dict[str, str] = {
     "reference": "baseline",
     "control": "baseline",
-    "ace": "cot_control",
-    "refine": "baseline",
+    "ace": "scaffold_control",
+    "generative": "baseline",
 }
 
-ABLATION_REFERENCE = "tinyace_wm_256"
+ABLATION_REFERENCE = "tinyace"
 
 
 def get_arm(key: str) -> Optional[Arm]:
@@ -142,7 +159,11 @@ def arm_order(key: str) -> int:
 
 def is_ablation(key: str) -> bool:
     """True when an arm is an ablation and belongs against ABLATION_REFERENCE."""
-    return "ablate" in key or key == "tinyace_fifo"
+    return "ablate" in key or key in {
+        "tinyace_fifo",
+        "tinyace_playbook_en",
+        "tinyace_equal_lessons",
+    }
 
 
 def reference_for(key: str) -> str:
@@ -164,6 +185,14 @@ def reference_for(key: str) -> str:
 # Short display names for models, longest pattern first so that "phi-3-mini"
 # is not shadowed by "phi-3".
 _MODEL_PATTERNS = [
+    ("qwen3-1.7b", "Qwen3-1.7B"),
+    ("qwen3-4b", "Qwen3-4B"),
+    ("gemma-3-1b", "Gemma3-1B"),
+    ("gemma-3-4b", "Gemma3-4B"),
+    ("gemma-3n-e4b", "Gemma3n-E4B"),
+    ("phi-4-mini", "Phi-4-mini"),
+    ("phi-3.5-mini", "Phi-3.5-mini"),
+    ("smollm3-3b", "SmolLM3-3B"),
     ("qwen2.5-1.5b", "Qwen2.5-1.5B"),
     ("qwen2.5-3b", "Qwen2.5-3B"),
     ("qwen2.5-7b", "Qwen2.5-7B"),
