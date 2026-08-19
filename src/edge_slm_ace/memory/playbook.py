@@ -90,19 +90,46 @@ def _normalize_for_comparison(text: str) -> str:
 _FORMULA_RE = re.compile(r"\d\s*[-+*/^=%]|[-+*/^=%]\s*\d|=")
 
 # Terms that indicate a lesson names a procedure rather than an attitude.
+#
+# Two things were wrong with the previous list. It was arithmetic vocabulary
+# (formula, multiply, percentage) on a reading-comprehension task, so the
+# lessons the Reflector is asked for could never earn a specificity credit and
+# were penalised by delta for being what they were told to be. And it was
+# matched as a substring, so "if" fired on *verify*, *specific*, *different* and
+# *clarify*, "add" on *address*, and "then" on *strengthen*. Roughly half the
+# credits it awarded were accidents of spelling.
+#
+# The list is now reading-comprehension procedure plus the conditional markers
+# that name a case, and it is matched on word boundaries. The arithmetic signal
+# has not been lost: numbers and applied operators are scored separately, which
+# is what actually identifies a quantitative lesson.
 _SPECIFIC_TERMS = (
-    "formula",
-    "equation",
-    "calculate",
-    "multiply",
-    "divide",
-    "subtract",
-    "add",
-    "percentage",
-    "ratio",
+    "passage",
+    "option",
+    "options",
+    "stated",
+    "states",
+    "explicit",
+    "explicitly",
+    "contradicts",
+    "paraphrase",
+    "paraphrases",
+    "eliminate",
+    "quote",
+    "restates",
+    "reverses",
+    "distractor",
+    "claim",
+    "wording",
+    "sentence",
     "if",
     "when",
     "then",
+    "unless",
+)
+
+_SPECIFIC_RE = re.compile(
+    r"\b(?:" + "|".join(sorted(_SPECIFIC_TERMS, key=len, reverse=True)) + r")\b"
 )
 
 # Floor for a lesson that contains a generic phrase and no specificity signal
@@ -124,7 +151,8 @@ def compute_vagueness_score(text: str) -> float:
     - A phrase from GENERIC_PHRASES is strong evidence of genericness.
     - Numbers, formulas applied to numbers, and procedural terms are evidence
       against it, and reduce the score -- but they cannot pull a lesson that is
-      *only* generic advice below `_GENERIC_FLOOR`.
+      *only* generic advice below `_GENERIC_FLOOR`. Procedural terms are matched
+      on word boundaries; as substrings, "if" fired on *verify* and *specific*.
 
     delta weights this term in the retention score and has its own ablation
     arm, so a threshold that a hyphen could flip was not measuring what the
@@ -156,7 +184,7 @@ def compute_vagueness_score(text: str) -> float:
     # Check for specificity indicators (formulas, numbers, specific terms)
     has_numbers = any(c.isdigit() for c in text)
     has_formula = bool(_FORMULA_RE.search(text))
-    has_specific_terms = any(term in text_lower for term in _SPECIFIC_TERMS)
+    has_specific_terms = bool(_SPECIFIC_RE.search(text_lower))
 
     # Reduce score for specific content
     if has_numbers:
@@ -168,7 +196,14 @@ def compute_vagueness_score(text: str) -> float:
 
     # A lesson carrying a generic phrase and nothing concrete stays generic,
     # whatever the length term contributed.
-    if generic_count and not (has_numbers or has_formula or has_specific_terms):
+    #
+    # A bare term does not count as concrete on its own. "Think carefully about
+    # the question and the options" names an option and is still nothing but
+    # advice; one topic noun was enough to lift it off the floor. Numbers and
+    # applied operators are content by themselves; a procedural term counts only
+    # in a lesson long enough to have said something with it.
+    concrete = has_numbers or has_formula or (has_specific_terms and word_count >= 10)
+    if generic_count and not concrete:
         score = max(score, _GENERIC_FLOOR)
 
     # Clamp to [0, 1]

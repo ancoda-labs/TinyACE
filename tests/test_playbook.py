@@ -744,3 +744,48 @@ class TestPruneRequiresAStep:
         playbook.prune(max_entries_per_domain=1, current_step=40)
 
         assert [e.id for e in playbook.entries] == [fresh.id]
+
+
+class TestVaguenessOnReadingComprehension:
+    """
+    The lexicon was arithmetic vocabulary on a reading-comprehension task.
+
+    A well-formed reading strategy -- the kind `build_reflector_prompt` asks
+    for by name -- could not earn a specificity credit, so delta penalised it
+    for being exactly what it was told to be. And the terms were matched as
+    substrings, so "if" fired on *verify*, *specific* and *clarify*, "add" on
+    *address*, "then" on *strengthen*: a large share of the credits the term
+    awarded were accidents of spelling.
+    """
+
+    STRATEGIES = [
+        "Reject an option that is true in general but is not stated in the passage",
+        "Compare each option against what the passage explicitly states",
+        "When two options paraphrase the same sentence, keep the one that does not "
+        "reverse the direction of the cause",
+        "If an option answers a different question than the one asked, eliminate it",
+    ]
+
+    @pytest.mark.parametrize("text", STRATEGIES)
+    def test_a_reading_strategy_is_specific(self, text):
+        score = compute_vagueness_score(text)
+        assert score <= 0.5, f"'{text}' should be specific (score={score})"
+
+    def test_arithmetic_lessons_are_still_specific(self):
+        """Numbers and applied operators carry that signal, not a word list."""
+        assert (
+            compute_vagueness_score(
+                "For percentage calculations: divide by 100, then multiply by the base"
+            )
+            <= 0.5
+        )
+
+    @pytest.mark.parametrize(
+        "word", ["verify", "specific", "different", "clarify", "address", "strengthen"]
+    )
+    def test_a_term_inside_another_word_is_not_a_credit(self, word):
+        """The substring bug: these words contain "if", "add" or "then"."""
+        generic = f"Pay attention and {word} things"
+        assert (
+            compute_vagueness_score(generic) > 0.5
+        ), f"'{word}' must not earn a specificity credit"

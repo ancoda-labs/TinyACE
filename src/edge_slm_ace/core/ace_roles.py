@@ -10,7 +10,11 @@ secondary generative track still has text to parse.
 import re
 from typing import List, Optional, Tuple
 
-from edge_slm_ace.memory.playbook import Playbook
+from edge_slm_ace.memory.playbook import (
+    _GENERIC_FLOOR,
+    Playbook,
+    compute_vagueness_score,
+)
 
 # Lines that end a section without starting one.
 #
@@ -239,8 +243,16 @@ def build_curator_prompt(
     """
     Build a prompt for the Curator role (model that marks generic rules).
 
-    The Curator evaluates lessons and marks obviously generic rules as is_generic=True
-    so the scoring can down-weight them.
+    The Curator marks obviously generic rules as is_generic=True so they are
+    rejected before they reach the playbook.
+
+    This prompt used to demand "concrete formulas, equations, procedures" and
+    illustrate them with compound interest and percentage conversion -- carried
+    over unchanged from the arithmetic task this project used to run. On
+    Belebele it rejected almost every well-formed reading strategy, including
+    the ones `build_reflector_prompt` explicitly asks for, so the Curator arm
+    and the no-Curator arm differed mainly in whether the playbook was allowed
+    to have entries at all.
 
     Args:
         domain: Domain name.
@@ -253,34 +265,39 @@ def build_curator_prompt(
     for i, lesson in enumerate(lessons, 1):
         lessons_text += f"{i}. {lesson}\n"
 
-    prompt = f"""You are a Curator evaluating lessons extracted from a {domain} domain question-answer pair.
+    prompt = f"""You are a Curator screening reading strategies proposed for the
+{domain} playbook. The task is multiple-choice reading comprehension: a passage,
+a question about it, and four options.
 
-Your task: Mark lessons that are obviously generic or vague as is_generic=True. Only specific, actionable rules with concrete procedures, formulas, or concrete steps should be marked as is_generic=False.
+Mark a strategy GENERIC when it is advice about attitude or effort, and could
+have been written without seeing any question. Mark it SPECIFIC when it names
+something a reader can actually do to the passage or the options -- a comparison
+to make, a kind of wrong option to recognise, a test to apply to a candidate
+answer.
 
-Lessons to evaluate:
+Strategies to evaluate:
 {lessons_text}
 
-For each lesson, determine if it is:
-- SPECIFIC: Contains concrete formulas, equations, procedures, steps, or domain-specific facts
-- GENERIC: Contains vague advice, generic instructions, or lacks concrete actionable details
-
-Examples of GENERIC lessons (should be marked is_generic=True):
+Examples of GENERIC (mark is_generic=True):
 - "Think carefully about the question."
 - "Pay attention to details."
-- "Consider all options."
-- "Be thorough in your analysis."
-- "Use the context provided." (without specifying HOW)
-- "Check your work." (without specifying WHAT to check)
+- "Read the passage thoroughly before answering."
+- "Use the context provided." (without saying how)
+- "Consider all the options." (without saying what to compare)
 
-Examples of SPECIFIC lessons (should be marked is_generic=False):
-- "For finance percentage calculations: convert percentage to decimal (divide by 100), then multiply"
-- "When calculating compound interest: use formula A = P(1 + r/n)^(nt) where P=principal, r=rate, n=compounds/year, t=years"
-- "For medical symptom questions: identify the specific condition mentioned, then match symptoms from context to that condition's known presentation"
+Examples of SPECIFIC (mark is_generic=False):
+- "Reject an option that is true in general but is not stated in the passage."
+- "When two options paraphrase the same sentence, prefer the one that keeps the
+  direction of the cause, not the one that reverses it."
+- "If an option answers a different question than the one asked, eliminate it
+  even when the passage supports it."
 
-For each lesson, respond with:
+A strategy does not need a formula, an equation or a number. This is reading
+comprehension: naming the trap and the comparison to make is what specific
+means here.
+
+For each strategy, respond with:
 Lesson [number]: is_generic=[True/False]
-
-Be strict: if a lesson doesn't contain specific formulas, procedures, or concrete steps, mark it as generic.
 """
 
     return prompt
@@ -325,7 +342,8 @@ def choose_lessons_for_playbook(
     """
     Filter candidate lessons before offering them to the playbook.
 
-    Only length and genericness filtering happens here. Deduplication is the
+    Only length and genericness filtering happens here, and genericness means
+    the same thing it means to the retention score. Deduplication is the
     playbook's job: it can compare a candidate against the incumbent and keep
     whichever is more specific, whereas dropping the candidate here would
     always preserve whichever lesson happened to arrive first.
@@ -342,29 +360,21 @@ def choose_lessons_for_playbook(
     """
     filtered = []
 
-    # Generic phrases to filter out
-    generic_phrases = [
-        "think carefully",
-        "be careful",
-        "pay attention",
-        "consider",
-        "remember",
-        "make sure",
-    ]
-
     for lesson in lessons:
         lesson = lesson.strip()
 
-        # Filter too short
         if len(lesson) < min_length:
             continue
 
-        # Filter generic
-        lesson_lower = lesson.lower()
-        if any(phrase in lesson_lower for phrase in generic_phrases):
-            # Only skip if it's mostly generic
-            if len(lesson.split()) < 5:
-                continue
+        # One definition of generic, the one delta is computed from. This used
+        # to carry a second, shorter list of its own that disagreed with
+        # GENERIC_PHRASES -- it included the bare words "consider" and
+        # "remember", which appear in perfectly concrete reading strategies --
+        # behind a `len(lesson.split()) < 5` guard that a 15-character minimum
+        # meant almost never fired. The filter was very nearly dead code that
+        # would have been wrong had it run.
+        if compute_vagueness_score(lesson) >= _GENERIC_FLOOR:
+            continue
 
         # Defer duplicate handling to the playbook, which resolves an overlap
         # by keeping the more specific text rather than always keeping the

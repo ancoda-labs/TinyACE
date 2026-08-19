@@ -4,6 +4,7 @@ import pytest
 
 from edge_slm_ace.core.ace_roles import (
     choose_lessons_for_playbook,
+    build_curator_prompt,
     extract_answer,
     parse_generator_output,
     parse_reflector_output_to_lessons,
@@ -270,3 +271,48 @@ class TestCitationBlockIsNotPartOfTheAnswer:
         """Only a line *starting* with the marker terminates the section."""
         answer, _ = extract_answer("Answer:\nthe used strategies of r-selected species")
         assert answer == "the used strategies of r-selected species"
+
+
+class TestCuratorScreensReadingStrategies:
+    """
+    The Curator prompt was never retargeted from the arithmetic task.
+
+    It demanded "concrete formulas, equations, procedures", illustrated
+    SPECIFIC with compound interest and percentage conversion, and closed with
+    "if a lesson doesn't contain specific formulas, procedures, or concrete
+    steps, mark it as generic". Belebele has no arithmetic in it, so on this
+    task it rejected the strategies `build_reflector_prompt` explicitly asks
+    for -- and `use_curator` is on by default, which left the Curator arm and
+    the no-Curator arm differing mainly in whether the playbook could have
+    entries at all.
+    """
+
+    def test_the_prompt_is_about_passages_not_formulas(self):
+        prompt = build_curator_prompt("belebele_ne", ["Some strategy"]).lower()
+        assert "passage" in prompt
+        assert "option" in prompt
+        assert "does not need a formula" in prompt
+
+    def test_the_prompt_does_not_demand_arithmetic(self):
+        prompt = build_curator_prompt("belebele_ne", ["Some strategy"]).lower()
+        for demand in ("compound interest", "percentage to decimal", "p(1 + r/n)"):
+            assert demand not in prompt
+
+    def test_a_reading_strategy_survives_the_pre_filter(self):
+        """choose_lessons_for_playbook screens before the Curator ever sees it."""
+        lessons = [
+            "Think carefully about the question and the options",
+            "Reject an option that is true in general but is not stated in the passage",
+            "Pay attention to details",
+        ]
+        kept = choose_lessons_for_playbook("belebele_ne", lessons, Playbook())
+
+        assert kept == ["Reject an option that is true in general but is not stated in the passage"]
+
+    def test_generic_means_one_thing(self):
+        """The filter used its own shorter list, which disagreed with delta."""
+        from edge_slm_ace.memory.playbook import compute_vagueness_score
+
+        for lesson in ("Consider what the passage states about the claim",):
+            assert compute_vagueness_score(lesson) < 0.6
+            assert choose_lessons_for_playbook("d", [lesson], Playbook()) == [lesson]
