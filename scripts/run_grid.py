@@ -219,9 +219,18 @@ def main(argv=None) -> int:
         )
         return 1
 
+    # Not models x languages x arms: an arm with `only_languages` is planned in
+    # some cells and not others, so that product overstates the grid and does
+    # not match the line printed at the end.
+    restricted = sorted({a.key for a in GRID if a.only_languages})
     print(
-        f"{len(jobs)} cells: {len(models)} model(s) x {len(args.languages)} language(s) "
-        f"x {len(GRID)} arms"
+        f"{len(jobs)} cells over {len(models)} model(s) and "
+        f"{len(args.languages)} language(s), from {len(GRID)} arms"
+        + (
+            f" ({len(restricted)} language-restricted: {', '.join(restricted)})"
+            if restricted
+            else ""
+        )
     )
     if args.dry_run:
         for job in jobs:

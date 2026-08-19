@@ -43,6 +43,16 @@ class TestGridPlan:
         models = [j["model"] for j in jobs]
         assert models == sorted(models, key=["a", "b"].index)
 
+    def test_a_language_restricted_arm_is_not_planned_everywhere(self):
+        """The printed cell count used to be models x languages x arms.
+
+        `only_languages` means an arm is planned in some cells and not others,
+        so that product overstates the grid and disagrees with the count the
+        same run prints when it finishes.
+        """
+        jobs = plan(["m1"], ["en", "ne"], GRID)
+        assert len(jobs) < 1 * 2 * len(GRID)
+
     def test_cross_lingual_arm_is_scoped_to_nepali(self):
         """On English it would borrow the English playbook to score English."""
         jobs = plan(["m"], ["en", "ne"], GRID)
