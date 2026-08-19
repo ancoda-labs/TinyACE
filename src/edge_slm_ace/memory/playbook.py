@@ -52,7 +52,15 @@ class ScoringParams:
     relevance_weight: float = 0.5
 
 
-# Generic phrases that indicate vague/unhelpful lessons
+# Generic phrases that indicate vague/unhelpful lessons.
+#
+# English only, and knowingly so: a lesson written in Nepali cannot match any of
+# them, so the phrase term of the vagueness score is inert on that side and
+# delta rests on length alone. That is an asymmetry between the two language
+# arms, not noise, and it belongs in the limitations rather than in a footnote
+# -- a cross-lingual delta must not be read as an effect of the playbook while
+# it stands. Deduplication no longer has this problem (see
+# `_normalize_for_comparison`); this list still does.
 GENERIC_PHRASES = [
     "think carefully",
     "think step by step",
@@ -76,8 +84,14 @@ def _normalize_for_comparison(text: str) -> str:
     Lowercases, strips punctuation and collapses whitespace. Raw containment
     was punctuation-sensitive, so "check the units." did not match "check the
     units:" and near-identical lessons accumulated as separate entries.
+
+    The character class is Unicode, not `[a-z0-9]`. Under the ASCII class every
+    Devanagari lesson normalised to the empty string, `_find_duplicate` bailed
+    out on empty, and deduplication was silently off for the entire Nepali side
+    of a study about Nepali -- the same lesson could be added verbatim any
+    number of times.
     """
-    stripped = re.sub(r"[^a-z0-9 ]+", " ", text.lower())
+    stripped = re.sub(r"[^\w ]+", " ", text.lower(), flags=re.UNICODE)
     return re.sub(r"\s+", " ", stripped).strip()
 
 

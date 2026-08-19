@@ -9,6 +9,7 @@ from edge_slm_ace.memory.playbook import (
     Playbook,
     PlaybookEntry,
     ScoringParams,
+    _normalize_for_comparison,
     compute_vagueness_score,
 )
 
@@ -789,3 +790,49 @@ class TestVaguenessOnReadingComprehension:
         assert (
             compute_vagueness_score(generic) > 0.5
         ), f"'{word}' must not earn a specificity credit"
+
+
+class TestDevanagariLessons:
+    """
+    Deduplication was ASCII-only, on a project about Nepali.
+
+    `_normalize_for_comparison` stripped `[^a-z0-9 ]`, so every Devanagari
+    lesson normalised to "", `_find_duplicate` bailed out on empty, and the
+    same lesson could be stored verbatim any number of times. The Nepali
+    playbook grew duplicates the English one could not.
+    """
+
+    NEPALI = "अनुच्छेदमा प्रत्यक्ष रूपमा उल्लेख नगरिएको विकल्प रोज्नुहुँदैन"
+    OTHER_NEPALI = "प्रश्नले सोधेको भन्दा फरक कुरामा जवाफ दिने विकल्प हटाउनुहोस्"
+
+    def test_devanagari_survives_normalisation(self):
+        assert _normalize_for_comparison(self.NEPALI) != ""
+
+    def test_the_same_nepali_lesson_is_not_stored_twice(self):
+        playbook = Playbook()
+        playbook.add_entry("belebele_ne", self.NEPALI, step=1)
+        playbook.add_entry("belebele_ne", self.NEPALI, step=2)
+
+        assert len(playbook.entries) == 1
+
+    def test_two_different_nepali_lessons_are_both_kept(self):
+        """Normalisation must not collapse everything onto one entry either."""
+        playbook = Playbook()
+        playbook.add_entry("belebele_ne", self.NEPALI, step=1)
+        playbook.add_entry("belebele_ne", self.OTHER_NEPALI, step=2)
+
+        assert len(playbook.entries) == 2
+
+    def test_punctuation_still_does_not_split_an_entry(self):
+        playbook = Playbook()
+        playbook.add_entry("belebele_ne", self.NEPALI + "।", step=1)
+        playbook.add_entry("belebele_ne", self.NEPALI, step=2)
+
+        assert len(playbook.entries) == 1
+
+    def test_a_nepali_lesson_round_trips_through_the_file(self, tmp_path):
+        playbook = Playbook()
+        playbook.add_entry("belebele_ne", self.NEPALI, step=1)
+        playbook.save(tmp_path / "playbook.jsonl")
+
+        assert Playbook.load(tmp_path / "playbook.jsonl").entries[0].text == self.NEPALI
