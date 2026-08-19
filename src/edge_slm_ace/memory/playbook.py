@@ -523,7 +523,13 @@ class Playbook:
         return sum(e.token_count for e in self.entries if e.domain == domain)
 
     @classmethod
-    def load(cls, path: Path, token_budget: Optional[int] = None, tokenizer=None) -> "Playbook":
+    def load(
+        cls,
+        path: Path,
+        token_budget: Optional[int] = None,
+        tokenizer=None,
+        scoring_params: Optional[ScoringParams] = None,
+    ) -> "Playbook":
         """
         Load playbook from a JSONL file.
 
@@ -531,6 +537,15 @@ class Playbook:
             path: Path to JSONL file.
             token_budget: Token budget for working memory mode.
             tokenizer: Optional tokenizer for exact token counts.
+            scoring_params: The retention-score configuration to rank under.
+                Omitting it loads the playbook under `ScoringParams()`, i.e.
+                every ablation flag off.
+
+                This had no way in at all, so a caller that loaded a playbook
+                for an ablation arm had to remember to overwrite the attribute
+                afterwards -- and a caller that forgot got the defaults with no
+                error, which for an ablation arm means the term it was supposed
+                to zero is still on and the arm silently duplicates `tinyace`.
 
         Returns:
             Playbook instance.
@@ -549,7 +564,12 @@ class Playbook:
                             print(f"Warning: Skipping malformed playbook entry: {e}")
                             continue
 
-        playbook = cls(entries, token_budget=token_budget, tokenizer=tokenizer)
+        playbook = cls(
+            entries,
+            token_budget=token_budget,
+            tokenizer=tokenizer,
+            scoring_params=scoring_params,
+        )
 
         # Set next_id past every existing id. Non-numeric ids used to be
         # skipped entirely, so a playbook containing any of them reset the

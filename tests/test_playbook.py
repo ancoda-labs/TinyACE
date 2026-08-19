@@ -176,6 +176,28 @@ class TestPlaybook:
         finally:
             temp_path.unlink()
 
+    def test_load_ranks_under_the_params_it_is_given(self, tmp_path):
+        """An ablation arm's playbook must load under that ablation.
+
+        `load` had no way to take them, so a caller had to patch the attribute
+        afterwards. Forgetting raised nothing: the arm ran under the defaults,
+        with the term it was meant to zero still on, and silently duplicated
+        `tinyace` under an ablation label.
+        """
+        path = tmp_path / "playbook.jsonl"
+        Playbook().save(path)
+
+        params = ScoringParams(disable_recency_decay=True, relevance_weight=0.0)
+        loaded = Playbook.load(path, scoring_params=params)
+
+        assert loaded.scoring_params is params
+
+    def test_load_without_params_is_every_ablation_off(self, tmp_path):
+        path = tmp_path / "playbook.jsonl"
+        Playbook().save(path)
+
+        assert Playbook.load(path).scoring_params == ScoringParams()
+
     def test_deduplication(self):
         """Test that duplicate entries are not added."""
         playbook = Playbook()

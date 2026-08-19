@@ -157,8 +157,7 @@ def main(argv=None, lm=None) -> int:
     adapt_summary = None
 
     if needs_playbook and args.init_playbook:
-        playbook = Playbook.load(args.init_playbook)
-        playbook.scoring_params = scoring
+        playbook = Playbook.load(args.init_playbook, scoring_params=scoring)
         print(f"  frozen playbook from {args.init_playbook}: {len(playbook.entries)} entries")
 
     elif needs_playbook:
