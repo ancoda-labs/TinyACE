@@ -121,6 +121,8 @@ from edge_slm_ace.memory.playbook import Playbook, PlaybookEntry, ScoringParams
 
 | | |
 |---|---|
+| `Playbook(entries, token_budget=None, scoring_params=None, tokenizer=None)` | `tokenizer` makes entry token counts real; without it they are `words * 1.3`, which is fertility-blind |
+| `Playbook.load(path, token_budget=None, tokenizer=None, scoring_params=None)` | Pass the arm's `scoring_params`, or the playbook ranks under the defaults |
 | `get_top_k(domain, k, current_step, query=None)` | Retrieval ranking; `query` enables relevance blending |
 | `get_top_entries_for_budget(domain, token_budget, ...)` | The same ranking, greedily filled to a token budget |
 | `add_entry(domain, text, step)` | With deduplication and, if capacity is set, eviction |

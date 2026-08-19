@@ -107,13 +107,34 @@ Two different keys, on purpose:
 - `eviction_key` is the retention score, or `created_at` under `fifo_memory`
   (lowest key evicted first, i.e. oldest first, which is what FIFO means).
 
-### Store capacity vs. prompt budget
+### What actually bounds the playbook
 
-Distinct numbers. `store_token_capacity` is how many tokens of lessons to
-**keep**; `token_budget` is how many to **show**. They were once the same value,
-which made retrieval a no-op — eviction held the store at the budget and
-retrieval then filled up to that same budget, so every surviving entry was
-always retrieved and ranking never selected anything.
+**`max_entries_per_domain`**, applied by `prune()`. `adapt_playbook` prunes
+every `prune_every_n` steps and again on the last step, so the cap holds on the
+saved playbook whatever the split length is.
+
+`Playbook` also carries a token-budget mechanism — `store_token_capacity` for
+how many tokens of lessons to **keep**, `token_budget` for how many to
+**show**, deliberately distinct because they were once the same value and that
+made retrieval a no-op (eviction held the store at the budget, retrieval then
+filled up to that same budget, so every surviving entry was always retrieved
+and ranking never selected anything).
+
+Nothing in `scripts/` sets either one. No arm varies them and no runner has a
+flag for them, so on every run today `store_token_capacity` is None and the
+entry cap is the only bound in force. Treat that machinery as available, not as
+part of the protocol.
+
+### Counting tokens
+
+Entry token counts come from the run's tokenizer when `Playbook` is given one,
+and from `words * 1.3` when it is not. `run_arm` passes the scorer's tokenizer,
+and records `token_counts_exact` so a run says which it used.
+
+The distinction is not cosmetic here. Words per lesson is roughly
+language-independent; Devanagari fertility is *tokens per word*, so the estimate
+cannot see it and reports a Nepali lesson as cheaper than the English one it was
+translated from. See [evaluation.md](evaluation.md#token-counts).
 
 ### Vagueness
 
