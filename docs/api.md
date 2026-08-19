@@ -1,339 +1,209 @@
-# TinyACE API Reference
+# API Reference
 
-## Core Modules
+Public surface of `edge_slm_ace`, by module. Docstrings in the source carry the
+detail and the rationale; this is the map.
 
-### `edge_slm_ace.core.runner`
+---
 
-Main evaluation loop functions.
-
-#### `run_dataset_baseline()`
-
-Run baseline evaluation without playbook.
+## `edge_slm_ace.data`
 
 ```python
-from edge_slm_ace.core.runner import run_dataset_baseline
+from edge_slm_ace.data import load_belebele, study_split, BELEBELE_LANGUAGES
+```
 
-results, summary = run_dataset_baseline(
-    model=model,
-    tokenizer=tokenizer,
-    dataset=dataset,
-    domain="science",
-    config=ModelConfig(...),
-    model_id="microsoft/Phi-3-mini-4k-instruct",
-    task_name="sciq_test",
-    mode="baseline"
+| | |
+|---|---|
+| `load_belebele(language, path=None, domain=None)` | Normalised examples, **sorted by id** so `load_belebele("en")[i]` and `load_belebele("ne")[i]` are the same question |
+| `study_split(item_ids, seed, adaptation_size=None)` | The study's one split. Every entrypoint uses this rather than sizing its own |
+| `parallel_split(item_ids, adaptation_size, seed)` | The primitive underneath it |
+| `item_id(record)` | `bel-<hash>-q<n>`, from `(link, question_number)` — the only safe cross-language join key |
+| `harness_indices(language, item_ids)` | Ids → this language's document positions |
+| `HARNESS_TASKS` | `{"en": "belebele_eng_Latn", "ne": "belebele_npi_Deva"}` |
+
+An example:
+
+```python
+{
+  "id": "bel-015eac1bdc-q2", "language": "ne", "domain": "belebele_ne",
+  "context": "<the FLORES passage>", "question": "...",
+  "options": ["...", "...", "...", "..."],
+  "gold_option_idx": 2, "answer": "...",
+}
+```
+
+Do not derive ids from row position. The language files hold the same 900
+questions in different orders.
+
+---
+
+## `edge_slm_ace.harness`
+
+```python
+from edge_slm_ace.harness import OptionScorer, run_frozen_eval, per_item_correctness
+```
+
+### `OptionScorer`
+
+```python
+scorer = OptionScorer("Qwen/Qwen3-1.7B", device="cuda", apply_chat_template=True)
+chosen_idx, logprobs = scorer.score_one(example, lessons=["..."])
+```
+
+Picks an option by loglikelihood, exactly as the evaluation task does.
+`apply_chat_template` is a constructor argument so a caller cannot adapt in one
+mode and evaluate in the other.
+
+### `run_frozen_eval(...)`
+
+```python
+results = run_frozen_eval(
+    model_id, language, item_ids,
+    lessons=frozen, include_scaffold=True,
+    seed=42, device="cuda", apply_chat_template=True, lm=already_loaded,
 )
 ```
 
-#### `run_dataset_ace()`
+A stock `simple_evaluate` call. Returns the harness results dict with a
+`"tinyace"` key carrying the arm's configuration and the truncation counts, so a
+number can be traced back to what produced it. Pass `lm=` to reuse a loaded
+checkpoint — a grid runs a dozen arms per model.
 
-Run ACE-style adaptive evaluation.
+### Reading results
 
-```python
-from edge_slm_ace.core.runner import run_dataset_ace
-from edge_slm_ace.memory.playbook import Playbook
+| | |
+|---|---|
+| `accuracy_of(results, language)` | `acc`, never `acc_norm` |
+| `per_item_correctness(results, language, expected_ids=None)` | `{item_id: 0/1}`. With `expected_ids`, raises if the harness scored a different set |
 
-playbook = Playbook(token_budget=256)
-results, summary = run_dataset_ace(
-    model=model,
-    tokenizer=tokenizer,
-    dataset=dataset,
-    domain="science",
-    config=ModelConfig(...),
-    playbook=playbook,
-    playbook_path=Path("playbook.jsonl"),
-    model_id="microsoft/Phi-3-mini-4k-instruct",
-    task_name="sciq_test",
-    mode="ace",
-    ace_mode="ace_working_memory",
-    token_budget=256,
-    top_k=5,
-    reflect_on_correct_every_n=5,
-    prune_every_n=10,
-    max_entries_per_domain=32
-)
-```
+### `edge_slm_ace.harness.prompts`
 
-### `edge_slm_ace.memory.playbook`
+| | |
+|---|---|
+| `render_question(example)` | The task template, rendered |
+| `build_context(question, system_instruction, apply_chat_template, chat_template)` | The full context, assembled by lm-eval's own helpers |
+| `choice_continuations(apply_chat_template=False)` | `[" A", ...]`, or `["A", ...]` under a chat template |
+| `build_system_instruction(lessons, include_scaffold=True)` | The arm's prefix. Empty string for `baseline` |
+| `assert_matches_harness()` | Raises if the installed harness's task has drifted |
 
-Playbook memory system.
+---
 
-#### `Playbook`
-
-Main playbook class for storing and managing domain-specific strategies.
+## `edge_slm_ace.adapt`
 
 ```python
-from edge_slm_ace.memory.playbook import Playbook, ScoringParams
+from edge_slm_ace.adapt import adapt_playbook, frozen_lessons, save_adaptation_log
 
-# Create playbook with token budget
-playbook = Playbook(token_budget=256)
-
-# Create with custom scoring parameters
-scoring_params = ScoringParams(
-    alpha=1.0,
-    beta=0.5,
-    gamma=0.3,
-    delta=0.4,
-    disable_failure_penalty=False,
-    disable_recency_decay=False,
-    disable_vagueness_penalty=False,
-    fifo_memory=False
+summary = adapt_playbook(
+    scorer, adaptation_examples, playbook, domain="belebele_ne",
+    top_k=5, use_curator=True, prune_every_n=25, max_entries_per_domain=32,
 )
-playbook = Playbook(token_budget=256, scoring_params=scoring_params)
-
-# Add entry
-entry = playbook.add_entry(
-    domain="science",
-    text="For physics questions, use F=ma formula",
-    step=1
-)
-
-# Get top entries
-top_entries = playbook.get_top_k(domain="science", k=5, current_step=10)
-
-# Get token-budgeted entries
-budget_entries = playbook.get_top_entries_for_budget(
-    domain="science",
-    token_budget=256,
-    current_step=10
-)
-
-# Record feedback
-playbook.record_feedback(entry_id="1", helpful=True)
-playbook.mark_entry_used(entry_id="1", step=10)
-
-# Prune playbook
-removed = playbook.prune(max_entries_per_domain=32, current_step=10)
+lessons = frozen_lessons(playbook, "belebele_ne", top_k=5)
 ```
 
-#### `PlaybookEntry`
+`adapt_playbook` mutates the playbook in place and returns `{log, accuracy,
+playbook_size, ...}`. `ADAPT_LOG_FIELDS` defines the per-step CSV columns next to
+the only code that builds a row.
 
-Individual playbook entry.
+**`examples` must be the adaptation split only.** The Reflector is shown gold
+answers.
+
+`frozen_lessons` ages entries at the last step any of them was used, so recency
+actually participates in the ranking that ships.
+
+---
+
+## `edge_slm_ace.memory`
 
 ```python
-from edge_slm_ace.memory.playbook import PlaybookEntry
-
-entry = PlaybookEntry(
-    id="1",
-    domain="science",
-    text="Use F=ma for force calculations",
-    success_count=5,
-    failure_count=1,
-    last_used_at=10,
-    token_count=10,
-    vagueness_score=0.1
-)
-
-# Compute score
-score = entry.score(current_step=15, params=scoring_params)
+from edge_slm_ace.memory.playbook import Playbook, PlaybookEntry, ScoringParams
 ```
 
-### `edge_slm_ace.core.ace_roles`
+### `Playbook`
 
-ACE role prompt builders.
-
-#### `build_generator_prompt()`
-
-Build prompt for Generator role.
-
-```python
-from edge_slm_ace.core.ace_roles import build_generator_prompt
-
-prompt = build_generator_prompt(
-    domain="science",
-    playbook=playbook,
-    question="What is the force required to accelerate a 10kg object at 2 m/s²?",
-    context=None,
-    ace_mode="ace_working_memory",
-    token_budget=256,
-    top_k=5,
-    current_step=10
-)
-```
-
-#### `build_reflector_prompt()`
-
-Build prompt for Reflector role.
-
-```python
-from edge_slm_ace.core.ace_roles import build_reflector_prompt
-
-prompt = build_reflector_prompt(
-    domain="science",
-    question="...",
-    context=None,
-    model_answer="...",
-    ground_truth="...",
-    reasoning="..."
-)
-```
-
-### `edge_slm_ace.models.model_manager`
-
-Model loading and generation.
-
-#### `load_model_and_tokenizer()`
-
-Load HuggingFace model and tokenizer.
-
-```python
-from edge_slm_ace.models.model_manager import load_model_and_tokenizer
-
-model, tokenizer = load_model_and_tokenizer(
-    model_id="microsoft/Phi-3-mini-4k-instruct",
-    device_override="cuda",   # "cuda" | "mps" | "cpu" | None to auto-detect
-)
-```
-
-Pass the device as `device_override`, a string. The legacy `device` parameter is
-accepted and ignored.
-
-#### `generate()`
-
-Generate text from model.
-
-```python
-from edge_slm_ace.models.model_manager import generate
-
-answer = generate(
-    model=model,
-    tokenizer=tokenizer,
-    prompt="Question: ...",
-    max_new_tokens=256,
-    temperature=0.0,
-    top_p=1.0
-)
-```
-
-### `edge_slm_ace.eval.metrics`
-
-Evaluation metrics.
-
-#### `semantic_answer_score()`
-
-Compute semantic similarity between answers.
-
-```python
-from edge_slm_ace.eval.metrics import semantic_answer_score
-
-score = semantic_answer_score(
-    predicted="The force is 20 Newtons",
-    gold="20 N"
-)
-```
-
-#### `compute_accuracy()`
-
-Compute exact match accuracy.
-
-```python
-from edge_slm_ace.eval.metrics import compute_accuracy
-
-accuracy = compute_accuracy(
-    predictions=["A", "B", "C"],
-    labels=["A", "B", "D"]
-)
-```
-
-## Configuration
-
-### `ModelConfig`
-
-Model configuration dataclass.
-
-```python
-from edge_slm_ace.utils.config import ModelConfig
-
-config = ModelConfig(
-    model_id="microsoft/Phi-3-mini-4k-instruct",
-    max_new_tokens=256,
-    temperature=0.0,
-    top_p=1.0
-)
-```
+| | |
+|---|---|
+| `get_top_k(domain, k, current_step, query=None)` | Retrieval ranking; `query` enables relevance blending |
+| `get_top_entries_for_budget(domain, token_budget, ...)` | The same ranking, greedily filled to a token budget |
+| `add_entry(domain, text, step)` | With deduplication and, if capacity is set, eviction |
+| `record_feedback(entry_id, helpful)` | Only for an entry that was actually shown |
+| `mark_entry_used(entry_id, step)` | Recency |
+| `prune(max_entries_per_domain, *, current_step)` | `current_step` is keyword-only with **no default** |
+| `save(path)` / `Playbook.load(path)` | JSONL |
 
 ### `ScoringParams`
 
-Scoring parameters for retention scoring.
+`alpha`, `beta`, `gamma`, `delta`, `lambda_decay`, `epsilon`,
+`relevance_weight`, plus the ablation switches `disable_vagueness_penalty`,
+`disable_recency_decay`, `disable_failure_penalty` and `fifo_memory`. Each
+switch has a registered arm and a `run_arm` flag.
 
-```python
-from edge_slm_ace.memory.playbook import ScoringParams
+### `compute_vagueness_score(text) -> float`
 
-params = ScoringParams(
-    alpha=1.0,             # Success ratio weight
-    beta=0.5,              # Failure ratio penalty
-    gamma=0.3,             # Recency bonus weight
-    delta=0.4,             # Vagueness penalty weight
-    lambda_decay=0.05,     # Recency decay rate
-    epsilon=1.0,           # Smoothing constant
-    relevance_weight=0.5,  # Weight on question-lesson relevance at retrieval;
-                           # 0.0 restores domain-only ranking, where every
-                           # question in a run gets the identical lesson list
-    disable_vagueness_penalty=False,
-    disable_recency_decay=False,
-    disable_failure_penalty=False,
-    fifo_memory=False,
-)
-```
+0 = specific, 1 = generic. Reading-comprehension procedure earns credit;
+arithmetic still does, via numbers and applied operators. English-only on the
+phrase list.
 
-Every one of these is reachable from the command line
-(`--alpha`, `--relevance-weight`, `--fifo-memory`, ...) and the resolved values
-are written into `metrics.json`.
+### `LessonRelevance`
 
-### `edge_slm_ace.eval.stats`
+Singleton cosine relevance over a **multilingual** encoder
+(`paraphrase-multilingual-MiniLM-L12-v2` by default; override with
+`TINYACE_RELEVANCE_ENCODER`). `available` reports False rather than degrading
+silently — an English-only encoder maps Devanagari to near-noise, which looks
+like retrieval and is not.
 
-Uncertainty and significance. Pure standard library, so it can never be skipped
-for a missing optional dependency.
+---
 
-```python
-from edge_slm_ace.eval.stats import (
-    compare_arms,
-    holm_bonferroni,
-    mcnemar_exact,
-    summarize_accuracy,
-    wilson_interval,
-)
+## `edge_slm_ace.eval.stats`
 
-summarize_accuracy([1, 0, 1, 1])       # accuracy + Wilson interval + halfwidth
-mcnemar_exact(arm_a, arm_b)            # exact paired test on the same items
-compare_arms(rows_a, rows_b)           # both, plus a one-line verdict
-holm_bonferroni([0.01, 0.04])          # family-wise correction for a sweep
-```
+Standard library only, so a missing optional dependency can never cause a
+comparison to be skipped.
 
-`ci_halfwidth` is what a claimed improvement has to be compared against.
+| | |
+|---|---|
+| `wilson_interval(successes, n, confidence=0.95)` | |
+| `summarize_accuracy(correctness, confidence=0.95)` | Adds `ci_halfwidth` — the number to compare a claimed improvement against |
+| `mcnemar_exact(arm_a, arm_b)` | Exact paired test. Read `n_discordant` |
+| `holm_bonferroni(p_values)` | Adjusted p-values, index-aligned |
+| `align_on_key(a, b, metric="is_correct", key="qid")` | |
+| `compare_arms(a, b, ...)` | The whole comparison, with a one-line `verdict` |
+| `format_comparison(comparison)` | Human-readable block |
 
-### `edge_slm_ace.reporting`
+---
 
-One vocabulary for arms, models and columns, and one reader for results.
+## `edge_slm_ace.reporting`
 
-```python
-from edge_slm_ace.reporting import (
-    arm_label,
-    load_predictions,
-    load_run_metrics,
-    reference_for,
-    summarize_predictions,
-)
+| | |
+|---|---|
+| `cell_dir(root, model, language, arm)` / `parse_cell(path)` | The one owner of the results layout |
+| `ARMS`, `get_arm(key)`, `implemented_arms()` | The arm registry |
+| `arm_label`, `arm_order`, `model_label` | Display vocabulary |
+| `reference_for(key)`, `is_ablation(key)`, `ABLATION_REFERENCE` | Which arm a given arm is compared against |
+| `load_run_metrics(root)` / `load_predictions(root)` | pandas frames |
+| `summarize_predictions(df, group_by=None)` | Per-arm accuracy with intervals |
 
-reference_for("tinyace_ablate_no_curator")  # -> "tinyace_wm_256"
-reference_for("ace_full")                   # -> "cot_control"
-```
+---
 
-`reference_for` answers "which arm should this be compared against" -- an
-ablation belongs against full TinyACE, not against baseline.
+## `edge_slm_ace.utils`
 
-### `edge_slm_ace.utils.repro`
+| | |
+|---|---|
+| `MODELS`, `resolve_model(key_or_id)`, `ModelSpec` | The model registry. An unregistered id still runs, with a synthesised spec |
+| `ADAPTATION_SIZE`, `SCREENING_N`, `SCREENING_FLOOR`, `CHANCE_FLOOR` | The split and the pre-registered gate |
+| `screening_verdict(ci_low)` | Whether a model qualifies for the grid |
+| `set_seed(seed)`, `DEFAULT_SEED` | Every RNG that can affect a run |
+| `capture_environment()` | Versions, hardware, git commit and dirtiness |
+| `REPO_ROOT`, `DATA_ROOT_ENV` | Data-root resolution; `TINYACE_DATA_ROOT` overrides |
 
-```python
-from edge_slm_ace.utils.repro import capture_environment, set_seed
+---
 
-set_seed(42)                # every RNG that can affect a run
-capture_environment()       # versions, hardware, git SHA and dirty state
-```
+## Scripts
 
-Every entrypoint must call `set_seed` before loading a model and record
-`capture_environment()` in its metadata.
+All are `python -m scripts.<name>`; `--help` on each.
 
-## Examples
-
-See `scripts/run_experiment.py` for complete usage examples.
+| | |
+|---|---|
+| `fetch_belebele` | Download or `--check` the language files |
+| `screen_models` | The pre-registered Nepali gate |
+| `run_arm` | One cell: adapt if the arm needs it, then evaluate frozen |
+| `run_grid` | Every arm x language x model, one load per model. `--dry-run` |
+| `aggregate_results` | `summary_runs.csv`, `summary_accuracy.csv`, health warnings |
+| `compare_arms` | Paired tests against registered references, Holm-corrected |

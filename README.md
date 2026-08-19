@@ -1,383 +1,239 @@
-# TinyACE: Agentic Context Engineering for Small Language Models
+# TinyACE-Nepali
 
-<div align="center">
-
-**Domain-Specific Benchmarking of Small Language Models on Edge Devices via Agentic Context Engineering**
+**Test-time context adaptation for small language models on a low-resource language**
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python](https://img.shields.io/badge/python-3.10+-green.svg)](https://www.python.org/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-</div>
-
 ---
 
-## 📖 Abstract
+## What this is
 
-Small Language Models (SLMs) like Phi-3 and TinyLlama are efficient for edge deployment but often lack the reasoning depth of larger models. **TinyACE** (Agentic Context Engineering) is a framework that enables SLMs to "self-improve" without fine-tuning by maintaining a dynamic **Playbook Memory** of domain-specific strategies.
+Can a small language model get better at a task without touching its weights,
+by accumulating a **playbook** of strategies it writes for itself — and does
+that still work in a language it barely reads?
 
-Instead of updating model weights, TinyACE evolves the prompt context through a feedback loop: **Generate → Reflect → Curate → Memorize**. This approach enables domain-specific adaptation while maintaining the efficiency benefits of small models.
+TinyACE builds a playbook on an adaptation split (score → reflect on errors →
+curate → memorise), **freezes it**, and then evaluates through a stock
+[lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) run
+with the playbook as a static prompt prefix. The task is
+[Belebele](https://huggingface.co/datasets/facebook/belebele) reading
+comprehension, in English (`eng_Latn`) and Nepali (`npi_Deva`) — 900 parallel
+questions, the same items in both, which makes the cross-lingual comparison
+paired rather than merely matched.
 
-### Key Contributions
+The design constraint that shapes everything here: **nothing this project owns
+is allowed to compute a reported number.** Adaptation is the only loop we
+control, and it sees the adaptation split only. Scoring is the harness's — no
+answer parsing, no option mapping, no bespoke accuracy.
 
-- 🧠 **Playbook Memory System**: Dynamic accumulation of domain-specific strategies without fine-tuning
-- 📊 **Retention Scoring**: Multi-component scoring formula for strategic forgetting
-- 💾 **Token-Budgeted Memory**: Separate store capacity and prompt budget, so retrieval actually selects
-- 🔬 **Ablation Support**: Each component switchable, including the control arm needed to attribute any effect
-- 📈 **Model-Dependent Analysis**: Evaluation across Mistral 7B, Phi-3 Mini, TinyLlama 1.1B and Qwen2.5 rivals
+## Status
 
-> These describe what the framework implements. Which of them *helps* is an
-> open question until the evaluation is redone -- see Status of Results below.
-
----
-
-## 🎯 Status of Results
-
-> **The previously published numbers have been withdrawn pending
-> re-evaluation.** They were produced by a pipeline with defects that change
-> the measurements themselves, not merely their presentation. The fixes are in
-> this repository; the runs have not yet been redone.
+> **No results yet.** The numbers from the previous version of this project were
+> withdrawn (see [docs/results.md](docs/results.md) and `CHANGELOG.md`), the
+> pipeline was rebuilt around the harness, and the runs have not been redone.
 >
-> What went wrong, in order of impact:
->
-> | | Defect | Effect |
-> |---|---|---|
-> | 1 | Gold answer was at option **(A) in 1000/1000** examples | Rewarded first-option bias, which differs between the terse baseline prompt and the verbose ACE prompt |
-> | 2 | `fifo_memory` implemented **LIFO** | The "FIFO beats complex scoring" headline measured something else entirely |
-> | 3 | OMA was **embedding-argmax over the full generation** | Answering with a letter -- which the prompt invites -- scored near-randomly |
-> | 4 | Baseline and ACE differed in prompt, choices block, domain hints **and** answer parser | No delta could be attributed to the playbook |
-> | 5 | `self_refine` was **shown the gold answer** in the prompt that produced its scored prediction | Measured copying, not reasoning |
-> | 6 | **No seed anywhere**; two models decoded at temperature 0.7 | Runs were not reproducible |
-> | 7 | n=50, no confidence intervals, no significance test | Every reported delta was 1-3 questions, inside a +/-12pp noise floor |
-> | 8 | Ablations compared against **baseline** instead of full TinyACE | Under the correct reference, two of the four ablations changed *nothing* |
->
-> `CHANGELOG.md` lists every defect and its fix;
-> [docs/results.md](docs/results.md) has the withdrawn tables.
+> Nothing in this repository should be read as a finding until `make screen`,
+> `make grid` and `make report` have been run and the deltas have survived
+> `scripts/compare_arms.py`.
 
-### Re-running the evaluation
+## Install
 
 ```bash
-# 1. Full grid, seeded, at a sample size that can resolve an effect
-python -m scripts.run_eval_grid --config configs/experiment_grid.yaml --seed 42
-
-# 2. Check every delta before believing it. With no --reference, each arm is
-#    paired with the one reporting.reference_for() names for it: ACE arms
-#    against cot_control, ablations against tinyace_wm_256. All comparisons
-#    printed together are Holm-corrected as one family.
-python -m scripts.compare_arms --results-root results
+git clone https://github.com/SirAlchemist1/edge-slm-ace.git
+cd edge-slm-ace
+make install          # pip install -e ".[dev,retrieval,report]"
+make data             # verify the committed Belebele files
+make test
 ```
 
-The grid layout has no seed segment, so a multi-seed study needs one root per
-seed:
+The `retrieval` extra provides the multilingual sentence encoder used to rank
+lessons against the question. Without it, retrieval falls back to
+question-independent ranking — it says so loudly, and `metrics.json` records
+`relevance_active: false`, but the run completes.
+
+See [docs/installation.md](docs/installation.md) for devices and troubleshooting.
+
+## Run
+
+```bash
+# 1. Screening gate. A model enters the grid only if the lower bound of its
+#    Wilson interval on Nepali clears 30% (chance is 25%). Pre-registered.
+make screen DEVICE=cuda
+
+# 2. Every arm, both languages, one seed. Loads each model once.
+make grid DEVICE=cuda
+
+# 3. Aggregate, then test every delta for significance.
+make report
+```
+
+The results layout carries no seed segment, so a multi-seed study needs one root
+per seed:
 
 ```bash
 make grid SEED=42 RESULTS=results/seed42
 make grid SEED=43 RESULTS=results/seed43
-make grid SEED=44 RESULTS=results/seed44
 ```
 
-Report mean +/- std across seeds.
+One cell at a time:
 
-### Arms
+```bash
+python -m scripts.run_arm --model qwen3-1.7b --language ne --arm tinyace \
+  --output-dir results/qwen3-1.7b/ne/tinyace --device cuda
+```
 
-| Mode | What it is |
+## Arms
+
+| Arm | What it is |
 |---|---|
-| `baseline` | Terse prompt, no playbook |
-| `cot_control` | **The ACE prompt scaffold with an empty playbook.** The claim about the playbook is `ace - cot_control`, not `ace - baseline` |
-| `ace` | Full system (`--ace-mode ace_full` or `ace_working_memory`). Learns online from the split it is scored on |
-| `ace` + `--playbook-mode frozen` | Playbook adapted on `sciq_val`, frozen, scored read-only on `sciq_test`. **The preferred protocol** — `make adapt && make evaluate` |
-| `self_refine` | Critique-and-rewrite using only the model's own output |
-| `self_refine_oracle` | Same, but shown the gold answer. An **upper bound**, not a baseline |
+| `baseline` | The bare task prompt. No instruction prefix at all. |
+| `scaffold_control` | The identical instruction prefix over an **empty** playbook. **The playbook claim is `tinyace − scaffold_control`, not `tinyace − baseline`.** |
+| `tinyace` | Scaffold plus a playbook adapted on the adaptation split and frozen before evaluation. |
+| `tinyace_equal_lessons` | Same playbook, more lessons in the prefix. Tests whether Devanagari fertility, not lesson quality, is the binding constraint. |
+| `tinyace_playbook_en` | Nepali questions, English playbook. Do the lessons have to be in the question's language? |
+| `tinyace_ablate_no_curator` | Skip the Curator screening pass. |
+| `tinyace_ablate_no_relevance` | Retention-only ranking; every question sees the same lessons. |
+| `tinyace_ablate_no_vagueness` | δ = 0. |
+| `tinyace_ablate_no_recency` | γ = 0. |
+| `tinyace_ablate_no_failure` | β = 0. |
+| `tinyace_fifo` | Oldest-first eviction instead of lowest-score. Eviction only — retrieval still ranks by retention, so the ablation isolates one thing. |
 
----
+**Ablations are compared against `tinyace`, not against `baseline`.** Comparing
+an ablation to baseline measures ACE *plus* the ablation rather than the ablated
+component. `reporting/schema.py` owns that mapping and `compare_arms` applies it.
 
-## 🏗️ System Architecture
+Two arms are registered but have no runner and are marked `implemented=False`:
+`tinyace_retrieval` (per-question retrieval needs per-item scoring, not a static
+prefix) and `generative_cot`. `run_arm` refuses them by name rather than writing
+another arm's result under their label.
 
-TinyACE implements a feedback loop that freezes model weights but evolves the prompt context:
+## How it works
 
 ```mermaid
 flowchart TB
-    subgraph Memory["Playbook Memory"]
-        P[(Playbook<br/>Domain Strategies)]
+    subgraph adapt["Adaptation — adaptation split only"]
+        Q[Question] --> R{Retrieve top-k}
+        P[(Playbook)] --> R
+        R --> S[Score A–D by loglikelihood]
+        S -->|correct| F[Record feedback]
+        S -->|wrong| Refl[Reflector: why?]
+        Refl --> Cur[Curator: generic?]
+        Cur --> P
+        F --> P
     end
-    
-    subgraph ACE["ACE Loop"]
-        Q[Question] --> Ret{Retrieval}
-        P -->|Top-k/Budget| Ret
-        Ret -->|Context| G[Generator]
-        G -->|Answer| Eval{Evaluator}
-        Eval -->|Correct| Update[Update Stats]
-        Eval -->|Incorrect, or every Nth correct| Ref[Reflector]
-        Ref -->|Lessons| Cur[Curator]
-        Cur -->|Filter & Add| P
-        Update --> P
+
+    P ==>|freeze top-k| Prefix[Static system_instruction]
+
+    subgraph eval["Evaluation — stock lm-eval run"]
+        Prefix --> H[simple_evaluate]
+        H --> Acc[acc]
     end
 ```
 
-### Retention Scoring Formula
+Adaptation decides "was this right?" the same way evaluation does — the
+loglikelihood of the letters A–D, through the same `HFLM`, with a context
+assembled by lm-eval's own helpers. `assert_matches_harness()` and a golden test
+check that byte for byte in both chat-template and completion modes; a drift
+there would tune the playbook against one rendering and score it against
+another.
 
-Lessons are scored and evicted based on:
+### Retention scoring
 
-$$S(l_i, t) = \alpha \cdot \frac{N_{succ}}{N_{used}+\epsilon} - \beta \cdot \frac{N_{fail}}{N_{used}+\epsilon} + \gamma \cdot e^{-\lambda(t-t_{last})} - \delta \cdot V(l_i)$$
-
-Where:
-Defaults below; each is a CLI flag (`--alpha`, `--beta`, ...) forwarded from the
-config's `scoring:` block, and the resolved values are written into `metrics.json`.
-
-- **Success Term** ($\alpha=1.0$): Rewards entries leading to correct answers
-- **Failure Term** ($\beta=0.5$): Penalizes entries leading to incorrect answers
-- **Recency Term** ($\gamma=0.3$): Bonus for recently used entries
-- **Vagueness Term** ($\delta=0.4$): Penalty for generic/vague lessons
-
----
-
-## 📂 Repository Structure
+A lesson's retention score, used for retrieval ranking and for eviction:
 
 ```
-edge-slm-ace/
-├── src/edge_slm_ace/
-│   ├── core/              ACE loop
-│   │   ├── ace_roles.py     Generator, Reflector, Curator prompts + parsers
-│   │   └── runner.py        Baseline / control / ACE / self-refine loops
-│   ├── memory/            Playbook
-│   │   ├── playbook.py      Retention scoring, eviction, token budgets
-│   │   └── relevance.py     Query-conditioned retrieval
-│   ├── eval/              Measurement layer
-│   │   ├── metrics.py       Answer scoring
-│   │   ├── mcq.py           Option handling, OMA / GOM / ACR
-│   │   └── stats.py         Wilson intervals, exact McNemar
-│   ├── reporting/         Results vocabulary
-│   │   ├── schema.py        Arm registry + which arm to compare against
-│   │   └── load.py          One reader for metrics / predictions
-│   ├── models/            Model loading and generation
-│   └── utils/             Config, device selection, seeding
-├── scripts/               CLIs (thin wrappers over the package)
-│   ├── run_experiment.py    One run
-│   ├── run_eval_grid.py     model × task × arm × device
-│   ├── run_qwen_rivals.py   Parameter-matched Qwen2.5 comparison
-│   ├── run_ace_epoch.py     Multi-epoch playbook evolution
-│   ├── compare_arms.py      CIs + paired significance
-│   ├── aggregate_results.py Summary tables + run-health warnings
-│   ├── make_figures.py      Paper figures
-│   ├── make_diagnostics.py  Diagnostic plots
-│   └── smoke_test.py        End-to-end pipeline check
-├── configs/               Experiment grids and contracts
-├── data/tasks/            Datasets
-├── docs/                  See docs/README.md
-├── paper/                 tinyace.pdf
-├── tests/                 Unit tests + static entrypoint guards
-└── Makefile               make check | smoke | adapt | evaluate | grid | report | figures
+S(l, t) = α·(N_succ/(N_used+ε)) − β·(N_fail/(N_used+ε)) + γ·exp(−λ·(t−t_last)) − δ·V(l)
 ```
 
----
+`V(l)` is a vagueness heuristic over the lesson text. Each of β, γ, δ has an
+ablation arm. Retrieval blends this with cosine relevance to the question;
+`--relevance-weight 0` reproduces retention-only ranking.
 
-## 🚀 Quick Start
+## Reading a result
 
-### Installation
+Three things decide whether a difference is real, and all three ship with the
+run:
 
-```bash
-# Clone repository
-git clone https://github.com/SirAlchemist1/edge-slm-ace.git
-cd edge-slm-ace
+- **Intervals.** At n=500 the 95% Wilson halfwidth near 40% is about 4.3 points.
+  `summary_accuracy.csv` carries `ci_halfwidth` next to every accuracy.
+- **A paired test.** The arms answer identical questions, so the comparison is
+  McNemar's on the discordant pairs, not two independent proportions.
+- **A correction.** Ten arms against a reference is ten tests; at α=0.05 the
+  chance of at least one false positive under the null is about 40%. Every
+  comparison printed together is one Holm-corrected family, and the adjusted
+  p-value is the one that decides.
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+`scripts/compare_arms.py` does all three. A delta that has not been through it
+is not a result.
 
-# Editable install with every extra. Without the `metrics` extra there is no
-# embedding backend, and retrieval silently degrades to retention-only ranking.
-make install
+### Health checks that invalidate a run
+
+- **Truncation.** lm-eval truncates an over-long prompt *from the left*, and the
+  Belebele prompt opens with the passage. A longer prefix truncates more, so the
+  ACE arms clip more than baseline on the same items — an arm-asymmetric
+  confound, not noise. `truncated_prompts` travels with every result and
+  `aggregate_results` warns on it.
+- **Relevance backend.** `relevance_active: false` means retrieval was not
+  query-conditioned, whatever `--relevance-weight` said.
+- **Item-set mismatch.** `per_item_correctness` verifies the harness scored the
+  ids that were requested, and raises otherwise.
+
+## Known limitations
+
+- The frozen prefix is **static across the evaluation split**. A playbook cannot
+  be retrieved per question through `system_instruction`, so query-conditioned
+  retrieval is measurable during adaptation only. That is a property of the
+  loglikelihood track, not a bug, and `tinyace_retrieval` exists to measure it
+  once there is a runner for it.
+- `GENERIC_PHRASES` is English-only, so the phrase term of the vagueness score
+  is inert on Nepali lessons and δ rests on length alone there. A cross-lingual
+  delta must not be read as an effect of the playbook while that stands.
+- Credit for a correct answer is uniform over the lessons that were retrieved.
+  The model emits no text at scoring time, so there is no citation to attribute
+  by; the success/failure counts are weak per-lesson evidence.
+
+## Repository layout
+
+```
+src/edge_slm_ace/
+  adapt.py            The adaptation loop. The only loop this project owns.
+  core/ace_roles.py   Reflector and Curator prompts, and their parsers.
+  data/belebele.py    Loading, the id join, and the study's one split.
+  harness/            Prompt parity, option scoring, the frozen eval.
+  memory/             The playbook: retention scoring, eviction, retrieval.
+  eval/stats.py       Wilson, exact McNemar, Holm. Standard library only.
+  reporting/          Results layout, arm registry, aggregation.
+  utils/              Model registry, split sizes, seeding, environment capture.
+scripts/              Thin CLIs: fetch, screen, run one arm, run the grid, report.
+data/tasks/belebele/  The two committed language files.
 ```
 
-### Run a Single Experiment
+## Documentation
 
-```bash
-# Baseline. --output-path is required; the {model}/{task}/{arm}/{device} layout
-# is what everything downstream reads the arm and device from.
-python -m scripts.run_experiment \
-  --model-id microsoft/Phi-3-mini-4k-instruct \
-  --task-name sciq_test --mode baseline --device cuda \
-  --output-path results/phi_3_mini/sciq_test/baseline/cuda/results.csv \
-  --metrics-path results/phi_3_mini/sciq_test/baseline/cuda/metrics.json \
-  --predictions-path results/phi_3_mini/sciq_test/baseline/cuda/predictions.jsonl
+| | |
+|---|---|
+| [docs/installation.md](docs/installation.md) | Environment setup |
+| [docs/quickstart.md](docs/quickstart.md) | First run |
+| [docs/architecture.md](docs/architecture.md) | The loop, the playbook, the harness boundary |
+| [docs/evaluation.md](docs/evaluation.md) | **The protocol.** Read before reporting any number |
+| [docs/api.md](docs/api.md) | Package reference |
+| [docs/results.md](docs/results.md) | Withdrawn results, kept for provenance |
+| `CHANGELOG.md` | Every defect found, and its fix |
 
-# ACE working memory. --playbook-path is required for --mode ace.
-python -m scripts.run_experiment \
-  --model-id microsoft/Phi-3-mini-4k-instruct \
-  --task-name sciq_test --mode ace --ace-mode ace_working_memory \
-  --token-budget 256 --device cuda \
-  --playbook-path results/phi_3_mini/sciq_test/tinyace_wm_256/cuda/playbook.jsonl \
-  --output-path results/phi_3_mini/sciq_test/tinyace_wm_256/cuda/results.csv \
-  --metrics-path results/phi_3_mini/sciq_test/tinyace_wm_256/cuda/metrics.json \
-  --predictions-path results/phi_3_mini/sciq_test/tinyace_wm_256/cuda/predictions.jsonl
-```
-
-In practice use `make grid`, which builds these paths for every cell.
-
-### Run Full Evaluation Grid
-
-```bash
-# Run all experiments (models × tasks × modes)
-python -m scripts.run_eval_grid --config configs/experiment_grid.yaml
-
-# Dry run (preview commands)
-python -m scripts.run_eval_grid --config configs/experiment_grid.yaml --dry-run
-```
-
-### Generate Visualizations
-
-```bash
-# Generate all plots from results
-python -m scripts.make_figures
-
-# Custom paths
-python -m scripts.make_figures --results_dir results --output_dir plots
-```
-
-### Run Qwen2.5 Rival Experiments
-
-Compare TinyACE against Qwen2.5 models (parameter-matched rivals to TinyLlama, Phi-3, and Mistral-7B):
-
-```bash
-# Run all Qwen2.5 rival experiments
-python -m scripts.run_qwen_rivals
-
-# Dry run (preview what would be run)
-python -m scripts.run_qwen_rivals --dry-run
-
-# Run only specific model classes
-python -m scripts.run_qwen_rivals --model-class small   # ~1-2B models
-python -m scripts.run_qwen_rivals --model-class medium  # ~3-4B models
-python -m scripts.run_qwen_rivals --model-class large   # ~7B models
-
-# Run specific models only
-python -m scripts.run_qwen_rivals --models qwen-2.5-3b phi-3-mini
-
-# Run on different device
-python -m scripts.run_qwen_rivals --device cpu
-```
-
-**Output artifacts:**
-- `results/qwen_rivals/results_models_qwen.json` - Summary metrics
-- `results/qwen_rivals/results_stability_qwen.csv` - Per-example stability data
-- `results/qwen_rivals/figures/sweetspot_qwen_bar.{pdf,png}` - Comparison bar chart
-- `results/qwen_rivals/figures/stability_curves_qwen.{pdf,png}` - Accuracy over time
-- `paper_snippets/qwen_rivals_table.tex` - LaTeX table for paper
-- `paper_snippets/qwen_rivals_summary.tex` - LaTeX summary text
-
----
-
-## ⚙️ Configuration
-
-Edit `configs/experiment_grid.yaml` to customize experiments:
-
-```yaml
-models:
-  - name: phi-3-mini
-    hf_id: microsoft/Phi-3-mini-4k-instruct
-
-modes:
-  - name: baseline
-  - name: tinyace_wm_256
-    ace_mode: ace_working_memory
-    working_memory_token_budget: 256
-  - name: tinyace_fifo
-    fifo_memory: true  # Use FIFO eviction
-
-devices:
-  - cuda  # NVIDIA GPU
-  - mps   # Apple Silicon
-```
-
-See [configs/experiment_grid.yaml](configs/experiment_grid.yaml) for all options.
-
----
-
-## 📊 Experimental Results
-
-The previous model-comparison and ablation summaries have been removed from
-this README rather than reproduced with caveats, because each was derived from
-the defective measurements listed under [Status of Results](#-status-of-results)
-above. Reproducing them here, even hedged, would keep numbers in circulation
-that should not be cited.
-
-The withdrawn tables remain in [docs/results.md](docs/results.md), annotated
-in place with what was wrong with each.
-
-To generate replacements, see [Re-running the evaluation](#re-running-the-evaluation).
-
----
-
-## 📚 Documentation
-
-- **[Architecture Guide](docs/architecture.md)** - Complete system design and implementation
-- **[Results Analysis](docs/results.md)** - Detailed experimental findings
-- **[Figures Guide](docs/figures.md)** - Visualization instructions
-- **[Documentation Index](docs/README.md)** - Full documentation index
-
----
-
-## 🔬 Key Features
-
-- ✅ **Five Evaluation Modes**: Baseline, CoT control, ACE Full, ACE Working Memory, Self-Refine
-- ✅ **Token-Budgeted Memory**: Strategic forgetting for edge devices
-- ✅ **Retention Scoring**: Multi-component scoring system
-- ✅ **Ablation Support**: Systematic component analysis
-- ✅ **Multi-Device Support**: CPU, CUDA, MPS (Apple Silicon)
-- ✅ **Query-Conditioned Retrieval**: Lessons ranked against the question, not just the domain
-- ✅ **Honest Metrics**: OMA with Wilson intervals, paired McNemar tests, seeded runs with captured environments
-
----
-
-## 📝 Citation
-
-If you use this codebase in your research, please cite:
+## Citation
 
 ```bibtex
-@software{tinyace2024,
-  title={TinyACE: Domain-Specific Benchmarking of Small Language Models for Edge Devices with Agentic Context Engineering},
-  author={Shahi, Suryodaya and Sathwik and Archit},
-  year={2026},
-  url={https://github.com/SirAlchemist1/edge-slm-ace},
-  note={Workshop Paper}
+@software{tinyace_nepali,
+  title  = {TinyACE-Nepali: Test-Time Context Adaptation for Small Language
+            Models on a Low-Resource Language},
+  author = {Shahi, Suryodaya},
+  year   = {2026},
+  url    = {https://github.com/SirAlchemist1/edge-slm-ace}
 }
 ```
 
-**Paper**: See `paper/tinyace.pdf` for the full technical report.
+## License
 
----
-
-## 📄 License
-
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 🙏 Acknowledgments
-
-- HuggingFace for model hosting and transformers library
-- The open-source community for tools and libraries
-
----
-
-## 📧 Contact
-
-For questions or issues, please open an issue on GitHub or contact the maintainers.
-
----
-
-## 📖 Paper
-
-The full technical report is available as `paper/tinyace.pdf` in the repository root.
-
-**Paper Title**: "Domain-Specific Benchmarking of Small Language Models for Edge Devices with Agentic Context Engineering (ACE)"
-
----
-
-<div align="center">
-
-**Made with ❤️ for the edge AI community**
-
-[Report Issue](https://github.com/SirAlchemist1/edge-slm-ace/issues) · [Request Feature](https://github.com/SirAlchemist1/edge-slm-ace/issues) · [Documentation](docs/README.md)
-
-</div>
+Apache 2.0 — see [LICENSE](LICENSE).

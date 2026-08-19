@@ -1,201 +1,185 @@
-# Evaluation protocol
+# The Evaluation Protocol
 
-How a number gets produced, and what has to be true for it to mean anything.
+**Read this before reporting any number.**
 
-- [Arms](#arms)
-- [Splits](#splits)
-- [Metrics](#metrics)
-- [Statistics](#statistics)
-- [Run health](#run-health)
-- [Worked example](#worked-example)
+Everything here exists because some version of it went wrong before. The
+`CHANGELOG.md` has the history; this is the standing rule.
 
 ---
 
-## Arms
+## The split
 
-Defined once in [`edge_slm_ace/reporting/schema.py`](../src/edge_slm_ace/reporting/schema.py).
-Everything that renders a table or a figure reads its labels and ordering from
-that registry.
+Belebele is 900 parallel questions per language. `data.study_split` divides them
+once, deterministically in `(seed, ids)` and independent of the order the ids
+arrive in:
 
-| Arm | What it is |
-|---|---|
-| `baseline` | Terse prompt, no playbook |
-| `cot_control` | **The ACE prompt scaffold over an empty playbook** |
-| `ace_full` | Top-k retrieval, unbounded playbook |
-| `ace_working_memory` | Token-budgeted working memory (`tinyace_wm_256`, `tinyace_wm_512`) |
-| `tinyace_wm_256_frozen` | **The frozen-playbook arm.** Adapted on `sciq_val`, scored read-only on `sciq_test` |
-| `tinyace_ablate_*` | One scoring component disabled |
-| `tinyace_fifo` | Oldest-first eviction instead of lowest-score |
-| `self_refine` | Critique and rewrite from the model's own output only |
-| `self_refine_oracle` | Same, but shown the gold answer. An **upper bound**, not a baseline |
-
-### Which arm to compare against
-
-This is the part that is easy to get wrong, so the code answers it for you via
-`reporting.reference_for()`:
-
-| Arm being evaluated | Correct reference | Why |
+| Split | Size | Used for |
 |---|---|---|
-| `ace_*` | `cot_control` | `ace − baseline` also varies the CoT instruction, the domain hints and the answer parser. Only `ace − cot_control` isolates the playbook. |
-| `tinyace_ablate_*`, `tinyace_fifo` | `tinyace_wm_256` | Comparing an ablation to `baseline` measures *ACE plus the ablation*, not the ablated component. |
-| `cot_control`, `self_refine` | `baseline` | These are prompting strategies against no strategy. |
+| Adaptation | 400 | Screening (first 400), and building the playbook |
+| Evaluation | 500 | Every reported number |
 
-`scripts/compare_arms.py` uses these defaults automatically: with no
-`--reference`, each arm is paired with the reference `reference_for()` names for
-it, and an arm whose reference was not run in that cell is skipped with a note
-rather than re-pointed at another arm. Pass `--reference` to override.
+Three properties this buys:
 
-Every comparison printed in one invocation is one **family** of tests and is
-Holm-corrected. Ten arms against a reference give roughly a 40% chance of at
-least one p<0.05 under the null, so the adjusted p-value is the one that
-decides. Splitting a sweep across several invocations to shrink the family does
-not make the correction smaller -- it hides the count.
-
----
-
-## Splits
-
-`sciq_val` and `sciq_test` share no questions (verified), which is what makes a
-clean protocol possible:
-
-1. Build a playbook on **`sciq_val`**.
-2. Freeze it.
-3. Evaluate read-only on **`sciq_test`**.
-
-This is the `tinyace_wm_256_frozen` arm, and it runs in two stages because
-stage 2 reads what stage 1 leaves behind:
-
-```bash
-make adapt      # stage 1: every learning arm on sciq_val
-make evaluate   # stage 2: sciq_test, including the frozen arm
-```
-
-Directly, that is `--playbook-mode frozen --init-playbook <path>`. A frozen run
-retrieves and ranks from the playbook but never reflects, records feedback,
-prunes or writes, so the same playbook scores every example and the run cannot
-learn from the split it is being scored on.
-
-Running ACE directly on the scored set is *online continual learning*: item *i*
-only sees gold from items *< i*, which is defensible but must be argued
-explicitly. Two things make it harder to defend here — there is no held-out
-split, and 82% of `sciq_test` examples contain the gold answer verbatim in
-their `support` field, so a lesson written after seeing gold can carry answer
-content forward. Prefer the frozen-playbook protocol.
+- **Every language and every arm gets the identical split.** The split is
+  computed from content-derived ids, not row order. The two language files hold
+  the same questions in *different* orders, so a split derived from position
+  would adapt on different questions per language and make the paired comparison
+  meaningless.
+- **Screening cannot leak.** `ADAPTATION_SIZE` is one constant that both
+  `screen_models` and `run_arm` go through. When they each chose their own size
+  — 400 and 200 — the 200 items between them were screened on *and* scored on,
+  so model selection was made on 200 of the reported items. `screen_models` now
+  refuses to run if any screening item is in the evaluation split.
+- **The Reflector never sees a scored item.** It is shown gold answers, which is
+  precisely why the split it runs on must never be scored.
 
 ---
 
-## Metrics
+## The arms, and what each one isolates
 
-### Option-Mapped Accuracy (OMA) — primary
+**The playbook claim is `tinyace − scaffold_control`.**
 
-Maps a free-text prediction onto one of the four options, then checks it against
-gold. The mapping is a cascade, most to least trustworthy, and the tier that
-fired is recorded per example as `mapping_tier`:
+`scaffold_control` is the identical instruction prefix over an empty playbook.
+Without it, any `tinyace − baseline` difference is "an instruction prefix helps"
+plus "the playbook helps", and the two are not separable. Under loglikelihood
+option scoring the model emits no text, so a chain-of-thought control is not
+expressible in this track — the arm is named for what it actually is.
 
-| Tier | Trigger |
+**Ablations are compared against `tinyace`.** An ablation against `baseline`
+measures ACE *plus* the ablation, not the ablated component.
+`reporting.reference_for()` owns that mapping and `compare_arms` applies it; the
+script previously imported it without ever calling it, and compared everything
+to baseline.
+
+| Arm | Isolates |
 |---|---|
-| `letter` | A labelled letter — `Answer: B` |
-| `option_text` | An option quoted verbatim, matched on word boundaries |
-| `weak_letter` | A bare `(B)` or a trailing `B` |
-| `embedding` | Cosine argmax over option embeddings — last resort |
+| `baseline` | Nothing. The floor. |
+| `scaffold_control` | The instruction prefix, with no lesson content |
+| `tinyace` | The playbook's contribution over the prefix |
+| `tinyace_equal_lessons` | Whether prefix *length* rather than lesson quality is binding — Devanagari fertility means the same lesson count costs more tokens in Nepali |
+| `tinyace_playbook_en` | Whether lessons must be in the question's language |
+| `tinyace_ablate_no_curator` | The Curator screening pass |
+| `tinyace_ablate_no_relevance` | Query-conditioned ranking during adaptation |
+| `tinyace_ablate_no_vagueness` | δ |
+| `tinyace_ablate_no_recency` | γ |
+| `tinyace_ablate_no_failure` | β |
+| `tinyace_fifo` | Eviction order, and only eviction — retrieval still ranks by retention |
 
-**Read `mapping_tier_distribution` before reading OMA.** A run resolved mostly
-at `embedding` is one where the models did not answer in a parseable form, and
-its OMA is weak evidence rather than accuracy.
-
-### Option position
-
-Options are permuted per example with a seed derived from `(run_seed,
-example_id)`. Both datasets store gold first, so presenting them in storage
-order puts the answer at (A) 100% of the time and rewards first-option bias.
-`gold_option_distribution` should be roughly uniform; if
-`chosen_option_distribution` is not, the model is answering by position.
-
-### Gold Option Margin (GOM)
-
-Similarity to gold minus mean similarity to distractors. Cosines are kept in
-`[-1, 1]`; a negative GOM is meaningful.
-
-### Semantic similarity — diagnostic only
-
-Lexical overlap with the reference. **Not a correctness measure**, and not
-comparable across arms whose outputs differ in length. Use OMA for quality.
-
-### Exact match
-
-Near zero for any verbose model. Reported as `is_correct` for continuity; do
-not build a claim on it for generative tasks.
+An arm that changes *adaptation* builds its own playbook; an arm that changes
+only how a frozen playbook is *presented* borrows one. `run_grid` orders the
+plan so a borrowing arm always follows its source, in both the arm and the
+language dimension.
 
 ---
 
-## Statistics
+## What counts as a result
 
-At n=50 the 95% Wilson interval on an accuracy near 0.74 spans roughly ±12
-percentage points, which is wider than any effect this project has reported.
+### 1. An interval, always
 
-- Use **n ≥ 500**. `sciq_test` has 1000 examples.
-- Run **≥ 3 seeds** and report mean ± std. The results layout has no seed
-  segment, so give each seed its own root or the second one overwrites the
-  first:
+At n=500 the 95% Wilson halfwidth near 40% is about 4.3 points. At n=50 near 74%
+it is about 12. A "+4%" improvement at n=50 is two questions.
 
-  ```bash
-  make grid SEED=42 RESULTS=results/seed42
-  make grid SEED=43 RESULTS=results/seed43
-  ```
-- Every accuracy ships with a Wilson interval (`oma_ci`).
-- Compare arms with the **exact McNemar test** — the arms answer identical
-  items, so the comparison is paired and only discordant pairs carry
-  information.
+`summarize_accuracy` returns `ci_halfwidth` alongside every accuracy for exactly
+this comparison. Wilson rather than the normal approximation: the latter
+produces bounds above 1.0 near the ceiling and collapses to zero width at p=0
+or 1.
 
-- Correct for **multiple comparisons**. Every comparison printed in one
-  invocation is one family, Holm-adjusted; ten arms against a reference give
-  roughly a 40% chance of at least one p<0.05 under the null. Splitting a sweep
-  across invocations to shrink the family hides the count rather than reducing
-  it.
+### 2. A paired test
 
-```bash
-python -m scripts.compare_arms --results-root results
-```
+The arms answer identical questions, so the comparison is paired and only the
+discordant pairs carry information. `mcnemar_exact` reports `b`, `c` and
+`n_discordant` — **read `n_discordant`, not `n`**. It is the effective sample
+size of the test, and it is usually a small fraction of the split.
 
-The output states `b`, `c` and `n_discordant`, which make the effective sample
-size visible, and `p_adjusted` alongside the raw p. A difference is a result
-only if it survives this.
+An unpaired proportion test throws the pairing away and is strictly less
+powerful. It is not an option here.
 
----
+### 3. A multiple-comparison correction
 
-## Run health
+Ten arms against a reference is ten tests. At α=0.05 the chance of at least one
+false positive under the null is `1 − 0.95¹⁰ ≈ 40%`, so an uncorrected
+"significant" result from a sweep is close to expected rather than surprising.
 
-These fields appear in every `metrics.json` and invalidate a run when wrong:
+Every comparison printed together is one Holm-corrected family. Holm is
+uniformly more powerful than Bonferroni and assumes nothing about independence,
+which matters because the arms are scored on the same items.
 
-| Field | Expected | Meaning if not |
-|---|---|---|
-| `truncation_rate` | `0.0` | Prompts were clipped, and the clipped tail is the question |
-| `chat_template_rate` | `1.0` | An instruct model was prompted as a raw completion |
-| `relevance_active` | `true` | No embedding backend, so retrieval was not query-conditioned |
-| `citation_rate` | high | Credit was mostly assigned uniformly; α/β are not per-lesson evidence |
-| `mean_retention_score_std` | `> 0` | The retention score does not distinguish between lessons |
+**The family is every comparison you report together.** Splitting one sweep
+across several invocations does not shrink the correction; it hides the count.
 
-`scripts/aggregate_results.py` prints warnings for the first three.
+Comparisons with no items in common carry a forced p=1.0 and no evidence. They
+sit outside the correction rather than inflating the family size and costing the
+real comparisons power.
+
+### The default reading
+
+If nothing survives Holm correction, the result is **"no detectable
+difference"** — not an ordering of the point estimates. `compare_arms` prints
+that sentence itself.
 
 ---
 
-## Worked example
+## Health checks that invalidate a run
 
-```bash
-# 1. Confirm the pipeline works before spending GPU hours
-python -m scripts.smoke_test --model phi3-mini --device cuda
+### Truncation
 
-# 2. Run the grid, seeded
-python -m scripts.run_eval_grid --config configs/experiment_grid.yaml --seed 42
+lm-eval truncates an over-long prompt **from the left**, and the Belebele prompt
+opens with `P: <passage>`. Left-truncation therefore eats the passage — the
+thing the question is about — and the run degrades into guessing without
+failing.
 
-# 3. Repeat for seeds 43 and 44
+It is worse than a uniform loss. The instruction prefix and the playbook make
+the prompt longer, so the ACE arms truncate **more** than baseline on the same
+items. That is an arm-asymmetric confound in the direction of the hypothesis,
+not noise. Devanagari fertility pushes the Nepali side further again.
 
-# 4. Aggregate, with intervals and health warnings
-python -m scripts.aggregate_results --results-root results
+`truncated_prompts`, `truncation_rate` and `tokens_dropped` travel with every
+result. **A run with a non-zero truncation rate is not comparable across arms
+and must not be reported as one.**
 
-# 5. Test every delta against its correct reference arm
-python -m scripts.compare_arms --results-root results
+### Relevance backend
 
-# 6. Figures
-python -m scripts.make_figures --results_dir results --output_dir figures
-```
+`relevance_active: false` means no embedding backend loaded and retrieval was
+not query-conditioned, whatever `--relevance-weight` was set to.
+`aggregate_results` warns; `metrics.json` also records which encoder was used.
+
+### Item-set mismatch
+
+`harness_indices` maps positions in the committed jsonl; the harness loads the
+split from the Hub. `per_item_correctness` recovers the item id from each logged
+doc and raises if the set scored is not the set requested — if those orders ever
+diverge, the run compares different questions per arm and still reports a clean
+accuracy.
+
+---
+
+## Reproducibility
+
+- `set_seed()` before any model loads, and every RNG the harness seeds is passed
+  the same value.
+- `capture_environment()` records python, platform, torch, transformers, CUDA,
+  GPU, git commit and whether the tree was dirty. It is written into every
+  `metrics.json`.
+- `run_grid` treats a cell as complete only if its `metrics.json` records both
+  this seed and this commit, so an interrupted grid resumes and a code change
+  invalidates the cells it could have affected.
+
+The results layout carries no seed segment. A multi-seed study needs one root
+per seed (`make grid SEED=43 RESULTS=results/seed43`); report mean ± sd across
+seeds.
+
+---
+
+## Reporting checklist
+
+- [ ] Every accuracy has an interval next to it.
+- [ ] Every delta went through `scripts/compare_arms.py`.
+- [ ] The reference arm is the registered one — ACE against `scaffold_control`,
+      ablations against `tinyace`.
+- [ ] The reported p-value is the **Holm-adjusted** one, and the family size is
+      stated.
+- [ ] `n_discordant` is reported alongside `n`.
+- [ ] Truncation is zero on every arm in the table, or the table says so.
+- [ ] `relevance_active` is true, or the limitation is stated.
+- [ ] The seed and commit are stated, and multi-seed runs report spread.
+- [ ] Nothing is ranked that did not survive correction.

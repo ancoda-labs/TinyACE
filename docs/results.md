@@ -1,4 +1,10 @@
-# TinyACE Experimental Results
+# TinyACE Experimental Results — Archive
+
+> **These are the withdrawn results of the retired SciQ pipeline.** They
+> describe scripts, arms and metrics that no longer exist in this repository:
+> `run_experiment.py`, `--mode ace`, `ace_working_memory`, `self_refine`, OMA.
+> The file is kept unedited, for provenance. For what the project does now, see
+> [../README.md](../README.md) and [evaluation.md](evaluation.md).
 
 > **STATUS: WITHDRAWN PENDING RE-EVALUATION.**
 >

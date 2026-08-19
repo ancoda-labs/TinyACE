@@ -37,18 +37,19 @@ metrics, retrieval or scoring:
 Read [docs/evaluation.md](docs/evaluation.md) first. The three rules that
 previously went wrong:
 
-- **Compare against the right arm.** `ace` belongs against `cot_control`, not
-  `baseline` — otherwise the delta also contains the chain-of-thought
-  instruction and the domain hints. Ablations belong against `tinyace_wm_256`.
-  `scripts/compare_arms.py` picks the correct reference automatically.
+- **Compare against the right arm.** `tinyace` belongs against
+  `scaffold_control`, not `baseline` — otherwise the delta also contains the
+  instruction prefix. Ablations belong against `tinyace`, because an ablation
+  against baseline measures ACE *plus* the ablation. `scripts/compare_arms.py`
+  picks the registered reference automatically.
 - **Use enough data.** At n=50 the 95% interval spans about ±12 percentage
-  points, which is wider than any effect this project has reported. Use n ≥ 500
-  and at least three seeds.
+  points, which is wider than any effect this project has reported. The
+  evaluation split is 500 items; use at least three seeds.
 - **Run the test.** A difference is a result only if it survives
   `python -m scripts.compare_arms`. If it does not, write "no detectable
   difference" — that is a finding, not a failure.
 
-Check the run-health fields (`truncation_rate`, `chat_template_rate`,
+Check the run-health fields (`truncation_rate`, `tokens_dropped`,
 `relevance_active`) before trusting any run. `make report` surfaces them.
 
 ## Style

@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-title: "TinyACE: Agentic Context Engineering for Small Language Models"
+title: "TinyACE-Nepali: Test-Time Context Adaptation for Small Language Models on a Low-Resource Language"
 message: "If you use this software, please cite it as below."
 type: software
 authors:
@@ -11,12 +11,15 @@ repository-code: "https://github.com/SirAlchemist1/edge-slm-ace"
 license: Apache-2.0
 version: 0.1.0
 abstract: >-
-  A framework for evaluating whether small language models can self-improve
-  without fine-tuning, by maintaining a token-budgeted playbook of
-  domain-specific strategies that is retrieved, scored and evicted across a
-  Generate-Reflect-Curate-Memorize loop.
+  Whether a small language model can improve at a task without weight updates,
+  by accumulating a playbook of strategies it writes for itself -- and whether
+  that still holds in a low-resource language. The playbook is built on an
+  adaptation split, frozen, and then evaluated as a static prompt prefix through
+  a stock lm-evaluation-harness run on parallel English and Nepali Belebele.
 keywords:
   - small language models
-  - edge inference
+  - low-resource languages
+  - Nepali
   - context engineering
   - agentic memory
+  - test-time adaptation
