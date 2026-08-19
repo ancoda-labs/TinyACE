@@ -316,3 +316,48 @@ class TestCuratorScreensReadingStrategies:
         for lesson in ("Consider what the passage states about the claim",):
             assert compute_vagueness_score(lesson) < 0.6
             assert choose_lessons_for_playbook("d", [lesson], Playbook()) == [lesson]
+
+
+class TestReflectorParserRejectsNonLessons:
+    """
+    Anything longer than ten characters became a lesson, bullets or not.
+
+    Two things got in that way: the sentence introducing the list, and
+    degenerate repetition from a weak model. The second is the worse of the
+    two -- a 200-word run of one token contains no generic phrase, so it scores
+    vagueness 0.0 and ranks as the most specific entry in the playbook. The CI
+    smoke test produces exactly that, which is where this came from.
+    """
+
+    def test_the_line_introducing_the_list_is_not_a_lesson(self):
+        text = (
+            "Here are two reading strategies that would have helped:\n"
+            "- Reject an option that is true in general but not stated in the passage\n"
+            "- Check whether the option answers the question that was actually asked\n"
+        )
+        lessons = parse_reflector_output_to_lessons(text)
+
+        assert len(lessons) == 2
+        assert not any(l.lower().startswith("here are") for l in lessons)
+
+    def test_a_header_line_is_not_a_lesson(self):
+        text = "Strategies:\n- Compare each option against the wording of the passage\n"
+        assert parse_reflector_output_to_lessons(text) == [
+            "Compare each option against the wording of the passage"
+        ]
+
+    def test_degenerate_repetition_is_rejected(self):
+        assert parse_reflector_output_to_lessons("- " + "factors " * 40) == []
+
+    def test_free_text_is_still_read_when_there_are_no_bullets(self):
+        text = "Check whether the option is actually stated in the passage before picking it"
+        assert parse_reflector_output_to_lessons(text) == [text]
+
+    def test_a_fragment_is_not_a_lesson(self):
+        assert parse_reflector_output_to_lessons("- yes\n- ok then") == []
+
+    def test_numbering_is_stripped(self):
+        text = "1. Compare each option against what the passage explicitly states\n"
+        assert parse_reflector_output_to_lessons(text) == [
+            "Compare each option against what the passage explicitly states"
+        ]

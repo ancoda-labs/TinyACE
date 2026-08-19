@@ -209,29 +209,75 @@ def extract_answer(raw_output: str) -> Tuple[str, Optional[str]]:
     return answer, reasoning
 
 
-def parse_reflector_output_to_lessons(text: str) -> List[str]:
+# Lines that introduce a list rather than being one of its items.
+_PREAMBLE_RE = re.compile(
+    r"^(here (are|is)|the following|below are|two|strategies|lessons|reading strategies)\b",
+    re.IGNORECASE,
+)
+
+# Leading bullet or list numbering.
+_BULLET_RE = re.compile(r"^\s*(?:[-•*]+|\d+[.)])\s*")
+
+
+def _is_degenerate(text: str, min_unique_ratio: float = 0.4) -> bool:
+    """
+    True for output that repeats one token instead of saying something.
+
+    A small or randomly-initialised model answers the Reflector with runs like
+    "factors factors factors ...". That is 200 words, passes every length check,
+    contains no generic phrase and therefore scores vagueness 0.0 -- the most
+    specific-looking entry in the playbook. The CI smoke test produces exactly
+    this, which is how it was found.
+    """
+    words = [w.lower() for w in text.split()]
+    if len(words) < 6:
+        return False
+    return len(set(words)) / len(words) < min_unique_ratio
+
+
+def parse_reflector_output_to_lessons(
+    text: str,
+    min_words: int = 4,
+    max_words: int = 60,
+) -> List[str]:
     """
     Parse the Reflector's output into a list of lesson strings.
 
+    The prompt asks for one strategy per line starting with "-", so when the
+    model complies, only those lines are lessons. The previous version also
+    accepted any line longer than ten characters *in addition* to the bullets,
+    which meant the sentence introducing the list -- "Here are two reading
+    strategies that would have helped:" -- was stored as a strategy alongside
+    them. Free-form lines are a fallback for output with no bullets at all, not
+    a supplement to output that has them.
+
     Args:
         text: Raw output from the Reflector model.
+        min_words: Shorter candidates are fragments, not strategies.
+        max_words: Longer ones are the model restating the passage.
 
     Returns:
-        List of lesson strings (cleaned and filtered).
+        Lesson strings, cleaned and filtered.
     """
-    lessons = []
-    lines = text.strip().split("\n")
+    lines = [line.strip() for line in text.strip().split("\n") if line.strip()]
 
-    for line in lines:
-        line = line.strip()
-        # Look for bullet points
-        if line.startswith("-") or line.startswith("•"):
-            # Remove bullet marker and clean
-            lesson = line.lstrip("-•").strip()
-            if lesson:
-                lessons.append(lesson)
-        elif line and len(line) > 10:  # Also accept non-bullet lines if substantial
-            lessons.append(line)
+    bulleted = [_BULLET_RE.sub("", line) for line in lines if _BULLET_RE.match(line)]
+    candidates = bulleted if bulleted else lines
+
+    lessons = []
+    for candidate in candidates:
+        candidate = candidate.strip()
+        if not candidate:
+            continue
+        # A line ending in a colon introduces what follows; it is not itself a
+        # strategy. Same for the stock lead-ins.
+        if candidate.endswith(":") or _PREAMBLE_RE.match(candidate):
+            continue
+        if not min_words <= len(candidate.split()) <= max_words:
+            continue
+        if _is_degenerate(candidate):
+            continue
+        lessons.append(candidate)
 
     return lessons
 
