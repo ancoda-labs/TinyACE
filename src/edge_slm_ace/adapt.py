@@ -130,8 +130,10 @@ def adapt_playbook(
         reflect_on_correct_every_n: 0 reflects only on errors. Reflecting on
             correct answers costs a generation each and mostly produces
             restatements of what already worked.
-        prune_every_n: Prune every N steps.
-        max_entries_per_domain: Cap after pruning.
+        prune_every_n: Prune every N steps. The last step always prunes as
+            well, so the cap holds whatever the split length is.
+        max_entries_per_domain: Cap per domain. Holds on the returned playbook
+            regardless of how many examples were passed.
         use_curator: Screen candidate lessons with one extra generation.
         max_new_tokens: Cap on reflection and curation length.
         progress: Print per-step progress.
@@ -205,7 +207,14 @@ def adapt_playbook(
             playbook.mark_entry_used(entry.id, step)
             playbook.record_feedback(entry.id, helpful=correct)
 
-        if prune_every_n and step % prune_every_n == 0:
+        # Prune on the interval, and always on the last step. Pruning only on
+        # the interval left the cap holding just when the split length happened
+        # to be a multiple of prune_every_n: 400 items at every 25 is exact, but
+        # `--limit`, a different ADAPTATION_SIZE or any odd split ended
+        # mid-cycle and saved a playbook over the cap by up to one interval's
+        # worth of lessons. That playbook is what the cross-lingual arm borrows.
+        last_step = step == len(examples)
+        if (prune_every_n and step % prune_every_n == 0) or last_step:
             before = len(playbook.entries)
             playbook.prune(max_entries_per_domain=max_entries_per_domain, current_step=step)
             evictions += before - len(playbook.entries)

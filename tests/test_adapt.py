@@ -209,3 +209,56 @@ class TestFrozenLessonsAgeTheirCandidates:
         reversed_ = frozen_lessons(playbook, "d", top_k=2)
 
         assert aged != reversed_
+
+
+class TestEntryCapHoldsOnAnySplitLength:
+    """The cap must not depend on the split dividing by the prune interval.
+
+    Pruning ran only on the interval, so a run that ended mid-cycle saved a
+    playbook over `max_entries_per_domain` by up to one interval's worth of
+    lessons. 400 items at every 25 is exact and hid it; `--limit`, a different
+    ADAPTATION_SIZE or any odd split did not. That oversized playbook is the
+    artifact the cross-lingual arm borrows.
+    """
+
+    def adapt(self, n_items, prune_every_n=5, cap=4):
+        counter = {"i": 0}
+
+        def generate(prompt, max_new_tokens):
+            if "Curator" in prompt:
+                return CURATOR_KEEP
+            counter["i"] += 1
+            return (
+                f"- Eliminate the option that reverses the stated cause, "
+                f"case {counter['i']} of the passage"
+            )
+
+        examples = make_examples(n_items)
+        # Always wrong, so every step reflects and proposes a fresh lesson.
+        scorer = StubScorer([(e["gold_option_idx"] + 1) % 4 for e in examples])
+        playbook = Playbook()
+        summary = adapt_playbook(
+            scorer,
+            examples,
+            playbook,
+            domain="belebele_en",
+            generate=generate,
+            prune_every_n=prune_every_n,
+            max_entries_per_domain=cap,
+            progress=False,
+        )
+        return playbook, summary
+
+    @pytest.mark.parametrize("n_items", [5, 6, 7, 8, 9, 11, 13])
+    def test_the_saved_playbook_is_within_the_cap(self, n_items):
+        playbook, summary = self.adapt(n_items)
+        assert len(playbook.entries) <= 4
+        assert summary["playbook_size"] <= 4
+
+    def test_a_split_that_divides_evenly_still_works(self):
+        playbook, _ = self.adapt(10)
+        assert len(playbook.entries) <= 4
+
+    def test_the_final_prune_is_counted_in_the_log(self):
+        _, summary = self.adapt(7)
+        assert sum(row["num_evictions"] for row in summary["log"]) > 0
