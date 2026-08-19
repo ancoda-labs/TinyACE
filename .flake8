@@ -1,0 +1,31 @@
+# flake8 does not read pyproject.toml, so its configuration lives here rather
+# than being repeated in the Makefile and in .github/workflows/ci.yaml. Those
+# two carried the same flag list verbatim, which is one drift away from CI
+# checking something the `make check` a contributor runs locally does not.
+
+[flake8]
+# Not a style pass -- black owns formatting. These are the checks that catch
+# code which is wrong rather than untidy:
+#   E9    syntax errors and indentation the parser rejects
+#   F63   comparisons that are always true (`is` against a literal, and so on)
+#   F7    misplaced statements (`break` outside a loop)
+#   F82   undefined names
+#   F401  unused imports
+#   F841  unused local variables
+#   F541  f-strings with no placeholders
+#
+# F401/F841/F541 are on because their absence let a dead import survive a full
+# audit, with the wrong reference arm used for every ablation.
+select = E9,F63,F7,F82,F401,F841,F541
+
+# Matches [tool.black] line-length. Not currently enforced (E501 is outside
+# `select`), but recorded so the two never disagree if it ever is.
+max-line-length = 100
+
+exclude =
+    .git,
+    __pycache__,
+    build,
+    dist,
+    *.egg-info,
+    .pytest_cache

@@ -34,10 +34,9 @@ jobs:
     - name: Run tests
       run: pytest tests/ -v --cov=edge_slm_ace --cov-report=term-missing
 
-    # F401/F841/F541 are on because their absence let a dead import survive a
-    # full audit, with the wrong reference arm used for every ablation.
+    # Which checks and why: .flake8, which `make lint` reads too.
     - name: Lint (syntax errors, undefined names, dead imports)
-      run: flake8 src/ scripts/ tests/ --count --select=E9,F63,F7,F82,F401,F841,F541 --show-source --statistics
+      run: flake8 src/ scripts/ tests/ --count --show-source --statistics
 
     - name: Check formatting
       run: black --check --target-version py311 src/ scripts/ tests/

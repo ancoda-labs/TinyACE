@@ -30,8 +30,9 @@ data:
 test:
 	$(PY) -m pytest tests/ -v
 
+# Flags live in .flake8, so this and CI cannot drift apart.
 lint:
-	$(PY) -m flake8 src/ scripts/ tests/ --count --select=E9,F63,F7,F82,F401,F841,F541 --show-source --statistics
+	$(PY) -m flake8 src/ scripts/ tests/ --count --show-source --statistics
 
 format:
 	$(PY) -m black --target-version py311 src/ scripts/ tests/
