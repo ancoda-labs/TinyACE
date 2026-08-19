@@ -32,23 +32,15 @@ from edge_slm_ace.reporting import (
 # skipped rather than filled with a placeholder.
 _RUN_COLUMNS = [
     "model_label",
-    "task_name",
+    "language",
     "arm_label",
-    "device_used",
     "seed",
-    "num_examples",
+    "n_eval",
     "accuracy",
-    "oma_accuracy",
-    "avg_gom",
-    "avg_latency_sec",
-    "peak_memory_mb",
-    "peak_gpu_memory_mb",
     "truncation_rate",
-    "chat_template_rate",
-    "citation_rate",
+    "tokens_dropped",
     "relevance_active",
     "playbook_size",
-    "wall_time_seconds",
 ]
 
 
@@ -71,12 +63,13 @@ def print_health_warnings(runs: pd.DataFrame) -> None:
                 file=sys.stderr,
             )
 
-    if "chat_template_rate" in runs.columns:
-        bad = runs[runs["chat_template_rate"].fillna(1) < 1]
+    if "tokens_dropped" in runs.columns:
+        bad = runs[runs["tokens_dropped"].fillna(0) > 0]
         for _, row in bad.iterrows():
             print(
                 f"  WARNING {row.get('arm_label', '?')} / {row.get('model_label', '?')}: "
-                f"chat template applied to only {row['chat_template_rate']:.0%} of prompts",
+                f"{row['tokens_dropped']:.0f} tokens dropped from the passage. A longer "
+                f"prefix truncates more, so this arm is not comparable with a shorter one",
                 file=sys.stderr,
             )
 

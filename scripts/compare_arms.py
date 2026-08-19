@@ -7,7 +7,7 @@ Point estimates alone are not decidable at these sample sizes: at n=50 the
 this before putting any delta in a table.
 
 Each arm is compared against the reference `reporting.reference_for()` names
-for it -- ACE arms against `cot_control`, ablations against `tinyace_wm_256` --
+for it -- ACE arms against `scaffold_control`, ablations against `tinyace` --
 because comparing an ablation to `baseline` measures ACE *plus* the ablation
 rather than the ablated component. All comparisons printed together form one
 family and are Holm-corrected; the adjusted p-value is the one that decides.
@@ -15,8 +15,8 @@ family and are Holm-corrected; the adjusted p-value is the one that decides.
 Usage:
     # Two prediction files
     python -m scripts.compare_arms \
-        results/phi_3_mini/sciq_test/baseline/cuda/predictions.jsonl \
-        results/phi_3_mini/sciq_test/tinyace_wm_256/cuda/predictions.jsonl
+        results/qwen3-1.7b/ne/baseline/predictions.jsonl \
+        results/qwen3-1.7b/ne/tinyace/predictions.jsonl
 
     # Every arm against its registered reference, under one results root
     python -m scripts.compare_arms --results-root results
@@ -182,7 +182,7 @@ def main() -> int:
             "Substring identifying one reference arm, overriding the registry. "
             "By default each arm is compared against the reference "
             "reporting.reference_for() names for it: ACE arms against "
-            "cot_control, ablations against tinyace_wm_256."
+            "scaffold_control, ablations against tinyace."
         ),
     )
     parser.add_argument(
