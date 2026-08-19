@@ -1,6 +1,7 @@
 """Tests for the results-reporting layer: schema, loading and aggregation."""
 
 import json
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -8,59 +9,84 @@ import pytest
 from edge_slm_ace.reporting import (
     ABLATION_REFERENCE,
     ARMS,
+    Cell,
     arm_label,
     arm_order,
+    cell_dir,
     is_ablation,
     load_predictions,
     load_run_metrics,
     model_label,
     normalize_columns,
+    parse_cell,
     reference_for,
     summarize_predictions,
 )
 
+MODEL_ID = "microsoft/Phi-3-mini-4k-instruct"
+
+
+def write_cell(root, model, language, arm, n_correct, n=50):
+    """Write one cell exactly where `cell_dir` puts it, in the runner's schema."""
+    run_dir = cell_dir(root, model, language, arm)
+    run_dir.mkdir(parents=True)
+
+    (run_dir / "metrics.json").write_text(
+        json.dumps(
+            {
+                "arm": arm,
+                "model_id": MODEL_ID,
+                "language": language,
+                "accuracy": n_correct / n,
+                "n_eval": n,
+                "seed": 42,
+                "truncation_rate": 0.0,
+            }
+        )
+    )
+
+    with open(run_dir / "predictions.jsonl", "w") as f:
+        for i in range(n):
+            f.write(
+                json.dumps(
+                    {
+                        "qid": f"q{i}",
+                        "is_correct": 1 if i < n_correct else 0,
+                        "arm": arm,
+                        "model": MODEL_ID,
+                        "language": language,
+                    }
+                )
+                + "\n"
+            )
+    return run_dir
+
 
 @pytest.fixture
 def results_tree(tmp_path):
-    """A minimal results directory in the layout the runners produce."""
-
-    def write_run(model, task, arm, device, n_correct, n=50):
-        run_dir = tmp_path / model / task / arm / device
-        run_dir.mkdir(parents=True)
-
-        (run_dir / "metrics.json").write_text(
-            json.dumps(
-                {
-                    "model_id": "microsoft/Phi-3-mini-4k-instruct",
-                    "task_name": task,
-                    "mode": "ace" if arm.startswith("tinyace") else arm,
-                    "num_examples": n,
-                    "oma_accuracy": n_correct / n,
-                    "seed": 42,
-                    "truncation_rate": 0.0,
-                    "chat_template_rate": 1.0,
-                }
-            )
-        )
-
-        with open(run_dir / "predictions.jsonl", "w") as f:
-            for i in range(n):
-                f.write(
-                    json.dumps(
-                        {
-                            "qid": f"q{i}",
-                            "model": "microsoft/Phi-3-mini-4k-instruct",
-                            "task": task,
-                            "oma_correct": 1 if i < n_correct else 0,
-                            "latency_ms": 100.0,
-                        }
-                    )
-                    + "\n"
-                )
-
-    write_run("phi_3_mini", "sciq_test", "baseline", "cuda", 37)
-    write_run("phi_3_mini", "sciq_test", "tinyace", "cuda", 36)
+    """A minimal results directory in the layout `run_grid` produces."""
+    write_cell(tmp_path, "phi-3-mini", "ne", "baseline", 37)
+    write_cell(tmp_path, "phi-3-mini", "ne", "tinyace", 36)
     return tmp_path
+
+
+class TestLayout:
+    """The layout is defined once; readers must not re-derive it."""
+
+    def test_round_trips_through_cell_dir(self, tmp_path):
+        directory = cell_dir(tmp_path, "qwen3-1.7b", "ne", "tinyace")
+        assert parse_cell(directory.relative_to(tmp_path)) == Cell("qwen3-1.7b", "ne", "tinyace")
+
+    def test_arm_is_the_last_segment_not_the_second_to_last(self):
+        """The old readers took parts[-2], which is the language."""
+        assert parse_cell("qwen3-1.7b/ne/tinyace").arm == "tinyace"
+        assert parse_cell("qwen3-1.7b/ne/tinyace").language == "ne"
+
+    def test_a_comparison_group_is_model_and_language(self):
+        assert parse_cell("qwen3-1.7b/ne/tinyace").group == "qwen3-1.7b/ne"
+
+    def test_too_shallow_a_path_is_rejected_rather_than_guessed(self):
+        assert parse_cell("ne/tinyace") is None
 
 
 class TestArmRegistry:
@@ -152,12 +178,24 @@ class TestLoading:
         assert len(predictions) == 100
         assert set(predictions["arm"]) == {"baseline", "tinyace"}
 
+    def test_the_language_segment_is_never_mistaken_for_the_arm(self, results_tree):
+        """The defect this layout module exists to prevent."""
+        predictions = load_predictions(results_tree)
+        assert "ne" not in set(predictions["arm"])
+        assert set(predictions["language"]) == {"ne"}
+
+    def test_rows_keep_the_arm_the_runner_wrote(self, tmp_path):
+        """The path fills gaps; it must not overwrite what the file says."""
+        write_cell(tmp_path, "phi-3-mini", "ne", "tinyace", 30)
+        predictions = load_predictions(tmp_path)
+        assert set(predictions["arm"]) == {"tinyace"}
+
     def test_missing_root_yields_empty_frames(self, tmp_path):
         assert load_run_metrics(tmp_path / "nope").empty
         assert load_predictions(tmp_path / "nope").empty
 
     def test_malformed_files_are_skipped_not_fatal(self, results_tree):
-        bad = results_tree / "broken" / "sciq_test" / "baseline" / "cuda"
+        bad = results_tree / "broken" / "ne" / "baseline"
         bad.mkdir(parents=True)
         (bad / "metrics.json").write_text("{not valid json")
 
@@ -182,9 +220,22 @@ class TestSummarize:
 
         assert difference < summary["ci_halfwidth"].min()
 
-    def test_prefers_oma_over_exact_match(self, results_tree):
+    def test_each_arm_gets_its_own_row(self, results_tree):
+        """Pooling the arms into one row is what the layout defect produced."""
         summary = summarize_predictions(load_predictions(results_tree))
-        assert set(summary["metric"]) == {"oma_correct"}
+        assert len(summary) == 2
+        assert set(summary["arm"]) == {"baseline", "tinyace"}
+        assert set(summary["n"]) == {50}
+
+    def test_prefers_oma_over_exact_match(self):
+        df = pd.DataFrame(
+            [
+                {"qid": f"q{i}", "arm": "baseline", "is_correct": 1, "oma_correct": 0}
+                for i in range(4)
+            ]
+        )
+        summary = summarize_predictions(df, group_by=["arm"])
+        assert summary["metric"].iloc[0] == "oma_correct"
 
     def test_falls_back_to_exact_match_without_oma(self):
         df = pd.DataFrame([{"qid": f"q{i}", "arm": "baseline", "is_correct": 1} for i in range(4)])
@@ -193,3 +244,42 @@ class TestSummarize:
 
     def test_empty_input_yields_empty_output(self):
         assert summarize_predictions(pd.DataFrame()).empty
+
+
+class TestPairingAgainstReferences:
+    """`compare_arms` must find a reference for every arm the grid writes.
+
+    It previously found none: the arm key it derived from the path was the
+    language segment, so every comparison was skipped and the script printed
+    "0 of 0" while exiting 0.
+    """
+
+    def _arms(self, root):
+        from scripts.compare_arms import discover_arms
+
+        return discover_arms(root)
+
+    def test_every_ace_arm_is_paired_with_its_registered_reference(self, tmp_path):
+        from scripts.compare_arms import pair_with_registered_references
+
+        for arm in ("baseline", "scaffold_control", "tinyace"):
+            write_cell(tmp_path, "qwen3-1.7b", "ne", arm, 30)
+
+        pairs, missing = pair_with_registered_references(self._arms(tmp_path))
+
+        assert missing == []
+        paired = {(Path(a).name, Path(b).name) for a, b in pairs}
+        assert ("baseline", "scaffold_control") in paired
+        assert ("scaffold_control", "tinyace") in paired
+
+    def test_a_comparison_never_crosses_languages(self, tmp_path):
+        from scripts.compare_arms import pair_with_registered_references
+
+        for language in ("en", "ne"):
+            for arm in ("baseline", "scaffold_control"):
+                write_cell(tmp_path, "qwen3-1.7b", language, arm, 30)
+
+        pairs, _ = pair_with_registered_references(self._arms(tmp_path))
+
+        for reference, arm in pairs:
+            assert parse_cell(reference).language == parse_cell(arm).language

@@ -1,15 +1,18 @@
 """Loading and aggregating experiment results.
 
-The runners write three artefacts per run into
-`{results_root}/{model}/{task}/{arm}/{device}/`:
+A runner writes two artefacts per cell into the directory `reporting.layout`
+defines, `{results_root}/{model}/{language}/{arm}/`:
 
     metrics.json        run-level summary
     predictions.jsonl   one row per example
-    results.csv         the same rows as CSV
 
-This module is the single reader for all of them, so that every consumer --
-tables, figures, significance tests -- sees the same columns under the same
-names.
+This module is the single reader for both, so that every consumer -- tables,
+figures, significance tests -- sees the same columns under the same names.
+
+Coordinates come from `layout.parse_cell` rather than from segment arithmetic
+done here, and a field the file already carries always wins over the path. The
+previous version did the opposite on both counts and overwrote each row's
+correct `arm` with the language segment.
 """
 
 import json
@@ -18,6 +21,7 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
+from edge_slm_ace.reporting.layout import parse_cell
 from edge_slm_ace.reporting.schema import (
     CANONICAL_COLUMNS,
     arm_label,
@@ -82,11 +86,14 @@ def load_run_metrics(results_root: Path) -> pd.DataFrame:
             continue
 
         record["_path"] = str(path.parent)
-        # Directory layout is {root}/{model}/{task}/{arm}/{device}/
-        parts = path.parent.relative_to(results_root).parts
-        if len(parts) >= 4:
-            record.setdefault("arm", parts[-2])
-            record.setdefault("device_used", parts[-1])
+        cell = parse_cell(path.parent.relative_to(results_root))
+        if cell is not None:
+            # setdefault, not assignment: metrics.json is written by the run
+            # itself and is the authority on what it was. The path only fills
+            # in what the file does not say.
+            record.setdefault("arm", cell.arm)
+            record.setdefault("language", cell.language)
+            record.setdefault("model_key", cell.model)
         rows.append(record)
 
     if not rows:
@@ -98,7 +105,7 @@ def load_run_metrics(results_root: Path) -> pd.DataFrame:
     df["arm_order"] = df["arm"].map(arm_order)
     if "model_id" in df.columns:
         df["model_label"] = df["model_id"].map(model_label)
-    sort_columns = [c for c in ("model_label", "task_name", "arm_order") if c in df.columns]
+    sort_columns = [c for c in ("model_label", "language", "arm_order") if c in df.columns]
     return df.sort_values(sort_columns) if sort_columns else df
 
 
@@ -111,7 +118,7 @@ def load_predictions(results_root: Path) -> pd.DataFrame:
 
     Returns:
         One row per example across all runs, with canonical column names and
-        an `arm` column derived from the directory layout.
+        `arm`/`language` filled in from the cell path where the rows omit them.
     """
     frames = []
     for path in sorted(Path(results_root).rglob("predictions.jsonl")):
@@ -124,9 +131,18 @@ def load_predictions(results_root: Path) -> pd.DataFrame:
             continue
 
         frame = normalize_columns(pd.DataFrame(rows))
-        parts = path.parent.relative_to(results_root).parts
-        frame["arm"] = parts[-2] if len(parts) >= 2 else "unknown"
-        frame["device"] = parts[-1] if len(parts) >= 1 else "unknown"
+        cell = parse_cell(path.parent.relative_to(results_root))
+        # The rows carry `arm` and `language` already; the path is the
+        # fallback, not the override. Overriding them merged every arm in a
+        # cell under the language segment and pooled their accuracies.
+        for column, value in (
+            ("arm", cell.arm if cell else "unknown"),
+            ("language", cell.language if cell else "unknown"),
+        ):
+            if column not in frame.columns:
+                frame[column] = value
+            else:
+                frame[column] = frame[column].fillna(value)
         frame["_path"] = str(path.parent)
         frames.append(frame)
 
@@ -163,7 +179,7 @@ def summarize_predictions(
 
     Args:
         df: Frame from `load_predictions`.
-        group_by: Grouping columns; defaults to model/task/arm.
+        group_by: Grouping columns; defaults to model/language/arm.
         confidence: Confidence level for the Wilson interval.
 
     Returns:
@@ -175,7 +191,7 @@ def summarize_predictions(
     if df.empty:
         return pd.DataFrame()
 
-    group_by = group_by or [c for c in ("model_label", "task", "arm") if c in df.columns]
+    group_by = group_by or [c for c in ("model_label", "language", "arm") if c in df.columns]
 
     rows = []
     for keys, group in df.groupby(group_by, dropna=False):
@@ -211,6 +227,6 @@ def summarize_predictions(
     if "arm" in summary.columns:
         summary["arm_order"] = summary["arm"].map(arm_order)
         summary = summary.sort_values(
-            [c for c in ("model_label", "task", "arm_order") if c in summary.columns]
+            [c for c in ("model_label", "language", "arm_order") if c in summary.columns]
         ).drop(columns=["arm_order"])
     return summary

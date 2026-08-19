@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from edge_slm_ace.reporting import get_arm
+from edge_slm_ace.reporting import cell_dir, get_arm
 from edge_slm_ace.utils import DEFAULT_SEED, capture_environment, resolve_model, set_seed
 
 
@@ -71,11 +71,6 @@ GRID: List[ArmSpec] = [
     ArmSpec("tinyace_ablate_no_curator", adapts=True, flags=["--no-curator"]),
     ArmSpec("tinyace_ablate_no_relevance", adapts=True, flags=["--relevance-weight", "0"]),
 ]
-
-
-def cell_dir(root: Path, model_key: str, language: str, arm: str) -> Path:
-    """`{root}/{model}/{language}/{arm}/` -- the layout the reporting layer reads."""
-    return root / model_key / language / arm
 
 
 def is_complete(directory: Path, seed: int, commit: Optional[str]) -> bool:

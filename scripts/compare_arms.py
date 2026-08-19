@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from edge_slm_ace.eval.stats import compare_arms, format_comparison, holm_bonferroni
-from edge_slm_ace.reporting import arm_label, get_arm, reference_for
+from edge_slm_ace.reporting import arm_label, get_arm, parse_cell, reference_for
 
 
 def load_predictions(path: Path) -> List[Dict]:
@@ -51,8 +51,8 @@ def discover_arms(results_root: Path) -> Dict[str, Path]:
     Find every predictions.jsonl under a results root.
 
     Returns:
-        Mapping of arm label -> path. The label is the directory path
-        relative to the root, which encodes model/task/mode/device.
+        Mapping of cell label -> path. The label is the directory path
+        relative to the root, which encodes model/language/arm.
     """
     arms = {}
     for path in sorted(results_root.rglob("predictions.jsonl")):
@@ -62,21 +62,27 @@ def discover_arms(results_root: Path) -> Dict[str, Path]:
 
 def arm_key_of(label: str) -> str:
     """
-    The arm segment of a results path, which is {model}/{task}/{arm}/{device}.
+    The arm a results path belongs to, via `reporting.layout`.
+
+    This used to be `parts[-2]`, against a four-segment layout that carried a
+    device. On the three-segment layout the runners write it returned the
+    *language*, so every arm resolved to "ne" or "en", none of them registered,
+    and every comparison was skipped for want of a reference.
 
     Args:
-        label: Directory path relative to the results root.
+        label: Cell directory, relative to the results root.
 
     Returns:
         The arm key, as registered in `reporting.schema`.
     """
-    parts = Path(label).parts
-    return parts[-2] if len(parts) >= 2 else label
+    cell = parse_cell(label)
+    return cell.arm if cell else label
 
 
 def cell_of(label: str) -> str:
-    """The {model}/{task} prefix a comparison must not cross."""
-    return str(Path(label).parent.parent)
+    """The {model}/{language} prefix a comparison must not cross."""
+    cell = parse_cell(label)
+    return cell.group if cell else str(Path(label).parent)
 
 
 def pair_with_registered_references(
