@@ -3,7 +3,13 @@
 This module implements the TinyACE working memory system with:
 - Retention scoring based on success/failure rates, recency, and vagueness
 - Token-budgeted eviction (strategic forgetting)
-- Support for both ace_full (top-k) and ace_working_memory modes
+
+Retrieval comes in two shapes -- `get_top_k` and `get_top_entries_for_budget`.
+They were once described here as the `ace_full` and `ace_working_memory`
+*arms*; no such arms are registered in `reporting/schema.py` and no runner
+selects between them. `get_top_entries_for_budget` is a capability of this
+class, not a condition of the study, and nothing in `scripts/` sets a
+`token_budget` today.
 """
 
 import json

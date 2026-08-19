@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Aggregate a results directory into summary tables.
 
-Walks `{results_root}/{model}/{task}/{arm}/{device}/`, reads every
-`metrics.json` and `predictions.jsonl`, and writes:
+Walks `{results_root}/{model}/{language}/{arm}/` -- the layout
+`reporting.layout` defines -- reads every `metrics.json` and
+`predictions.jsonl`, and writes:
 
     summary_runs.csv          one row per run (run-level metrics)
     summary_accuracy.csv      one row per arm, with Wilson confidence intervals

@@ -195,8 +195,13 @@ def reference_for(key: str) -> str:
     return DEFAULT_REFERENCE.get(arm.family if arm else "reference", "baseline")
 
 
-# Short display names for models, longest pattern first so that "phi-3-mini"
-# is not shadowed by "phi-3".
+# Short display names for models, matched as substrings in list order.
+#
+# The order matters only where one pattern contains another: "phi-3.5-mini"
+# must precede "phi-3-mini", or the shorter would never be reached. No pattern
+# currently contains another -- `test_no_pattern_shadows_a_later_one` holds
+# that -- so a new entry may go anywhere, but if it introduces a containment it
+# has to go before the pattern that contains it.
 _MODEL_PATTERNS = [
     ("qwen3-1.7b", "Qwen3-1.7B"),
     ("qwen3-4b", "Qwen3-4B"),

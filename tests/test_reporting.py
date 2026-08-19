@@ -146,6 +146,25 @@ class TestModelLabels:
     def test_unknown_models_fall_back_to_the_last_path_segment(self):
         assert model_label("someorg/some-new-model") == "some-new-model"
 
+    def test_no_pattern_shadows_a_later_one(self):
+        """Patterns match as substrings in list order, so containment is ordered.
+
+        The list was commented as sorted longest-first and is not. Nothing is
+        currently shadowed; this holds that, so a new entry that introduces a
+        containment fails here rather than silently mislabelling a model in
+        every figure.
+        """
+        from edge_slm_ace.reporting.schema import _MODEL_PATTERNS
+
+        patterns = [p for p, _ in _MODEL_PATTERNS]
+        shadowed = [
+            (early, late)
+            for i, early in enumerate(patterns)
+            for late in patterns[i + 1 :]
+            if early in late
+        ]
+        assert not shadowed, f"unreachable pattern(s): {shadowed}"
+
 
 class TestNormalizeColumns:
     def test_legacy_names_are_mapped_forward(self):

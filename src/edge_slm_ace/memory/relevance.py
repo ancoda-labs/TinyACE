@@ -29,7 +29,11 @@ class LessonRelevance:
     """
     Cosine relevance between a question and candidate lesson texts.
 
-    Singleton, sharing the sentence-transformers model with SemanticEvaluator.
+    Singleton: one sentence-transformers model per process. It used to be
+    described as sharing that model with `SemanticEvaluator`, which was the
+    text-similarity metric the harness move deleted -- there is no other holder
+    of the encoder now.
+
     Lesson embeddings are cached by text: the playbook is small and mostly
     stable between steps, so re-encoding it every question would dominate
     retrieval cost.
