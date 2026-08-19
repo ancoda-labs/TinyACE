@@ -48,6 +48,25 @@ reproduced before it was fixed and is covered by a test.
   relevance list would have removed the tail entries from retrieval altogether.
   It now raises.
 
+**Run health**
+
+- `compare_arms` read `predictions.jsonl` and nothing else, so the one tool the
+  project points at as the gate on whether a delta is a result could not see the
+  condition that makes a delta uninterpretable. It would print "TinyACE is
+  better than Scaffold Control (p=0.0151)" from a pair where the ACE arm had
+  lost 12.5% of its passages to left-truncation and the control had not.
+  Truncation is arm-asymmetric — the longer prefix truncates more — so such a
+  pair carries *biased* evidence, which is worse for a family of tests than no
+  evidence. It is now dropped from the Holm family, with a NOT REPORTABLE
+  verdict in place of a direction.
+- Invalidating and limiting conditions were both just "warnings". They are now
+  distinguished in `reporting/health.py`, on one definition both tools act on:
+  truncation invalidates, while `relevance_active` and `token_counts_exact` are
+  limitations — those runs really did score what they scored.
+- `aggregate_results --strict` (and `make report STRICT=1`) exits non-zero on an
+  invalidating issue. Opt-in, because a non-zero aggregate stops make before
+  compare_arms runs.
+
 **Documentation that contradicted the code**
 
 - `data/belebele.py` and `utils/repro.py` claimed option order is permuted per
