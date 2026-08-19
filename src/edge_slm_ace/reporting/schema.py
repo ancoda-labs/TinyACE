@@ -85,8 +85,13 @@ ARMS: List[Arm] = [
         "tinyace_equal_lessons",
         "Ablate: equal lessons",
         "ace",
-        "Budget by lesson count instead of tokens, so Devanagari fertility does "
-        "not silently shrink the Nepali playbook.",
+        "The same frozen playbook with twice as many lessons in the prefix "
+        "(top-k 10 against TinyACE's 5). Nothing in this pipeline budgets by "
+        "tokens -- both arms budget by lesson count -- so what this varies is "
+        "prefix length, and Devanagari fertility means the same count of "
+        "lessons costs far more tokens in Nepali. A drop here on Nepali and "
+        "not on English says length is the binding constraint, not lesson "
+        "quality.",
     ),
     Arm(
         "tinyace_ablate_no_relevance",

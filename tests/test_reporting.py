@@ -133,6 +133,25 @@ class TestArmRegistry:
         assert not is_ablation("scaffold_control")
 
 
+class TestArmNotesDescribeTheArm:
+    def test_equal_lessons_does_not_claim_a_token_budget(self):
+        """The note is what appears in generated documentation.
+
+        It read "budget by lesson count instead of tokens", which implies
+        TinyACE budgets by tokens. Nothing in the pipeline does -- both arms
+        pass a `top_k`, and the grid gives this one 10 against TinyACE's 5.
+        What the arm varies is prefix length.
+        """
+        from scripts.run_grid import GRID
+
+        spec = next(a for a in GRID if a.key == "tinyace_equal_lessons")
+        assert spec.flags == ["--top-k", "10"]
+
+        note = get_arm("tinyace_equal_lessons").note
+        assert "instead of tokens" not in note
+        assert "top-k 10" in note
+
+
 class TestModelLabels:
     def test_known_models_get_short_names(self):
         assert model_label("microsoft/Phi-3-mini-4k-instruct") == "Phi-3-mini"
