@@ -9,6 +9,7 @@ from edge_slm_ace.memory.playbook import (
     Playbook,
     PlaybookEntry,
     ScoringParams,
+    _GENERIC_FLOOR,
     _normalize_for_comparison,
     compute_vagueness_score,
 )
@@ -337,6 +338,50 @@ class TestPlaybook:
         assert stats["total_tokens"] > 0
         assert stats["avg_success_rate"] > 0
         assert "finance" in stats["domains"]
+
+
+class TestGenericFlagAgreesWithAdmission:
+    """The flag written to disk must mean what the pipeline did.
+
+    `is_generic` carried its own hardcoded 0.5 while `_GENERIC_FLOOR` (0.6)
+    decided admission, and the score can land in between: a lesson at 0.55 was
+    admitted to the playbook and recorded in playbook.jsonl as generic. That
+    artifact is read by people, so it must not contradict the run.
+    """
+
+    ADMITTED_BUT_FLAGGED = "Think carefully and pay attention to 3 details"
+
+    def test_the_band_between_the_two_thresholds_is_reachable(self):
+        score = compute_vagueness_score(self.ADMITTED_BUT_FLAGGED)
+        assert 0.5 < score < _GENERIC_FLOOR
+
+    def test_an_admitted_lesson_is_not_recorded_as_generic(self):
+        from edge_slm_ace.core.ace_roles import choose_lessons_for_playbook
+
+        text = self.ADMITTED_BUT_FLAGGED
+        assert choose_lessons_for_playbook("d", [text], Playbook()) == [text]
+
+        playbook = Playbook()
+        playbook.add_entry("d", text, step=1)
+        assert playbook.entries[0].is_generic is False
+
+    def test_a_rejected_lesson_is_recorded_as_generic(self):
+        entry = PlaybookEntry(id="1", domain="d", text="Think carefully.")
+        assert entry.vagueness_score >= _GENERIC_FLOOR
+        assert entry.is_generic is True
+
+    def test_a_more_specific_replacement_updates_the_flag(self):
+        playbook = Playbook()
+        playbook.add_entry("d", "Read carefully.", step=1)
+        assert playbook.entries[0].is_generic is True
+
+        playbook.add_entry(
+            "d",
+            "Read carefully and reject an option the passage never states explicitly",
+            step=2,
+        )
+        assert len(playbook.entries) == 1
+        assert playbook.entries[0].is_generic is False
 
 
 class TestPlaybookLegacyCompatibility:

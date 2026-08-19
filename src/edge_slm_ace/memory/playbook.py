@@ -153,8 +153,14 @@ _SPECIFIC_RE = re.compile(
 )
 
 # Floor for a lesson that contains a generic phrase and no specificity signal
-# at all. Above the is_generic threshold, so specificity credits cannot excuse
-# a lesson that is nothing but generic advice.
+# at all, and the single threshold for "this counts as generic".
+#
+# `choose_lessons_for_playbook` rejects a candidate at or above it, so it is
+# what decides admission. The `is_generic` flag on an entry is derived from the
+# same number, because it used to be its own hardcoded 0.5 in two places: an
+# admitted lesson scoring 0.55 was written into playbook.jsonl flagged generic,
+# so the artifact contradicted the pipeline that produced it on a band the
+# score can actually reach.
 _GENERIC_FLOOR = 0.6
 
 
@@ -275,8 +281,9 @@ class PlaybookEntry:
         if self.vagueness_score is None:
             self.vagueness_score = compute_vagueness_score(self.text)
 
-        # Update legacy field
-        self.is_generic = self.vagueness_score > 0.5
+        # Legacy field, kept because it is persisted. Derived from the same
+        # threshold that decides admission, so it cannot disagree with it.
+        self.is_generic = self.vagueness_score >= _GENERIC_FLOOR
 
     def _estimate_tokens(self, tokens_per_word: float = 1.3) -> int:
         """
@@ -752,7 +759,7 @@ class Playbook:
             # entry's identity and its feedback history.
             existing.text = text
             existing.vagueness_score = candidate_vagueness
-            existing.is_generic = candidate_vagueness > 0.5
+            existing.is_generic = candidate_vagueness >= _GENERIC_FLOOR
             if self.tokenizer is not None:
                 existing.recount_tokens(self.tokenizer)
             else:
