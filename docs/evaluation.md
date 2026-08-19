@@ -168,6 +168,17 @@ The results layout carries no seed segment. A multi-seed study needs one root
 per seed (`make grid SEED=43 RESULTS=results/seed43`); report mean ± sd across
 seeds.
 
+### What the seed does not cover
+
+**Option order is never permuted.** The harness loads its own copy of the split
+and renders the four options itself, so a permutation applied in
+`data/belebele.py` would change what adaptation sees without changing what is
+scored — the arm asymmetry the prompt layer exists to prevent. Belebele's gold
+position is close to uniform already (206/251/246/197 across the four slots),
+but "close to uniform" is not uniform, and the residual is worth a point or two
+to a model with a position bias. That is a limitation to state, not one the
+loader can seed away.
+
 ---
 
 ## Reporting checklist
@@ -182,4 +193,6 @@ seeds.
 - [ ] Truncation is zero on every arm in the table, or the table says so.
 - [ ] `relevance_active` is true, or the limitation is stated.
 - [ ] The seed and commit are stated, and multi-seed runs report spread.
+- [ ] Any position-bias claim accounts for gold position being fixed, not
+      permuted.
 - [ ] Nothing is ranked that did not survive correction.

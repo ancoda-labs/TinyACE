@@ -2,9 +2,12 @@
 
 Every entrypoint must call `set_seed()` before loading a model, and record
 `capture_environment()` in its run metadata. Without both, a reported number
-cannot be regenerated: decoding is stochastic whenever temperature > 0, option
-order is permuted per example, and generation behaviour changes across
-transformers releases.
+cannot be regenerated: the adaptation/evaluation split is a seeded shuffle, the
+Reflector and Curator generations are stochastic whenever temperature > 0, and
+generation behaviour changes across transformers releases.
+
+The seed does not permute option order. Nothing does -- see
+`data/belebele.py`.
 """
 
 import os

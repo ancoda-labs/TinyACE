@@ -17,9 +17,12 @@ Three properties of the raw files drive the design here, all verified against
 2. **`correct_answer_num` is a 1-based string**, not a 0-based int.
 3. **Gold position is close to uniform already** (206/251/246/197 across the
    four slots), unlike the SciQ files this repo used to carry, where gold was
-   first in 1000/1000 rows. Option order is still permuted per example, because
-   "close to uniform" is not uniform and the residual is worth a point or two to
-   a model with a position bias.
+   first in 1000/1000 rows. This module therefore does NOT permute option
+   order, and cannot: the harness loads its own copy of the split and renders
+   the options itself, so a permutation applied here would change what
+   adaptation sees without changing what is scored -- which is the arm
+   asymmetry the whole prompt layer exists to prevent. The residual position
+   bias is a limitation to state, not something the loader can correct.
 """
 
 import hashlib
