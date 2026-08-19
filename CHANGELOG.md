@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — third review pass
+
+A review of the state the harness rebuild left behind. Every finding was
+reproduced before it was fixed and is covered by a test.
+
+**Results that could be lost or silently wrong**
+
+- A run whose task reported no `acc` wrote `metrics.json` and
+  `predictions.jsonl` and *then* died formatting `None` as a percentage.
+  `run_grid.is_complete()` reads exactly those two files, so the half-written
+  cell counted as finished for that commit and seed: the rerun skipped it and
+  it stayed empty. It now fails before anything is written.
+- `harness_indices` numbered file lines while filtering blank ones, so one blank
+  line in a committed jsonl shifted every position after it. The harness skips
+  blanks when it loads, so the run would have scored a different document per id
+  and still reported a clean accuracy.
+- Playbook token counts were always the `words * 1.3` estimate, because no
+  entrypoint passed a tokenizer. Words per lesson is roughly
+  language-independent and Devanagari fertility is *tokens per word*, so the
+  estimate reported Nepali lessons as **cheaper** than the English ones they
+  were translated from — 0.58x where the real ratio is 4.5x, the effect with its
+  sign reversed. That is the quantity `tinyace_equal_lessons` exists to measure.
+  `run_arm` now passes the scorer's tokenizer, and records `token_counts_exact`.
+- `max_entries_per_domain` held only when the number of adaptation items divided
+  evenly by `prune_every_n`. 400 items pruned every 25 is exact, which hid it;
+  `--limit` or any odd split ended mid-cycle and saved a playbook over the cap.
+  That playbook is what `tinyace_playbook_en` borrows. The last step now prunes.
+- Both metric pickers preferred `oma_correct` over `is_correct`. Nothing has
+  written that column since scoring moved to the harness, so the only trees
+  carrying it are the withdrawn SciQ results — the preference could only report
+  a withdrawn number in place of the live one. A test asserted that behaviour.
+- `is_generic` was written into `playbook.jsonl` from a hardcoded 0.5 while
+  `_GENERIC_FLOOR` (0.6) decided admission. The score reaches 0.55, so a lesson
+  the pipeline deliberately admitted was recorded in the artifact as generic.
+- `--dtype` claimed to be recorded in metadata and was recorded nowhere; under
+  the grid it was also never forwarded, and a prebuilt `lm` skips
+  `build_model_args`, so it had no effect on the run either.
+- `blend` combined its two score lists with `zip`, which truncates: a short
+  relevance list would have removed the tail entries from retrieval altogether.
+  It now raises.
+
+**Documentation that contradicted the code**
+
+- `data/belebele.py` and `utils/repro.py` claimed option order is permuted per
+  example. Nothing permutes, and nothing here can — the harness loads its own
+  copy of the split. The residual gold-position bias is now stated as a
+  limitation in `evaluation.md`.
+- `relevance.py` told the user to install the `metrics` extra; the extra is
+  `retrieval`. That message is the only warning at the moment retrieval stops
+  being query-conditioned, so following it has to work.
+- `architecture.md` presented the token-budget machinery as part of the
+  protocol. Nothing in `scripts/` sets it, so `max_entries_per_domain` is the
+  only bound in force.
+- The `tinyace_equal_lessons` note described a token budget that does not exist.
+  Both arms budget by lesson count; the grid gives this one `--top-k 10`.
+- `aggregate_results` documented a four-segment layout, `playbook.py`
+  advertised `ace_full`/`ace_working_memory` modes that are not arms,
+  `relevance.py` cited a deleted `SemanticEvaluator`, and `schema.py` claimed a
+  pattern list was sorted longest-first.
+
+**Removed**
+
+- `task_label`, exported and called by nothing.
+- Four test wrappers that re-ran other tests under "legacy" names.
+
+**Infrastructure**
+
+- flake8 flags moved to `.flake8`; the Makefile and CI carried the same list
+  verbatim.
+- `run_grid` printed `models x languages x arms`, which overstates the plan
+  whenever an arm is language-restricted.
+
 ### Fixed — second review pass
 
 A second review of the state the first audit's repairs left behind. All 14
