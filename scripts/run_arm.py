@@ -55,7 +55,13 @@ def parse_args(argv=None) -> argparse.Namespace:
     )
     p.add_argument("--device", default=None, choices=["cpu", "cuda", "mps"])
     p.add_argument("--batch-size", type=int, default=8)
-    p.add_argument("--dtype", default=None, help="Torch dtype, recorded in metadata")
+    p.add_argument(
+        "--dtype",
+        default=None,
+        help="Torch dtype. Recorded in metrics.json. Only loads the checkpoint "
+        "when this process loads it: under run_grid the model arrives already "
+        "built, so the dtype it was built with is passed in to be recorded.",
+    )
     p.add_argument("--top-k", type=int, default=5, help="Lessons in the frozen prefix")
     p.add_argument("--limit", type=int, default=None, help="Truncate both splits (debug)")
     p.add_argument(
@@ -267,6 +273,10 @@ def main(argv=None, lm=None) -> int:
         ),
         "relevance_encoder": LessonRelevance.get_instance().encoder_name,
         "apply_chat_template": not args.no_chat_template,
+        # Recorded whether this process loaded the checkpoint or run_grid did.
+        # A run whose dtype is not in its metadata cannot be reproduced, and
+        # this was in neither the metrics nor the grid's argv.
+        "dtype": args.dtype,
         **health,
         "scoring": asdict(playbook.scoring_params),
         "adaptation": {k: v for k, v in (adapt_summary or {}).items() if k != "log"},

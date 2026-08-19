@@ -276,6 +276,10 @@ def main(argv=None) -> int:
         ]
         if args.device:
             argv_cell += ["--device", args.device]
+        # The grid builds the model, so run_arm never sees this on the load
+        # path -- it is forwarded purely so the cell records what it ran under.
+        if args.dtype:
+            argv_cell += ["--dtype", args.dtype]
         if args.limit:
             argv_cell += ["--limit", str(args.limit)]
         if args.no_chat_template:
