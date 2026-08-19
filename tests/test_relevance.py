@@ -55,6 +55,25 @@ class TestBlend:
         assert keys[1] > keys[0]
 
 
+class TestBlendLengthGuard:
+    def test_a_short_relevance_list_raises_instead_of_dropping_candidates(self):
+        """`zip` truncated, so the tail candidates left the ranking entirely.
+
+        `_rank_for_retrieval` zips the returned keys back against the entry
+        list, so a short return does not misrank an entry -- it removes it from
+        retrieval.
+        """
+        with pytest.raises(ValueError, match="one relevance score per candidate"):
+            blend([1.0, 2.0, 3.0], [0.1, 0.9], 0.5)
+
+    def test_a_long_relevance_list_also_raises(self):
+        with pytest.raises(ValueError, match="one relevance score per candidate"):
+            blend([1.0, 2.0], [0.1, 0.9, 0.5], 0.5)
+
+    def test_matched_lengths_are_unaffected(self):
+        assert len(blend([1.0, 2.0, 3.0], [0.1, 0.9, 0.5], 0.5)) == 3
+
+
 class TestQueryConditionedRetrieval:
     LESSONS = [
         "For wind direction questions, the Coriolis effect deflects flows.",

@@ -162,11 +162,26 @@ def blend(
             retention-only ranking.
 
     Returns:
-        One combined key per candidate; higher ranks first.
+        One combined key per candidate; higher ranks first -- always exactly as
+        many keys as there were candidates.
+
+    Raises:
+        ValueError: If the two score lists are not the same length. The result
+            was previously `zip`ped, which truncates: a short relevance list
+            silently dropped the tail candidates out of the ranking entirely,
+            so entries disappeared from retrieval rather than merely ranking
+            badly. `_rank_for_retrieval` zips the keys back against the entry
+            list, so a short return there loses entries outright.
     """
     retention = list(retention_scores)
     if not relevance_scores or relevance_weight <= 0.0 or not retention:
         return retention
+
+    if len(relevance_scores) != len(retention):
+        raise ValueError(
+            f"blend() needs one relevance score per candidate: got "
+            f"{len(relevance_scores)} for {len(retention)} candidates."
+        )
 
     low, high = min(retention), max(retention)
     span = high - low
