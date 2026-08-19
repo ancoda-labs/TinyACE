@@ -26,35 +26,28 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install torch --index-url https://download.pytorch.org/whl/cpu
-        pip install -e ".[dev,metrics,plots]"
+        pip install -e ".[dev,report]"
+
+    - name: Verify the Belebele files are the parallel corpus we assume
+      run: python -m scripts.fetch_belebele --check
 
     - name: Run tests
       run: pytest tests/ -v --cov=edge_slm_ace --cov-report=term-missing
 
     # F401/F841/F541 are on because their absence let a dead import survive a
-    # full audit: scripts/compare_arms.py imported reference_for and
-    # is_ablation and called neither, so ablations were compared against the
-    # wrong arm while the tests for that mapping passed.
+    # full audit, with the wrong reference arm used for every ablation.
     - name: Lint (syntax errors, undefined names, dead imports)
       run: flake8 src/ scripts/ tests/ --count --select=E9,F63,F7,F82,F401,F841,F541 --show-source --statistics
 
     - name: Check formatting
       run: black --check --target-version py311 src/ scripts/ tests/
 
-    # Exercises one real end-to-end run. The unit tests never call
-    # run_experiment.py, so a defect in its plumbing -- a CSV header that fell
-    # behind its writer, for instance -- reached the grid unchallenged.
-    - name: Smoke test the ACE pipeline end to end
+    # One real adapt-then-evaluate run. The unit tests stub the model, so only
+    # this exercises the harness integration end to end.
+    - name: Smoke test one arm end to end
       run: |
-        python -m scripts.run_experiment \
-          --model-id tiny-gpt2 \
-          --task-name sciq_tiny \
-          --mode ace \
-          --limit 2 \
-          --max-new-tokens 8 \
-          --playbook-path "$RUNNER_TEMP/playbook.jsonl" \
-          --output-path "$RUNNER_TEMP/results.csv" \
-          --metrics-path "$RUNNER_TEMP/metrics.json" \
-          --predictions-path "$RUNNER_TEMP/predictions.jsonl"
-        test -s "$RUNNER_TEMP/metrics.json"
-        test -s "$RUNNER_TEMP/playbook_log.csv"
+        python -m scripts.run_arm \
+          --model tiny-gpt2 --language en --arm scaffold_control \
+          --output-dir "$RUNNER_TEMP/arm" --limit 4 --device cpu --no-chat-template
+        test -s "$RUNNER_TEMP/arm/metrics.json"
+        test -s "$RUNNER_TEMP/arm/predictions.jsonl"

@@ -3,36 +3,33 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "edge-slm-ace"
+name = "tinyace-nepali"
 version = "0.1.0"
-description = "Domain-Specific Benchmarking of Small Language Models for Edge Devices with Agentic Context Engineering"
+description = "Test-time context adaptation for small language models on a low-resource language (Nepali)"
 authors = [
     {name = "Suryodaya Shahi"},
-    {name = "Sathwik"},
-    {name = "Archit"},
 ]
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
+
+# Scoring is lm-evaluation-harness; it brings torch and transformers via [hf].
+# Nothing here re-implements a metric the harness already computes.
 dependencies = [
-    "torch>=2.0.0",
-    "transformers>=4.35.0",
-    "accelerate>=0.24.0",
-    "pandas>=2.0.0",
-    "numpy>=1.24.0",
+    "lm-eval[hf]>=0.4.9",
     "pyyaml>=6.0",
-    "psutil>=5.9.0",
 ]
 
 [project.optional-dependencies]
-metrics = [
-    "sacrebleu>=2.3.1",
-    "sentence-transformers>=2.2.0",
-    "scikit-learn>=1.3.0",
+# Query-conditioned retrieval. The encoder MUST be multilingual: an
+# English-only model maps Devanagari to near-noise, which looks like retrieval
+# and is not.
+retrieval = [
+    "sentence-transformers>=3.0.0",
 ]
-plots = [
+report = [
+    "pandas>=2.0.0",
     "matplotlib>=3.7.0",
-    "seaborn>=0.12.0",
 ]
 dev = [
     "pytest>=7.4.0",
@@ -41,11 +38,11 @@ dev = [
     "flake8>=6.1.0",
 ]
 
-# This is a research repository, not a library: the datasets in data/tasks/ and
-# the entrypoints in scripts/ are deliberately outside the wheel, and the
-# documented workflow (`make install`, `python -m scripts.*`) assumes a git
-# checkout. Install with `pip install -e .` from a clone. If the package is
-# ever installed away from its datasets, point TINYACE_DATA_ROOT at the
+# This is a research repository, not a library: the Belebele files in
+# data/tasks/ and the entrypoints in scripts/ are deliberately outside the
+# wheel, and the documented workflow assumes a git checkout. Install with
+# `pip install -e ".[dev,retrieval,report]"` (what `make install` runs). If the
+# package is ever installed away from its data, point TINYACE_DATA_ROOT at the
 # directory containing data/tasks/.
 
 [project.urls]

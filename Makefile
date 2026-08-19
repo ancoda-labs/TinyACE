@@ -1,31 +1,31 @@
-# TinyACE — common tasks.
+# TinyACE-Nepali — common tasks.
 #
 #   make install    development install with all extras
+#   make data       fetch and verify the Belebele language files
 #   make test       run the test suite
 #   make check      test + lint + format check (what CI runs)
-#   make smoke      end-to-end pipeline check on a tiny model
-#   make grid       full evaluation grid, seeded
+#   make screen     Nepali screening run; gates entry to the main grid
+#   make grid       every arm, both languages, one seed
+#   make report     aggregate, then test every delta for significance
+#   make clean      remove caches and build artifacts
 #
-# A multi-seed study needs one results root per seed, because the layout has
-# no seed segment:
+# A multi-seed study needs one results root per seed, because the layout has no
+# seed segment:
 #   make grid SEED=42 RESULTS=results/seed42
 #   make grid SEED=43 RESULTS=results/seed43
-#   make adapt      stage 1: build playbooks on the adaptation split
-#   make evaluate   stage 2: score read-only on the test split
-#   make report     aggregate results, then test every delta for significance
-#   make figures    paper figures
-#   make clean      remove caches and build artifacts
 
 SEED    ?= 42
 RESULTS ?= results
-FIGURES ?= figures
-CONFIG  ?= configs/experiment_grid.yaml
+DEVICE  ?= cuda
 PY      ?= python
 
-.PHONY: install test check lint format smoke grid adapt evaluate report figures clean
+.PHONY: install data test check lint format screen grid report clean
 
 install:
-	$(PY) -m pip install -e ".[dev,metrics,plots]"
+	$(PY) -m pip install -e ".[dev,retrieval,report]"
+
+data:
+	$(PY) -m scripts.fetch_belebele
 
 test:
 	$(PY) -m pytest tests/ -v
@@ -39,30 +39,20 @@ format:
 check: test lint
 	$(PY) -m black --check --target-version py311 src/ scripts/ tests/
 
-smoke:
-	$(PY) -m scripts.smoke_test
+# Pre-registered gate: a model enters the grid only if the lower bound of its
+# Wilson interval on Nepali clears the floor. Point estimates near chance are
+# not evidence at this sample size.
+screen:
+	$(PY) -m scripts.screen_models --seed $(SEED) --device $(DEVICE) --results-root $(RESULTS)
 
 grid:
-	$(PY) -m scripts.run_eval_grid --config $(CONFIG) --seed $(SEED) --results-root $(RESULTS)
+	$(PY) -m scripts.run_grid --seed $(SEED) --device $(DEVICE) --results-root $(RESULTS)
 
-# The protocol in docs/evaluation.md, in the order it has to run: build a
-# playbook on the adaptation split, then score read-only on the test split.
-# The frozen arm reads what `adapt` leaves behind, so running `evaluate` first
-# has nothing to freeze.
-adapt:
-	$(PY) -m scripts.run_eval_grid --config $(CONFIG) --seed $(SEED) --results-root $(RESULTS) --only-task sciq_val
-
-evaluate:
-	$(PY) -m scripts.run_eval_grid --config $(CONFIG) --seed $(SEED) --results-root $(RESULTS) --only-task sciq_test
-
-# Aggregation prints run-health warnings; compare_arms is what decides whether
-# a difference is a result. Never report a delta that has not been through it.
+# compare_arms is what decides whether a difference is a result. Never report a
+# delta that has not been through it.
 report:
 	$(PY) -m scripts.aggregate_results --results-root $(RESULTS)
 	$(PY) -m scripts.compare_arms --results-root $(RESULTS)
-
-figures:
-	$(PY) -m scripts.make_figures --results_dir $(RESULTS) --output_dir $(FIGURES)
 
 clean:
 	rm -rf .pytest_cache .coverage htmlcov build dist *.egg-info
