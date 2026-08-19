@@ -234,8 +234,3 @@ def model_label(model_id: str) -> str:
         if pattern in lowered:
             return label
     return str(model_id).split("/")[-1]
-
-
-def task_label(task_name: str) -> str:
-    """Short display name for a task."""
-    return str(task_name).replace("_tiny", "").replace("_", " ").strip()

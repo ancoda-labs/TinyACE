@@ -25,7 +25,6 @@ from edge_slm_ace.reporting.schema import (
     is_ablation,
     model_label,
     reference_for,
-    task_label,
 )
 
 __all__ = [
@@ -48,5 +47,4 @@ __all__ = [
     "parse_cell",
     "reference_for",
     "summarize_predictions",
-    "task_label",
 ]
