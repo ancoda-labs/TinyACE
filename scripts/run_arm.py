@@ -94,6 +94,32 @@ def parse_args(argv=None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def playbook_tokenizer(lm, scorer) -> object:
+    """
+    The tokenizer the playbook should count its entries with.
+
+    Entry token counts fall back to `words * 1.3` when no tokenizer is given,
+    and no entrypoint ever passed one -- so every `total_tokens` in
+    `adaptation_log.csv` and every `playbook_tokens` in `metrics.json` was that
+    estimate. On English it is roughly right. On Nepali it is out by a factor of
+    about six, because the heuristic counts words and Devanagari fertility is
+    precisely a fact about tokens per word.
+
+    That is the quantity `tinyace_equal_lessons` exists to measure, so counting
+    it with a fertility-blind estimate reports the absence of the effect the arm
+    is looking for.
+
+    Returns:
+        A HuggingFace tokenizer, or None when no model is loaded in this
+        process -- in which case the estimate stands and `metrics.json` says so.
+    """
+    for source in (lm, getattr(scorer, "lm", None)):
+        tokenizer = getattr(source, "tokenizer", None)
+        if tokenizer is not None and hasattr(tokenizer, "encode"):
+            return tokenizer
+    return None
+
+
 def scoring_params(args: argparse.Namespace) -> ScoringParams:
     """
     The retention-score configuration this arm runs under.
@@ -153,14 +179,11 @@ def main(argv=None, lm=None) -> int:
     needs_playbook = args.arm not in NO_PLAYBOOK_ARMS
     scorer = None
     scoring = scoring_params(args)
-    playbook = Playbook(scoring_params=scoring)
     adapt_summary = None
 
-    if needs_playbook and args.init_playbook:
-        playbook = Playbook.load(args.init_playbook, scoring_params=scoring)
-        print(f"  frozen playbook from {args.init_playbook}: {len(playbook.entries)} entries")
-
-    elif needs_playbook:
+    # The scorer is built before the playbook, because the playbook needs its
+    # tokenizer to count entries in the units the study reports.
+    if needs_playbook and not args.init_playbook:
         # The scorer must render prompts the way this arm's evaluation will,
         # so the same flag drives both.
         scorer = OptionScorer(
@@ -170,6 +193,15 @@ def main(argv=None, lm=None) -> int:
             lm=lm,
             apply_chat_template=not args.no_chat_template,
         )
+
+    tokenizer = playbook_tokenizer(lm, scorer)
+    playbook = Playbook(scoring_params=scoring, tokenizer=tokenizer)
+
+    if needs_playbook and args.init_playbook:
+        playbook = Playbook.load(args.init_playbook, scoring_params=scoring, tokenizer=tokenizer)
+        print(f"  frozen playbook from {args.init_playbook}: {len(playbook.entries)} entries")
+
+    elif needs_playbook:
         print("  adapting...")
         adapt_summary = adapt_playbook(
             scorer,
@@ -205,6 +237,15 @@ def main(argv=None, lm=None) -> int:
         print(
             "Warning: the playbook is empty, so this arm is identical to "
             "scaffold_control. Do not report it as an ACE arm.",
+            file=sys.stderr,
+        )
+
+    if needs_playbook and tokenizer is None:
+        print(
+            "Warning: no tokenizer available, so playbook token counts are the "
+            "words * 1.3 estimate. That estimate is fertility-blind -- it is out "
+            "by roughly 6x on Devanagari -- so playbook_tokens must not be "
+            "compared across languages for this run.",
             file=sys.stderr,
         )
 
@@ -271,6 +312,9 @@ def main(argv=None, lm=None) -> int:
             args.relevance_weight > 0 and LessonRelevance.get_instance().available
         ),
         "relevance_encoder": LessonRelevance.get_instance().encoder_name,
+        # False means playbook token counts are the words * 1.3 estimate, which
+        # is fertility-blind and therefore not comparable across languages.
+        "token_counts_exact": tokenizer is not None,
         "apply_chat_template": not args.no_chat_template,
         # Recorded whether this process loaded the checkpoint or run_grid did.
         # A run whose dtype is not in its metadata cannot be reproduced, and

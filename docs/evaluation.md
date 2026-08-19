@@ -143,6 +143,23 @@ and must not be reported as one.**
 not query-conditioned, whatever `--relevance-weight` was set to.
 `aggregate_results` warns; `metrics.json` also records which encoder was used.
 
+### Token counts
+
+`token_counts_exact: false` in `metrics.json` means the playbook counted its
+entries with the `words * 1.3` estimate rather than the run's tokenizer, because
+no model was loaded in that process.
+
+Words per lesson is roughly language-independent. Devanagari fertility is
+*tokens per word* — so the estimate cannot see it, and reports a Nepali lesson
+as **cheaper** than the English one it was translated from. Measured against
+Qwen2.5 the estimate is out by about 6× on Nepali and about 1× on English, which
+turns a 4.5× cost ratio into 0.58×.
+
+Every `playbook_tokens` and every `total_tokens` in `adaptation_log.csv` is
+affected. `tinyace_equal_lessons` is the arm this invalidates outright, since
+prefix cost in tokens is the whole quantity it compares. `aggregate_results`
+warns.
+
 ### Item-set mismatch
 
 `harness_indices` maps positions in the committed jsonl; the harness loads the
@@ -192,6 +209,8 @@ loader can seed away.
 - [ ] `n_discordant` is reported alongside `n`.
 - [ ] Truncation is zero on every arm in the table, or the table says so.
 - [ ] `relevance_active` is true, or the limitation is stated.
+- [ ] `token_counts_exact` is true on every run whose token counts are compared
+      across languages.
 - [ ] The seed and commit are stated, and multi-seed runs report spread.
 - [ ] Any position-bias claim accounts for gold position being fixed, not
       permuted.

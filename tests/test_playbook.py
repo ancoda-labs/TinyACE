@@ -882,3 +882,60 @@ class TestDevanagariLessons:
         playbook.save(tmp_path / "playbook.jsonl")
 
         assert Playbook.load(tmp_path / "playbook.jsonl").entries[0].text == self.NEPALI
+
+
+class _FertileTokenizer:
+    """Stands in for a real tokenizer: many tokens per Devanagari word.
+
+    A Latin word is one token; a Devanagari word is eight. That is the shape of
+    the effect, not the exact ratio -- Qwen2.5 puts a Nepali lesson at about
+    6.5x its `words * 1.3` estimate and an English one at about 1.0x.
+    """
+
+    def encode(self, text, add_special_tokens=False):
+        count = 0
+        for word in text.split():
+            count += 8 if any(ord(c) > 0x0900 for c in word) else 1
+        return [0] * max(1, count)
+
+
+class TestTokenCountsMeasureFertility:
+    """The `words * 1.3` estimate cannot see the thing the study is about.
+
+    Token counts fall back to that estimate when no tokenizer is given, and no
+    entrypoint passed one, so every `playbook_tokens` was word-based. Words per
+    lesson is roughly language-independent; tokens per word is exactly what
+    Devanagari fertility is. The estimate therefore reported Nepali lessons as
+    *cheaper* than English ones, inverting the effect `tinyace_equal_lessons`
+    is built to measure.
+    """
+
+    EN = "Reject an option that is true in general but is not stated"
+    NE = "अनुच्छेदमा नभनिएको तर सामान्यतया सत्य लाग्ने विकल्पलाई अस्वीकार गर्नुहोस्"
+
+    def test_the_estimate_makes_nepali_look_cheaper(self):
+        playbook = Playbook()
+        playbook.add_entry("en", self.EN, step=1)
+        playbook.add_entry("ne", self.NE, step=1)
+        assert playbook.get_domain_tokens("ne") < playbook.get_domain_tokens("en")
+
+    def test_a_real_tokenizer_makes_nepali_more_expensive(self):
+        playbook = Playbook(tokenizer=_FertileTokenizer())
+        playbook.add_entry("en", self.EN, step=1)
+        playbook.add_entry("ne", self.NE, step=1)
+        assert playbook.get_domain_tokens("ne") > playbook.get_domain_tokens("en")
+
+    def test_a_tokenizer_counts_entries_added_later_too(self):
+        playbook = Playbook(tokenizer=_FertileTokenizer())
+        playbook.add_entry("ne", self.NE, step=1)
+        estimate = PlaybookEntry(id="x", domain="ne", text=self.NE).token_count
+        assert playbook.entries[0].token_count != estimate
+
+    def test_a_loaded_playbook_is_recounted(self, tmp_path):
+        path = tmp_path / "playbook.jsonl"
+        source = Playbook()
+        source.add_entry("ne", self.NE, step=1)
+        source.save(path)
+
+        reloaded = Playbook.load(path, tokenizer=_FertileTokenizer())
+        assert reloaded.entries[0].token_count > source.entries[0].token_count

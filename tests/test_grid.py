@@ -206,3 +206,50 @@ class TestUnscorableRunWritesNothing:
         assert not (tmp_path / "metrics.json").exists()
         assert not (tmp_path / "predictions.jsonl").exists()
         assert is_complete(tmp_path, 42, None) is False
+
+
+class TestPlaybookGetsARealTokenizer:
+    """run_arm must hand the playbook the tokenizer of the model it ran.
+
+    Nothing passed one, so entry token counts were always `words * 1.3` --
+    fertility-blind, and therefore blind to the effect the study is about.
+    """
+
+    def picker(self):
+        from scripts.run_arm import playbook_tokenizer
+
+        return playbook_tokenizer
+
+    def test_it_takes_the_tokenizer_off_a_reused_model(self):
+        class Tok:
+            def encode(self, text, add_special_tokens=False):
+                return [0]
+
+        class LM:
+            tokenizer = Tok()
+
+        lm = LM()
+        assert self.picker()(lm, None) is lm.tokenizer
+
+    def test_it_falls_back_to_the_scorers_model(self):
+        class Tok:
+            def encode(self, text, add_special_tokens=False):
+                return [0]
+
+        class LM:
+            tokenizer = Tok()
+
+        class Scorer:
+            lm = LM()
+
+        scorer = Scorer()
+        assert self.picker()(None, scorer) is scorer.lm.tokenizer
+
+    def test_no_model_means_no_tokenizer_rather_than_a_broken_one(self):
+        assert self.picker()(None, None) is None
+
+    def test_an_object_without_encode_is_not_accepted(self):
+        class LM:
+            tokenizer = object()
+
+        assert self.picker()(LM(), None) is None

@@ -41,6 +41,7 @@ _RUN_COLUMNS = [
     "truncation_rate",
     "tokens_dropped",
     "relevance_active",
+    "token_counts_exact",
     "playbook_size",
 ]
 
@@ -80,6 +81,20 @@ def print_health_warnings(runs: pd.DataFrame) -> None:
             print(
                 f"  WARNING {len(inactive)} run(s) had no embedding backend, so "
                 f"retrieval was not query-conditioned",
+                file=sys.stderr,
+            )
+
+    # Estimated token counts are word-based, and words per lesson is roughly
+    # language-independent. Devanagari fertility is tokens per word, so an
+    # estimated count cannot see it -- it reports Nepali lessons as cheaper than
+    # English ones, which is the effect with its sign reversed.
+    if "token_counts_exact" in runs.columns:
+        estimated = runs[runs["token_counts_exact"] == False]  # noqa: E712
+        if not estimated.empty:
+            print(
+                f"  WARNING {len(estimated)} run(s) counted playbook tokens with "
+                f"the words * 1.3 estimate, which is fertility-blind -- do not "
+                f"compare their playbook_tokens across languages",
                 file=sys.stderr,
             )
 
