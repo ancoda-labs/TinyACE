@@ -13,6 +13,7 @@ from edge_slm_ace.reporting import (
     arm_label,
     arm_order,
     cell_dir,
+    get_arm,
     is_ablation,
     load_predictions,
     load_run_metrics,
@@ -283,3 +284,48 @@ class TestPairingAgainstReferences:
 
         for reference, arm in pairs:
             assert parse_cell(reference).language == parse_cell(arm).language
+
+
+class TestEveryRegisteredArmCanBeProduced:
+    """
+    Six arms were registered with labels and reference arms and no way to run
+    them. Four needed only a CLI flag for a ScoringParams field that already
+    existed; two need evaluation paths this project does not have. `run_arm`
+    accepted any of the keys and wrote a result identical to another arm under
+    that arm's label, which is worse than the arm being absent.
+    """
+
+    def test_the_grid_only_contains_implementable_arms(self):
+        from scripts.run_grid import GRID
+
+        for spec in GRID:
+            arm = get_arm(spec.key)
+            assert arm is not None, f"{spec.key} is not registered"
+            assert arm.implemented, f"{spec.key} has no runner"
+
+    def test_run_arm_has_a_flag_for_every_scoring_ablation(self):
+        """The registry's delta/gamma/beta/FIFO arms must be reachable."""
+        from scripts.run_arm import parse_args, scoring_params
+
+        for flag, field in (
+            ("--disable-vagueness-penalty", "disable_vagueness_penalty"),
+            ("--disable-recency-decay", "disable_recency_decay"),
+            ("--disable-failure-penalty", "disable_failure_penalty"),
+            ("--fifo-memory", "fifo_memory"),
+        ):
+            args = parse_args(
+                ["--model", "m", "--language", "ne", "--arm", "tinyace", "--output-dir", ".", flag]
+            )
+            assert getattr(scoring_params(args), field) is True
+
+    def test_the_grid_covers_every_implemented_ace_arm(self):
+        from scripts.run_grid import GRID
+
+        planned = {spec.key for spec in GRID}
+        for arm in ARMS:
+            if arm.implemented and arm.family in ("ace", "control", "reference"):
+                assert arm.key in planned, f"{arm.key} is runnable but not in the grid"
+
+    def test_an_unimplemented_arm_is_marked_as_such(self):
+        assert not get_arm("tinyace_retrieval").implemented
+        assert not get_arm("generative_cot").implemented

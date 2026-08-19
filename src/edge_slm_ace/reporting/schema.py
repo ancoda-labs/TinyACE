@@ -34,12 +34,17 @@ class Arm:
         family: Grouping for plots -- "reference", "control", "ace" or
             "refine".
         note: Why the arm exists, shown in generated documentation.
+        implemented: False for an arm that is designed but has no runner. A
+            registered arm with no way to produce it is worse than an absent
+            one: `run_arm` accepted the key and wrote a result identical to
+            another arm under this arm's label. It now refuses instead.
     """
 
     key: str
     label: str
     family: str
     note: str = ""
+    implemented: bool = True
 
 
 # The registry. Order is the display order in figures and tables.
@@ -65,8 +70,9 @@ ARMS: List[Arm] = [
         "TinyACE (retrieved)",
         "ace",
         "Per-question retrieval from the frozen playbook. Needs per-item "
-        "scoring rather than a static prefix, so it runs through the scorer "
-        "path rather than simple_evaluate.",
+        "scoring rather than a static prefix, so it cannot go through "
+        "simple_evaluate and has no runner yet.",
+        implemented=False,
     ),
     Arm(
         "tinyace_playbook_en",
@@ -109,7 +115,9 @@ ARMS: List[Arm] = [
         "generative",
         "Secondary track: the model generates reasoning and an answer, scored by "
         "a letter/option-text cascade. The only track where chain-of-thought is "
-        "possible, and where the generative-vs-loglik gap is measured.",
+        "possible, and where the generative-vs-loglik gap is measured. No runner "
+        "yet -- it needs a scoring path this project does not own.",
+        implemented=False,
     ),
 ]
 
@@ -126,6 +134,11 @@ DEFAULT_REFERENCE: Dict[str, str] = {
 }
 
 ABLATION_REFERENCE = "tinyace"
+
+
+def implemented_arms() -> List[Arm]:
+    """Arms a runner can actually produce."""
+    return [arm for arm in ARMS if arm.implemented]
 
 
 def get_arm(key: str) -> Optional[Arm]:

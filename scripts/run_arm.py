@@ -67,6 +67,18 @@ def parse_args(argv=None) -> argparse.Namespace:
     )
     p.add_argument("--no-curator", action="store_true")
     p.add_argument("--relevance-weight", type=float, default=0.5)
+    # The retention-score ablations. Each zeroes one term of the equation in
+    # reporting/schema.py, and each has a registered arm. They had no CLI at
+    # all, so four of the arms the registry advertises could not be produced.
+    p.add_argument("--disable-vagueness-penalty", action="store_true", help="delta = 0")
+    p.add_argument("--disable-recency-decay", action="store_true", help="gamma = 0")
+    p.add_argument("--disable-failure-penalty", action="store_true", help="beta = 0")
+    p.add_argument(
+        "--fifo-memory",
+        action="store_true",
+        help="Evict oldest-first instead of lowest-score. Eviction only: "
+        "retrieval still ranks by retention, so the ablation isolates one thing.",
+    )
     p.add_argument("--playbook-domain", default=None, help="Override the lesson domain")
     p.add_argument(
         "--no-chat-template",
@@ -74,6 +86,23 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="Score as raw completion. Only correct for a base (non-instruct) model.",
     )
     return p.parse_args(argv)
+
+
+def scoring_params(args: argparse.Namespace) -> ScoringParams:
+    """
+    The retention-score configuration this arm runs under.
+
+    Built in one place so the adapted playbook and the reloaded one cannot end
+    up under different parameters, and so `metrics.json` records what actually
+    ran rather than the defaults.
+    """
+    return ScoringParams(
+        relevance_weight=args.relevance_weight,
+        disable_vagueness_penalty=args.disable_vagueness_penalty,
+        disable_recency_decay=args.disable_recency_decay,
+        disable_failure_penalty=args.disable_failure_penalty,
+        fifo_memory=args.fifo_memory,
+    )
 
 
 def main(argv=None, lm=None) -> int:
@@ -86,6 +115,16 @@ def main(argv=None, lm=None) -> int:
         print(
             f"Error: '{args.arm}' is not a registered arm. Register it in "
             f"reporting/schema.py so it gets a label and a reference arm.",
+            file=sys.stderr,
+        )
+        return 1
+
+    arm = get_arm(args.arm)
+    if not arm.implemented:
+        print(
+            f"Error: '{args.arm}' is registered but not implemented -- {arm.note} "
+            f"Running it here would produce a result identical to another arm "
+            f"under this arm's label.",
             file=sys.stderr,
         )
         return 1
@@ -107,12 +146,13 @@ def main(argv=None, lm=None) -> int:
 
     needs_playbook = args.arm not in NO_PLAYBOOK_ARMS
     scorer = None
-    playbook = Playbook(scoring_params=ScoringParams(relevance_weight=args.relevance_weight))
+    scoring = scoring_params(args)
+    playbook = Playbook(scoring_params=scoring)
     adapt_summary = None
 
     if needs_playbook and args.init_playbook:
         playbook = Playbook.load(args.init_playbook)
-        playbook.scoring_params = ScoringParams(relevance_weight=args.relevance_weight)
+        playbook.scoring_params = scoring
         print(f"  frozen playbook from {args.init_playbook}: {len(playbook.entries)} entries")
 
     elif needs_playbook:

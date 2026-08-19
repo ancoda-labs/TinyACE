@@ -70,6 +70,13 @@ GRID: List[ArmSpec] = [
     # These change adaptation, so they adapt.
     ArmSpec("tinyace_ablate_no_curator", adapts=True, flags=["--no-curator"]),
     ArmSpec("tinyace_ablate_no_relevance", adapts=True, flags=["--relevance-weight", "0"]),
+    # Retention-score ablations. Each zeroes one term of the equation, so each
+    # has to build its own playbook: the term is used during adaptation, not
+    # only when the prefix is frozen.
+    ArmSpec("tinyace_ablate_no_vagueness", adapts=True, flags=["--disable-vagueness-penalty"]),
+    ArmSpec("tinyace_ablate_no_recency", adapts=True, flags=["--disable-recency-decay"]),
+    ArmSpec("tinyace_ablate_no_failure", adapts=True, flags=["--disable-failure-penalty"]),
+    ArmSpec("tinyace_fifo", adapts=True, flags=["--fifo-memory"]),
 ]
 
 
@@ -162,6 +169,15 @@ def main(argv=None) -> int:
     unregistered = sorted({j["arm"].key for j in jobs if get_arm(j["arm"].key) is None})
     if unregistered:
         print(f"Error: unregistered arms: {', '.join(unregistered)}", file=sys.stderr)
+        return 1
+    unimplemented = sorted({j["arm"].key for j in jobs if not get_arm(j["arm"].key).implemented})
+    if unimplemented:
+        print(
+            f"Error: no runner for: {', '.join(unimplemented)}. Remove them "
+            f"from GRID or implement them; running one writes another arm's "
+            f"result under its label.",
+            file=sys.stderr,
+        )
         return 1
 
     print(
