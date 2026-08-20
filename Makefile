@@ -8,6 +8,7 @@
 #   make grid       every arm, both languages, one seed
 #   make report     aggregate, then test every delta for significance
 #                   (STRICT=1 also fails on an invalidating health issue)
+#   make mutants    check the tests would catch a change, not just describe one
 #   make clean      remove caches and build artifacts
 #
 # A multi-seed study needs one results root per seed, because the layout has no
@@ -20,7 +21,7 @@ RESULTS ?= results
 DEVICE  ?= cuda
 PY      ?= python
 
-.PHONY: install data test check lint format screen grid report clean
+.PHONY: install data test check lint format screen grid report mutants clean
 
 install:
 	$(PY) -m pip install -e ".[dev,retrieval,report]"
@@ -60,6 +61,13 @@ grid:
 report:
 	$(PY) -m scripts.aggregate_results --results-root $(RESULTS) $(if $(STRICT),--strict)
 	$(PY) -m scripts.compare_arms --results-root $(RESULTS)
+
+# Do the tests actually catch a change, or only describe one? Flips a
+# comparison, moves a constant, swaps a boolean, and checks the paired tests
+# fail. A surviving mutation is a line nothing is holding. Minutes, not seconds
+# -- not part of `make check`.
+mutants:
+	$(PY) -m scripts.mutation_check
 
 clean:
 	rm -rf .pytest_cache .coverage htmlcov build dist *.egg-info
