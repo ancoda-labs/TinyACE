@@ -184,6 +184,79 @@ class TestANonTerminatingMutantIsCaught:
         assert mc.DEFAULT_TIMEOUT > 0
 
 
+class TestSurvivorsAreConfirmedAgainstTheWholeSuite:
+    """A shared function is often pinned by its consumer's tests, not its own.
+
+    Inverting the Curator's verdict -- `== "true"` to `!= "true"`, which flips
+    every decision about what enters the playbook -- sails past
+    test_ace_roles.py and fails five tests in test_adapt.py. Reporting it as "a
+    line nothing is holding" was simply untrue, and it moved ace_roles from a
+    false 30% to a true 59%.
+    """
+
+    def test_a_mutation_held_elsewhere_is_not_a_survivor(self, monkeypatch):
+        import scripts.mutation_check as mc
+
+        calls = []
+
+        def responses(test_paths, source_root, timeout=60):
+            calls.append(list(test_paths))
+            if test_paths == ["tests/"]:
+                return False, ""  # the wider suite catches it
+            return True, "1 passed"  # the paired file does not
+
+        monkeypatch.setattr(mc, "run_tests", responses)
+        monkeypatch.setattr(mc, "baseline_problem", lambda *a, **k: None)
+        monkeypatch.setattr(mc, "mutations", lambda path: [Mutation(1, "Eq -> NotEq", "x = 1")])
+
+        killed, total, survivors = mc.check("ace_roles", confirm=True)
+        assert (killed, total, survivors) == (1, 1, [])
+        assert ["tests/"] in calls, "the wider suite was never consulted"
+
+    def test_a_mutation_nothing_holds_is_a_survivor(self, monkeypatch):
+        import scripts.mutation_check as mc
+
+        monkeypatch.setattr(mc, "run_tests", lambda t, s, timeout=60: (True, "1 passed"))
+        monkeypatch.setattr(mc, "baseline_problem", lambda *a, **k: None)
+        monkeypatch.setattr(mc, "mutations", lambda path: [Mutation(1, "Eq -> NotEq", "x = 1")])
+
+        killed, total, survivors = mc.check("ace_roles", confirm=True)
+        assert killed == 0 and len(survivors) == 1
+
+    def test_confirmation_is_skipped_when_turned_off(self, monkeypatch):
+        import scripts.mutation_check as mc
+
+        calls = []
+
+        def responses(test_paths, source_root, timeout=60):
+            calls.append(list(test_paths))
+            return True, "1 passed"
+
+        monkeypatch.setattr(mc, "run_tests", responses)
+        monkeypatch.setattr(mc, "baseline_problem", lambda *a, **k: None)
+        monkeypatch.setattr(mc, "mutations", lambda path: [Mutation(1, "Eq -> NotEq", "x = 1")])
+
+        mc.check("ace_roles", confirm=False)
+        assert ["tests/"] not in calls
+
+    def test_a_mutation_the_paired_file_catches_never_reaches_the_suite(self, monkeypatch):
+        """Confirmation costs a full-suite run, so only survivors pay it."""
+        import scripts.mutation_check as mc
+
+        calls = []
+
+        def responses(test_paths, source_root, timeout=60):
+            calls.append(list(test_paths))
+            return False, ""
+
+        monkeypatch.setattr(mc, "run_tests", responses)
+        monkeypatch.setattr(mc, "baseline_problem", lambda *a, **k: None)
+        monkeypatch.setattr(mc, "mutations", lambda path: [Mutation(1, "Eq -> NotEq", "x = 1")])
+
+        mc.check("ace_roles", confirm=True)
+        assert ["tests/"] not in calls
+
+
 class TestTargets:
     @pytest.mark.parametrize("name", sorted(TARGETS))
     def test_each_target_names_files_that_exist(self, name):

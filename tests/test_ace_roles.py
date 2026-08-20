@@ -3,6 +3,7 @@
 import pytest
 
 from edge_slm_ace.core.ace_roles import (
+    parse_curator_output,
     choose_lessons_for_playbook,
     build_curator_prompt,
     parse_reflector_output_to_lessons,
@@ -154,6 +155,38 @@ class TestCuratorScreensReadingStrategies:
         for lesson in ("Consider what the passage states about the claim",):
             assert compute_vagueness_score(lesson) < 0.6
             assert choose_lessons_for_playbook("d", [lesson], Playbook()) == [lesson]
+
+
+class TestCuratorParseFailureKeepsTheLesson:
+    """What an unreadable Curator verdict decides, and that it is deliberate.
+
+    `parse_curator_output` seeds its flags with False, so a verdict it cannot
+    parse keeps every lesson -- the Curator goes quiet rather than emptying the
+    playbook. Seeding True is a one-character change with the opposite effect
+    and no test objected to it, which `make mutants` found.
+
+    It is not a hypothetical input: a small or randomly-initialised model
+    answers the Curator with prose that matches nothing, and the CI smoke test
+    on tiny-gpt2 produces exactly that.
+    """
+
+    def test_unparseable_output_keeps_every_lesson(self):
+        assert parse_curator_output(3, "blah blah nonsense") == [False, False, False]
+
+    def test_empty_output_keeps_every_lesson(self):
+        assert parse_curator_output(2, "") == [False, False]
+
+    def test_a_partial_verdict_only_decides_the_lessons_it_names(self):
+        """One parsed line must not imply anything about the others."""
+        assert parse_curator_output(3, "Lesson 2: is_generic=True") == [False, True, False]
+
+    def test_an_out_of_range_lesson_number_is_ignored(self):
+        assert parse_curator_output(2, "Lesson 7: is_generic=True") == [False, False]
+        assert parse_curator_output(2, "Lesson 0: is_generic=True") == [False, False]
+
+    def test_the_verdict_is_read_the_right_way_round(self):
+        assert parse_curator_output(1, "Lesson 1: is_generic=True") == [True]
+        assert parse_curator_output(1, "Lesson 1: is_generic=False") == [False]
 
 
 class TestReflectorParserRejectsNonLessons:

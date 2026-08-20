@@ -281,7 +281,10 @@ def baseline_problem(
 
 
 def check(
-    name: str, verbose: bool = False, timeout: int = DEFAULT_TIMEOUT
+    name: str,
+    verbose: bool = False,
+    timeout: int = DEFAULT_TIMEOUT,
+    confirm: bool = True,
 ) -> Tuple[int, int, List[Mutation]]:
     """
     Mutate one module and report which edits the tests did not notice.
@@ -290,6 +293,8 @@ def check(
         name: A key of TARGETS.
         verbose: Print each mutant as it is decided.
         timeout: Per-mutant seconds before the run is abandoned.
+        confirm: Re-run anything the paired tests missed against the whole
+            suite, so a survivor means no test anywhere holds the line.
 
     Returns:
         (killed, total, survivors).
@@ -321,6 +326,15 @@ def check(
         for index, mutation in enumerate(all_mutations, 1):
             mutated_path.write_text(mutation.source, encoding="utf-8")
             survived, _ = run_tests(test_paths, source_root, timeout)
+            if survived and confirm:
+                # The paired file did not catch it. Before calling the line
+                # unheld, ask the rest of the suite -- a shared function is
+                # often pinned by its consumer's tests rather than its own.
+                # `parse_curator_output` is: inverting the Curator's verdict
+                # sails past test_ace_roles.py and fails five tests in
+                # test_adapt.py. Reporting that as "nothing is holding this
+                # line" would have been simply untrue.
+                survived, _ = run_tests(["tests/"], source_root, timeout * 4)
             if survived:
                 survivors.append(mutation)
             else:
@@ -348,6 +362,13 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--module", action="append", choices=sorted(TARGETS), help="Default: all")
     p.add_argument("--list", action="store_true", help="Print the pairings and stop")
     p.add_argument("--verbose", action="store_true", help="Print every mutant")
+    p.add_argument(
+        "--no-confirm",
+        action="store_true",
+        help="Do not re-check survivors against the whole suite. Faster, but "
+        "a survivor then only means the paired file missed it, which for a "
+        "shared function is often held by its consumer's tests instead.",
+    )
     p.add_argument(
         "--timeout",
         type=int,
@@ -380,7 +401,9 @@ def main(argv=None) -> int:
     for name in names:
         source, _ = TARGETS[name]
         print(f"\n{name} ({source})")
-        killed, count, survivors = check(name, verbose=args.verbose, timeout=args.timeout)
+        killed, count, survivors = check(
+            name, verbose=args.verbose, timeout=args.timeout, confirm=not args.no_confirm
+        )
         total_killed += killed
         total_count += count
         total_survivors.extend((name, m) for m in survivors)
@@ -396,9 +419,10 @@ def main(argv=None) -> int:
         f"{total_killed}/{total_count} mutations caught ({score:.0%}) across {len(names)} module(s)"
     )
     if total_survivors:
+        scope = "no test in the suite" if not args.no_confirm else "the paired tests"
         print(
-            f"{len(total_survivors)} survived. Each is a line whose behaviour can "
-            f"change with no test objecting -- not necessarily a bug, but not "
+            f"{len(total_survivors)} survived: {scope} objected to the change. "
+            f"Not necessarily a bug -- some are equivalent mutants -- but not "
             f"covered either."
         )
 
