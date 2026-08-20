@@ -67,6 +67,26 @@ reproduced before it was fixed and is covered by a test.
   invalidating issue. Opt-in, because a non-zero aggregate stops make before
   compare_arms runs.
 
+**Verifying that the tests catch things**
+
+- `make mutants` (`scripts/mutation_check.py`) flips a comparison, moves a
+  constant or swaps a boolean and checks the paired tests fail. CONTRIBUTING's
+  first rule — "add a test that fails without the change" — is the one rule here
+  that cannot be verified by reading, and every defect above sat in a green
+  suite.
+- Baseline at the time of writing: **242/422 mutations caught (57%)**.
+  schema 90%, belebele 79%, relevance 69%, ace_roles 67%, health 67%, stats 66%,
+  playbook 47%, adapt 35% → 48% after the tests below. Many survivors are
+  timing arithmetic or parameter defaults; the score is a map of where the suite
+  is thin, not a target.
+- Gaps it found and that are now pinned: `parse_curator_output` seeds its flags
+  False, so an unreadable Curator verdict keeps every lesson rather than
+  emptying the playbook; `use_curator and proposed` as `or` runs the Curator
+  with `use_curator=False`, which turns `tinyace_ablate_no_curator` into
+  `tinyace` while leaving every outcome assertion satisfied; the same `and`/`or`
+  slip in `_default_generate` wraps a raw-completion run in a chat template;
+  `reflect_on_correct_every_n` had neither half of its guard pinned.
+
 **Documentation that contradicted the code**
 
 - `data/belebele.py` and `utils/repro.py` claimed option order is permuted per
