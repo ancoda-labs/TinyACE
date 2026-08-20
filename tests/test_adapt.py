@@ -60,6 +60,34 @@ def stub_generate(reflection=LESSON, curation=CURATOR_KEEP):
     return generate
 
 
+class RecordingGenerate:
+    """A stub that remembers which role it was asked to play.
+
+    Asserting on the *outcome* of a disabled Curator cannot tell it from a
+    Curator that ran and kept everything -- both leave zero rejections and the
+    lesson stored. Only the call record separates them.
+    """
+
+    def __init__(self, reflection=LESSON, curation=CURATOR_KEEP):
+        self.reflection = reflection
+        self.curation = curation
+        self.prompts = []
+
+    def __call__(self, prompt, max_new_tokens):
+        self.prompts.append(prompt)
+        if "Curator" in prompt:
+            return self.curation
+        return self.reflection
+
+    @property
+    def curator_calls(self):
+        return [p for p in self.prompts if "Curator" in p]
+
+    @property
+    def reflector_calls(self):
+        return [p for p in self.prompts if "Curator" not in p]
+
+
 def run(picks, playbook=None, **kwargs):
     examples = make_examples(len(picks))
     scorer = StubScorer(picks)
@@ -117,6 +145,127 @@ class TestCurator:
         out, playbook, _ = run([1, 0, 0, 0], use_curator=False)
         assert out["lessons_rejected_by_curator"] == 0
         assert len(playbook.entries) == 1
+
+    def test_disabling_the_curator_stops_it_being_called(self):
+        """`tinyace_ablate_no_curator` is a registered arm; this is what it is.
+
+        Asserting zero rejections does not establish it. `use_curator and
+        proposed` changed to `or` runs the Curator with use_curator=False, and
+        the keep-everything stub then leaves the same zero rejections and the
+        same stored lesson -- the outcome assertions cannot see the difference.
+        Only the call record can.
+        """
+        generate = RecordingGenerate()
+        run([1, 0, 0, 0], use_curator=False, generate=generate)
+
+        assert generate.reflector_calls, "the Reflector must still run"
+        assert generate.curator_calls == [], "the Curator ran with use_curator=False"
+
+    def test_enabling_the_curator_does_call_it(self):
+        generate = RecordingGenerate()
+        run([1, 0, 0, 0], use_curator=True, generate=generate)
+        assert generate.curator_calls, "the Curator never ran with use_curator=True"
+
+    def test_the_curator_is_not_called_when_nothing_was_proposed(self):
+        """No candidates means no verdict to ask for -- and no generation to pay for."""
+        generate = RecordingGenerate(reflection="too short")
+        run([1, 0, 0, 0], use_curator=True, generate=generate)
+        assert generate.curator_calls == []
+
+    def test_the_rejected_count_is_proposed_minus_kept(self):
+        """`len(proposed) - len(curated)`, and a partial verdict is what shows it.
+
+        When the Curator rejects everything, `curated` is empty and a sum reads
+        the same as a difference -- both give len(proposed). Only a verdict that
+        keeps some and rejects others separates them.
+        """
+        two_lessons = (
+            "- Reject an option that is true in general but is not stated in the passage\n"
+            "- Eliminate an option that reverses the direction of the stated cause"
+        )
+        partial = "Lesson 1: is_generic=True\nLesson 2: is_generic=False"
+
+        out, playbook, _ = run(
+            [1, 0, 0, 0], generate=stub_generate(reflection=two_lessons, curation=partial)
+        )
+
+        first = out["log"][0]
+        assert first["lessons_proposed"] == 2
+        assert first["lessons_rejected_by_curator"] == 1, "one rejected, one kept"
+        assert len(playbook.entries) == 1
+
+
+class TestReflectOnCorrectSchedule:
+    """`reflect_on_correct_every_n` costs a generation per firing.
+
+    The guard is `n and step % n == 0`. Nothing pinned either half, so the
+    feature could have fired on every step, or never, without a test objecting.
+    """
+
+    def test_zero_means_errors_only(self):
+        generate = RecordingGenerate()
+        run([0, 1, 2, 3], reflect_on_correct_every_n=0, generate=generate)
+        assert generate.reflector_calls == [], "all four were correct"
+
+    def test_it_fires_on_the_nth_correct_step_only(self):
+        out, _, _ = run([0, 1, 2, 3], reflect_on_correct_every_n=2)
+        reflected = [row["step"] for row in out["log"] if row["reflected"]]
+        assert reflected == [2, 4]
+
+    def test_every_step_when_n_is_one(self):
+        out, _, _ = run([0, 1, 2, 3], reflect_on_correct_every_n=1)
+        assert [row["step"] for row in out["log"] if row["reflected"]] == [1, 2, 3, 4]
+
+    def test_errors_still_reflect_whatever_the_schedule(self):
+        """Gold is `i % 4`, so [1, 0, 2, 3] is wrong at steps 1 and 2."""
+        out, _, _ = run([1, 0, 2, 3], reflect_on_correct_every_n=3)
+        reflected = [row["step"] for row in out["log"] if row["reflected"]]
+        assert {1, 2} <= set(reflected), "wrong answers always reflect"
+        assert 3 in reflected, "step 3 was correct and is on the schedule"
+        assert 4 not in reflected, "step 4 was correct and is off the schedule"
+
+
+class TestChatTemplateFollowsTheScorer:
+    """The Reflector prompt must be wrapped exactly when scoring wraps.
+
+    `scorer.apply_chat_template and chat_template is not None` changed to `or`
+    applies the template to a run that asked for raw completion -- which is what
+    `--no-chat-template` exists to turn off for a base checkpoint.
+    """
+
+    def scorer_with(self, apply_chat_template):
+        class LM:
+            def __init__(self):
+                self.wrapped = []
+
+            def apply_chat_template(self, messages, **kwargs):
+                self.wrapped.append(messages)
+                return "<|template|>"
+
+            def generate_until(self, requests):
+                return ["- a strategy about the passage and its options here"]
+
+        class Scorer:
+            pass
+
+        scorer = Scorer()
+        scorer.lm = LM()
+        scorer.apply_chat_template = apply_chat_template
+        return scorer
+
+    def test_the_template_is_applied_when_scoring_applies_it(self):
+        from edge_slm_ace.adapt import _default_generate
+
+        scorer = self.scorer_with(True)
+        _default_generate(scorer)("a prompt", 32)
+        assert scorer.lm.wrapped, "an instruct checkpoint was handed a raw completion"
+
+    def test_the_template_is_not_applied_when_scoring_does_not(self):
+        from edge_slm_ace.adapt import _default_generate
+
+        scorer = self.scorer_with(False)
+        _default_generate(scorer)("a prompt", 32)
+        assert scorer.lm.wrapped == [], "--no-chat-template was ignored for reflection"
 
 
 class TestRetrieval:
