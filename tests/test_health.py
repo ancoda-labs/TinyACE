@@ -8,6 +8,7 @@ throws away good data, and the reverse publishes a confound.
 """
 
 import json
+import pathlib
 
 import pytest
 
@@ -151,13 +152,29 @@ class TestCompareArmsExcludesAnInvalidatedPair:
         return tmp_path
 
     def run(self, root):
+        """Run compare_arms as the CLI it is, in a child process.
+
+        The child needs `src/` on its path explicitly: pytest's `pythonpath`
+        ini setting applies to the pytest process, not to anything it spawns.
+        Without this the test passed only when PYTHONPATH happened to be
+        exported in the shell, and failed on a bare `pytest tests/`.
+        """
+        import os
         import subprocess
         import sys as _sys
+
+        repo_root = pathlib.Path(__file__).resolve().parents[1]
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = os.pathsep.join(
+            [str(repo_root / "src"), environment.get("PYTHONPATH", "")]
+        ).rstrip(os.pathsep)
 
         return subprocess.run(
             [_sys.executable, "-m", "scripts.compare_arms", "--results-root", str(root)],
             capture_output=True,
             text=True,
+            cwd=repo_root,
+            env=environment,
         )
 
     def test_a_clean_pair_is_tested_and_can_be_significant(self, tmp_path):

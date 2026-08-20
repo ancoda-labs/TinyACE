@@ -111,27 +111,77 @@ class TestABrokenPairingIsRefusedNotScored:
     def test_all_skipped_is_a_problem(self, monkeypatch, tmp_path):
         import scripts.mutation_check as mc
 
-        monkeypatch.setattr(mc, "run_tests", lambda t, s: (True, "22 skipped in 0.02s\n"))
+        monkeypatch.setattr(
+            mc, "run_tests", lambda t, s, timeout=60: (True, "22 skipped in 0.02s\n")
+        )
         assert "no tests actually ran" in mc.baseline_problem(["tests/x.py"], tmp_path)
 
     def test_already_failing_tests_are_a_problem(self, monkeypatch, tmp_path):
         import scripts.mutation_check as mc
 
-        monkeypatch.setattr(mc, "run_tests", lambda t, s: (False, "1 failed\n"))
+        monkeypatch.setattr(mc, "run_tests", lambda t, s, timeout=60: (False, "1 failed\n"))
         assert "already fail" in mc.baseline_problem(["tests/x.py"], tmp_path)
 
     def test_a_sound_pairing_reports_no_problem(self, monkeypatch, tmp_path):
         import scripts.mutation_check as mc
 
-        monkeypatch.setattr(mc, "run_tests", lambda t, s: (True, "27 passed in 0.01s\n"))
+        monkeypatch.setattr(
+            mc, "run_tests", lambda t, s, timeout=60: (True, "27 passed in 0.01s\n")
+        )
         assert mc.baseline_problem(["tests/x.py"], tmp_path) is None
 
     def test_check_refuses_rather_than_scoring(self, monkeypatch):
         import scripts.mutation_check as mc
 
-        monkeypatch.setattr(mc, "run_tests", lambda t, s: (True, "22 skipped\n"))
+        monkeypatch.setattr(mc, "run_tests", lambda t, s, timeout=60: (True, "22 skipped\n"))
         with pytest.raises(RuntimeError, match="cannot score"):
             mc.check("health")
+
+
+class TestANonTerminatingMutantIsCaught:
+    """A mutant can make the code loop forever, and then nothing ever returns.
+
+    `while str(self._next_id) in existing_ids` mutated to `not in` never exits.
+    The tool sat on that one mutant with no output, indistinguishable from slow
+    progress. A run that has to be abandoned is not a survivor -- it is the most
+    emphatic kill available.
+    """
+
+    def test_a_timeout_counts_as_killed(self, monkeypatch, tmp_path):
+        import subprocess
+
+        import scripts.mutation_check as mc
+
+        def hang(*args, **kwargs):
+            raise subprocess.TimeoutExpired(cmd="pytest", timeout=kwargs.get("timeout", 60))
+
+        monkeypatch.setattr(mc.subprocess, "run", hang)
+        passed, output = mc.run_tests(["tests/x.py"], tmp_path, timeout=1)
+        assert passed is False
+        assert output == ""
+
+    def test_the_timeout_is_passed_to_the_subprocess(self, monkeypatch, tmp_path):
+        import scripts.mutation_check as mc
+
+        seen = {}
+
+        def record(*args, **kwargs):
+            seen["timeout"] = kwargs.get("timeout")
+
+            class R:
+                returncode = 0
+                stdout = "1 passed"
+
+            return R()
+
+        monkeypatch.setattr(mc.subprocess, "run", record)
+        mc.run_tests(["tests/x.py"], tmp_path, timeout=7)
+        assert seen["timeout"] == 7
+
+    def test_there_is_a_default_so_a_hang_cannot_be_unbounded(self):
+        import scripts.mutation_check as mc
+
+        assert mc.DEFAULT_TIMEOUT > 0
 
 
 class TestTargets:

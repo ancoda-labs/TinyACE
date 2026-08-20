@@ -180,7 +180,16 @@ def mutations(source_path: Path) -> Iterator[Mutation]:
         yield Mutation(line=mutator.line, description=mutator.applied, source=rendered)
 
 
-def run_tests(test_paths: List[str], source_root: Path) -> bool:
+# A mutant can make the code non-terminating, and then the test run never ends.
+# `while str(self._next_id) in existing_ids` becomes `not in` and loops forever;
+# the tool sat on that one mutant with no output and no way to tell it from slow
+# progress. Paired test files run in under six seconds, so this is generous.
+DEFAULT_TIMEOUT = 60
+
+
+def run_tests(
+    test_paths: List[str], source_root: Path, timeout: int = DEFAULT_TIMEOUT
+) -> Tuple[bool, str]:
     """
     Run the paired tests against a mutated copy of `src/`.
 
@@ -196,10 +205,13 @@ def run_tests(test_paths: List[str], source_root: Path) -> bool:
     Args:
         test_paths: Repo-relative test files.
         source_root: The mutated source tree to import from.
+        timeout: Seconds before the run is abandoned. A mutant that never
+            terminates has not been survived -- it has been caught, in the most
+            emphatic way available -- so a timeout counts as a kill.
 
     Returns:
         `(passed, stdout)`. `passed` is True when the tests pass, which for a
-        mutant means it survived.
+        mutant means it survived. A timeout returns `(False, "")`.
     """
     environment = dict(os.environ)
     # An inherited PYTHONPATH pointing at the real `src/` would shadow the
@@ -212,30 +224,36 @@ def run_tests(test_paths: List[str], source_root: Path) -> bool:
     # and all 28 of its mutations were scored as survivors.
     environment["TINYACE_DATA_ROOT"] = str(REPO_ROOT)
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-B",
-            "-m",
-            "pytest",
-            *test_paths,
-            "-x",
-            "-q",
-            "--no-header",
-            "-p",
-            "no:cacheprovider",
-            "-o",
-            f"pythonpath={source_root}",
-        ],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        env=environment,
-    )
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                "-m",
+                "pytest",
+                *test_paths,
+                "-x",
+                "-q",
+                "--no-header",
+                "-p",
+                "no:cacheprovider",
+                "-o",
+                f"pythonpath={source_root}",
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return False, ""
     return result.returncode == 0, result.stdout
 
 
-def baseline_problem(test_paths: List[str], source_root: Path) -> Optional[str]:
+def baseline_problem(
+    test_paths: List[str], source_root: Path, timeout: int = DEFAULT_TIMEOUT
+) -> Optional[str]:
     """
     Why this module/test pairing cannot be scored, if it cannot.
 
@@ -251,7 +269,7 @@ def baseline_problem(test_paths: List[str], source_root: Path) -> Optional[str]:
     Returns:
         A description of the problem, or None when the pairing is sound.
     """
-    passed, output = run_tests(test_paths, source_root)
+    passed, output = run_tests(test_paths, source_root, timeout)
     if not passed:
         return "the paired tests already fail before any mutation"
     if "passed" not in output:
@@ -262,13 +280,16 @@ def baseline_problem(test_paths: List[str], source_root: Path) -> Optional[str]:
     return None
 
 
-def check(name: str, verbose: bool = False) -> Tuple[int, int, List[Mutation]]:
+def check(
+    name: str, verbose: bool = False, timeout: int = DEFAULT_TIMEOUT
+) -> Tuple[int, int, List[Mutation]]:
     """
     Mutate one module and report which edits the tests did not notice.
 
     Args:
         name: A key of TARGETS.
         verbose: Print each mutant as it is decided.
+        timeout: Per-mutant seconds before the run is abandoned.
 
     Returns:
         (killed, total, survivors).
@@ -293,13 +314,13 @@ def check(name: str, verbose: bool = False) -> Tuple[int, int, List[Mutation]]:
         )
         mutated_path = source_root / Path(relative).relative_to("src")
 
-        problem = baseline_problem(test_paths, source_root)
+        problem = baseline_problem(test_paths, source_root, timeout)
         if problem is not None:
             raise RuntimeError(f"cannot score '{name}': {problem}")
 
         for index, mutation in enumerate(all_mutations, 1):
             mutated_path.write_text(mutation.source, encoding="utf-8")
-            survived, _ = run_tests(test_paths, source_root)
+            survived, _ = run_tests(test_paths, source_root, timeout)
             if survived:
                 survivors.append(mutation)
             else:
@@ -328,6 +349,13 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--list", action="store_true", help="Print the pairings and stop")
     p.add_argument("--verbose", action="store_true", help="Print every mutant")
     p.add_argument(
+        "--timeout",
+        type=int,
+        default=DEFAULT_TIMEOUT,
+        help=f"Seconds per mutant before giving up (default: {DEFAULT_TIMEOUT}). "
+        "A mutant that never terminates counts as caught.",
+    )
+    p.add_argument(
         "--max-survivors",
         type=int,
         default=None,
@@ -352,7 +380,7 @@ def main(argv=None) -> int:
     for name in names:
         source, _ = TARGETS[name]
         print(f"\n{name} ({source})")
-        killed, count, survivors = check(name, verbose=args.verbose)
+        killed, count, survivors = check(name, verbose=args.verbose, timeout=args.timeout)
         total_killed += killed
         total_count += count
         total_survivors.extend((name, m) for m in survivors)
