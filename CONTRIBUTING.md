@@ -6,7 +6,7 @@
 git clone https://github.com/SirAlchemist1/edge-slm-ace.git
 cd edge-slm-ace
 python -m venv .venv && source .venv/bin/activate
-make install          # editable install with dev, metrics and plots extras
+make install          # editable install with the dev, retrieval and report extras
 make check            # tests + lint + format check, same as CI
 ```
 
@@ -28,6 +28,12 @@ metrics, retrieval or scoring:
    Fixed in `CHANGELOG.md` was invisible for months because nothing asserted
    the intended behaviour — including one that *did* have a failing test, which
    nobody saw because CI could not fail.
+
+   This is not checkable by reading: a test asserting what the code currently
+   does passes either way, and looks identical to one that pins the behaviour
+   down. `make mutants` checks it mechanically — it flips a comparison, moves a
+   constant, swaps a boolean, and reports any edit the tests do not fail on.
+   Run it on the module you touched.
 2. **Say what it does to existing results** in the PR description. A change to
    answer extraction or option handling invalidates prior runs; say so.
 3. **Do not report a delta without a significance test.** See below.
@@ -50,7 +56,11 @@ previously went wrong:
   difference" — that is a finding, not a failure.
 
 Check the run-health fields (`truncation_rate`, `tokens_dropped`,
-`relevance_active`) before trusting any run. `make report` surfaces them.
+`relevance_active`, `token_counts_exact`) before trusting any run. `make report`
+surfaces them, `make report STRICT=1` fails on an invalidating one, and
+`compare_arms` excludes an invalidated run from the test family rather than
+testing it. See [docs/evaluation.md](docs/evaluation.md#health-checks-that-invalidate-a-run)
+for which conditions invalidate a run and which only narrow what it supports.
 
 ## Style
 
