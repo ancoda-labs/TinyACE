@@ -20,6 +20,7 @@ from scripts.run_grid import (
     order_languages,
     plan,
     source_languages,
+    survivors,
 )
 
 
@@ -144,6 +145,50 @@ class TestScreeningRule:
             "gemma-3-4b",
         )
         assert SCREENING_TASKS == ("belebele", "global_mmlu")
+
+
+class TestScreeningSurvivors:
+    """
+    `screen.py` writes one row per model and task, and the grid scores Belebele.
+
+    Reading every passing row admitted a model that cleared Global-MMLU but not
+    Belebele, and listed a model that cleared both twice.
+    """
+
+    def write(self, root, rows):
+        (root / "screening").mkdir(parents=True)
+        (root / "screening" / "screening.json").write_text(
+            json.dumps({"language": "ne", "models": rows}), encoding="utf-8"
+        )
+        return root
+
+    def test_only_a_belebele_pass_admits_a_model(self, tmp_path):
+        root = self.write(
+            tmp_path,
+            [
+                {"model": "a", "task": "belebele", "passes": True},
+                {"model": "b", "task": "belebele", "passes": False},
+                {"model": "b", "task": "global_mmlu", "passes": True},
+            ],
+        )
+        assert survivors(root) == ["a"]
+
+    def test_a_model_passing_both_tasks_is_planned_once(self, tmp_path):
+        root = self.write(
+            tmp_path,
+            [
+                {"model": "a", "task": "belebele", "passes": True},
+                {"model": "a", "task": "global_mmlu", "passes": True},
+            ],
+        )
+        assert survivors(root) == ["a"]
+
+    def test_rows_from_the_belebele_only_screener_still_count(self, tmp_path):
+        root = self.write(tmp_path, [{"model": "a", "passes": True}])
+        assert survivors(root) == ["a"]
+
+    def test_an_unscreened_root_has_no_survivors(self, tmp_path):
+        assert survivors(tmp_path) is None
 
 
 class TestLanguageOrdering:

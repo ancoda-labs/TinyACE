@@ -170,12 +170,25 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 
 def survivors(results_root: Path) -> Optional[List[str]]:
-    """Model keys that cleared the pre-registered screening floor, if screened."""
+    """
+    Model keys that cleared the pre-registered Belebele screening floor, if screened.
+
+    `scripts/screen.py` writes one row per model *and task*. The grid scores
+    Belebele, so only a Belebele pass admits a model: one that clears
+    Global-MMLU alone has not shown it can read the passages the grid is about,
+    and one that clears both would otherwise be planned twice. A row with no
+    `task` was written by the Belebele-only screener this one replaced.
+    """
     path = results_root / "screening" / "screening.json"
     if not path.exists():
         return None
     payload = json.loads(path.read_text(encoding="utf-8"))
-    return [row["model"] for row in payload["models"] if row.get("passes")]
+    passed = [
+        row["model"]
+        for row in payload["models"]
+        if row.get("passes") and row.get("task", "belebele") == "belebele"
+    ]
+    return list(dict.fromkeys(passed))
 
 
 def main(argv=None) -> int:
