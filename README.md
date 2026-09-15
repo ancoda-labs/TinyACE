@@ -44,8 +44,8 @@ answer parsing, no option mapping, no bespoke accuracy.
 ## Install
 
 ```bash
-git clone https://github.com/SirAlchemist1/edge-slm-ace.git
-cd edge-slm-ace
+git clone https://github.com/ancoda-labs/TinyACE.git
+cd TinyACE
 make install          # pip install -e ".[dev,retrieval,report]"
 make data             # verify the committed Belebele files
 make test
@@ -258,7 +258,7 @@ data/tasks/belebele/  The two committed language files.
             on a Low-Resource Language},
   author = {Shahi, Suryodaya},
   year   = {2026},
-  url    = {https://github.com/SirAlchemist1/edge-slm-ace}
+  url    = {https://github.com/ancoda-labs/TinyACE}
 }
 ```
 

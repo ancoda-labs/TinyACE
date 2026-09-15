@@ -48,8 +48,8 @@ dev = [
 # directory containing data/tasks/.
 
 [project.urls]
-Homepage = "https://github.com/SirAlchemist1/edge-slm-ace"
-Issues = "https://github.com/SirAlchemist1/edge-slm-ace/issues"
+Homepage = "https://github.com/ancoda-labs/TinyACE"
+Issues = "https://github.com/ancoda-labs/TinyACE/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

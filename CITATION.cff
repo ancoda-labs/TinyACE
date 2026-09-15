@@ -7,7 +7,7 @@ authors:
     given-names: Suryodaya
   - name: Sathwik
   - name: Archit
-repository-code: "https://github.com/SirAlchemist1/edge-slm-ace"
+repository-code: "https://github.com/ancoda-labs/TinyACE"
 license: Apache-2.0
 version: 0.1.0
 abstract: >-
