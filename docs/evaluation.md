@@ -27,10 +27,10 @@ Three properties this buys:
   derived from position would adapt on different questions per language and
   make the paired comparison meaningless.
 - **Screening cannot leak.** `ADAPTATION_SIZE` is one constant that both
-  `screen_models` and `run_arm` go through. When they each chose their own size
+  screening and `run_arm` go through. When they each chose their own size
   — 400 and 200 — the 200 items between them were screened on *and* scored on,
-  so model selection was made on 200 of the reported items. `screen_models` now
-  refuses to run if any screening item is in the evaluation split.
+  so model selection was made on 200 of the reported items. `scripts/screen.py`
+  now refuses to run if any screening item is in the evaluation split.
 - **The Reflector never sees a scored item — including its passage.** Multiple
   questions share one FLORES passage; an item-level shuffle would let
   adaptation read evaluation context. `assert_zero_passage_overlap` enforces
@@ -213,14 +213,18 @@ seeds.
 
 ### What the seed does not cover
 
-**Option order is never permuted.** The harness loads its own copy of the split
-and renders the four options itself, so a permutation applied in
-`data/belebele.py` would change what adaptation sees without changing what is
-scored — the arm asymmetry the prompt layer exists to prevent. Belebele's gold
-position is close to uniform already (206/251/246/197 across the four slots),
-but "close to uniform" is not uniform, and the residual is worth a point or two
-to a model with a position bias (Zheng et al., 2024). That is a limitation to state, not one the
-loader can seed away.
+**Option order is permuted, but not by the seed.** `eval.utils.permute_options`
+shuffles each item's four options with an RNG seeded on the MD5 of its passage
+and question. The loader applies it, and so do the custom harness tasks in
+`eval/tasks/` through `process_docs`, so adaptation and scoring see the same
+order, and every arm of a language sees the same order. Changing the run seed
+does not change it.
+
+The hash is over each language's own text, so the English and Nepali copies of
+a question get *different* option orders. A comparison between arms within one
+language is unaffected. A comparison across languages mixes the language with
+where the gold option sits, which matters to a model with a position bias
+(Zheng et al., 2024).
 
 ---
 
@@ -242,8 +246,8 @@ loader can seed away.
 - [ ] `token_counts_exact` is true on every run whose token counts are compared
       across languages.
 - [ ] The seed and commit are stated, and multi-seed runs report spread.
-- [ ] Any position-bias claim accounts for gold position being fixed, not
-      permuted.
+- [ ] Any cross-lingual claim accounts for option order being permuted per
+      language, not shared between the two copies of a question.
 - [ ] Nothing is ranked that did not survive correction.
 
 ---

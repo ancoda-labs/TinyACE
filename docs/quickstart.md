@@ -49,8 +49,8 @@ python -m scripts.run_arm \
 ```
 
 `tiny-gpt2` has random weights. It exercises every code path and its numbers
-mean nothing — the registry marks it `generation="debug"` and `screen_models`
-excludes it. Expect the playbook to come out empty and the run to say so.
+mean nothing — the registry marks it `generation="debug"`, and screening only
+runs the fixed `SCREENING_MODELS` lineup, which leaves it out. Expect the playbook to come out empty and the run to say so.
 
 ## 4. Screen
 
@@ -61,13 +61,15 @@ on Nepali, so entry to the grid is gated:
 make screen DEVICE=cuda
 ```
 
-The rule is pre-registered and stated on the *interval*: n=400 items drawn from
-the adaptation split, and the lower bound of the Wilson interval must clear 30%
-(chance is 25%). Screening never touches the evaluation split — `screen_models`
-refuses to start if it would.
+It screens Qwen3 (1.7B, 4B) and Gemma-3 (1B-it, 4B-it) on Nepali Belebele and
+Global-MMLU. The rule is pre-registered and stated on the *interval*: n=400
+items drawn from each task's adaptation split, and the lower bound of the Wilson
+interval must clear 30% (chance is 25%). Screening never touches the evaluation
+split — `scripts/screen.py` refuses to start if it would.
 
-Survivors are written to `results/screening/screening.json`, and `make grid`
-reads its model list from there.
+Results are written to `results/screening/screening.json`, one row per model and
+task. `make grid` scores Belebele, so it takes the models that passed on
+Belebele.
 
 ## 5. Run the grid
 
