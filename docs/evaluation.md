@@ -9,10 +9,10 @@ Everything here exists because some version of it went wrong before. The
 
 ## The split
 
-Belebele (Bandarkar et al., 2024) is 900 parallel questions per language, each
-over a FLORES-200 passage (NLLB Team, 2022). `data.study_split` divides them
-once, deterministically in `(seed, ids)` and independent of the order the ids
-arrive in:
+Belebele (Bandarkar et al., 2024) is 900 parallel questions per language over
+488 FLORES-200 passages (NLLB Team, 2022). `data.study_split` divides them once,
+deterministically in `(seed, examples)`, **passage-disjoint** so no `passage_id`
+appears on both sides:
 
 | Split | Size | Used for |
 |---|---|---|
@@ -22,17 +22,19 @@ arrive in:
 Three properties this buys:
 
 - **Every language and every arm gets the identical split.** The split is
-  computed from content-derived ids, not row order. The two language files hold
-  the same questions in *different* orders, so a split derived from position
-  would adapt on different questions per language and make the paired comparison
-  meaningless.
+  computed from content-derived ids / passage ids, not row order. The two
+  language files hold the same questions in *different* orders, so a split
+  derived from position would adapt on different questions per language and
+  make the paired comparison meaningless.
 - **Screening cannot leak.** `ADAPTATION_SIZE` is one constant that both
   `screen_models` and `run_arm` go through. When they each chose their own size
   — 400 and 200 — the 200 items between them were screened on *and* scored on,
   so model selection was made on 200 of the reported items. `screen_models` now
   refuses to run if any screening item is in the evaluation split.
-- **The Reflector never sees a scored item.** It is shown gold answers, which is
-  precisely why the split it runs on must never be scored.
+- **The Reflector never sees a scored item — including its passage.** Multiple
+  questions share one FLORES passage; an item-level shuffle would let
+  adaptation read evaluation context. `assert_zero_passage_overlap` enforces
+  `passage_id not in eval_passages` on every study split.
 
 ---
 

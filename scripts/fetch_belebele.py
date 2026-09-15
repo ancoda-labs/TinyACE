@@ -65,14 +65,18 @@ def check() -> int:
         ids = [[e["id"] for e in rows] for rows in loaded.values()]
         if ids[0] != ids[1]:
             problems.append("languages are not parallel: id sets differ after sorting")
-        golds = [[e["gold_option_idx"] for e in rows] for rows in loaded.values()]
-        if golds[0] != golds[1]:
-            problems.append("languages disagree on the correct option")
 
+        # Raw gold (pre-shuffle) must agree; MD5(passage+question) may place the
+        # gold letter in different slots after the per-language shuffle.
+        raw_gold = {}
         raw_orders = []
         for language in loaded:
             with open(belebele_path(language), encoding="utf-8") as f:
-                raw_orders.append([item_id(json.loads(line)) for line in f if line.strip()])
+                rows = [json.loads(line) for line in f if line.strip()]
+            raw_gold[language] = {item_id(r): r["correct_answer_num"] for r in rows}
+            raw_orders.append([item_id(r) for r in rows])
+        if raw_gold["en"] != raw_gold["ne"]:
+            problems.append("languages disagree on the raw correct_answer_num")
         if raw_orders[0] == raw_orders[1]:
             print(
                 "  note: the files are currently in the same row order. Keep using "

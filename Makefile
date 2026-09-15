@@ -1,10 +1,10 @@
 # TinyACE — common tasks.
 #
 #   make install    development install with all extras
-#   make data       fetch and verify the Belebele language files
+#   make data       fetch/verify Belebele + Global-MMLU (en/ne)
 #   make test       run the test suite
 #   make check      test + lint + format check (what CI runs)
-#   make screen     Nepali screening run; gates entry to the main grid
+#   make screen     Week 1 gate: Qwen3+Gemma-3 on Belebele & Global-MMLU
 #   make grid       every arm, both languages, one seed
 #   make report     aggregate, then test every delta for significance
 #                   (STRICT=1 also fails on an invalidating health issue)
@@ -28,6 +28,7 @@ install:
 
 data:
 	$(PY) -m scripts.fetch_belebele
+	$(PY) -m scripts.fetch_globalmmlu --check
 
 test:
 	$(PY) -m pytest tests/ -v
@@ -42,11 +43,11 @@ format:
 check: test lint
 	$(PY) -m black --check --target-version py311 src/ scripts/ tests/
 
-# Pre-registered gate: a model enters the grid only if the lower bound of its
-# Wilson interval on Nepali clears the floor. Point estimates near chance are
-# not evidence at this sample size.
+# Pre-registered gate: Qwen3 (1.7B, 4B) and Gemma-3 (1B-it, 4B-it) on Belebele
+# and Global-MMLU. A cell enters the lineup only if the Wilson lower bound on
+# Nepali clears 30%. Point estimates near chance are not evidence at this n.
 screen:
-	$(PY) -m scripts.screen_models --seed $(SEED) --device $(DEVICE) --results-root $(RESULTS)
+	$(PY) -m scripts.screen --seed $(SEED) --device $(DEVICE) --results-root $(RESULTS)
 
 grid:
 	$(PY) -m scripts.run_grid --seed $(SEED) --device $(DEVICE) --results-root $(RESULTS)

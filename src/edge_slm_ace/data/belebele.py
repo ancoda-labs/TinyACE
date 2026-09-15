@@ -15,22 +15,27 @@ Three properties of the raw files drive the design here, all verified against
    questions -- so every id here is derived from the content key, never from
    position.
 2. **`correct_answer_num` is a 1-based string**, not a 0-based int.
-3. **Gold position is close to uniform already** (206/251/246/197 across the
-   four slots), unlike the SciQ files this repo used to carry, where gold was
-   first in 1000/1000 rows. This module therefore does NOT permute option
-   order, and cannot: the harness loads its own copy of the split and renders
-   the options itself, so a permutation applied here would change what
-   adaptation sees without changing what is scored -- which is the arm
-   asymmetry the whole prompt layer exists to prevent. The residual position
-   bias is a limitation to state, not something the loader can correct.
+3. **Multiple questions share one FLORES passage** (488 passages for 900 items).
+   The study split is therefore *passage-disjoint*: no `passage_id` may appear
+   in both adaptation and evaluation, or the Reflector would have seen the
+   passage text of items it must not score. That invariant is asserted, not
+   merely documented.
+
+Option order is permuted deterministically per item (see ``eval.utils``) so
+residual position bias cannot favour a fixed gold slot. The same MD5(passage +
+question) seed is used by the custom lm-eval tasks under ``eval/tasks/``, so
+adaptation and harness evaluation see identical permutations.
 """
 
 import hashlib
 import json
 import random
+from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+from edge_slm_ace.eval.tasks import BELEBELE_HARNESS_TASKS
+from edge_slm_ace.eval.utils import permute_options, stable_item_seed
 from edge_slm_ace.utils.config import ADAPTATION_SIZE, REPO_ROOT
 
 # Short language code -> the FLORES-200 code Belebele files are named by.
@@ -83,6 +88,17 @@ def belebele_path(language: str) -> Path:
     return REPO_ROOT / BELEBELE_DIR / f"{flores}.jsonl"
 
 
+def passage_id(record: Dict) -> str:
+    """
+    Stable identifier for the FLORES passage a question is about.
+
+    Several questions share one `link`; that shared key is what the
+    adaptation/evaluation split must keep disjoint.
+    """
+    digest = hashlib.blake2s(str(record["link"]).encode("utf-8"), digest_size=5).hexdigest()
+    return f"bel-pass-{digest}"
+
+
 def item_id(record: Dict) -> str:
     """
     Stable identifier for a question, shared across every language variant.
@@ -117,9 +133,11 @@ def _normalize(record: Dict, language: str, domain: str) -> Dict:
         raise ValueError(f"correct_answer_num out of range: {record['correct_answer_num']!r}")
 
     options = [record[f"mc_answer{i}"] for i in range(1, _N_OPTIONS + 1)]
+    options, gold = permute_options(options, gold, stable_item_seed(record))
 
     return {
         "id": item_id(record),
+        "passage_id": passage_id(record),
         "language": language,
         "domain": domain,
         # The passage is the context. It is long -- 79 words on average in
@@ -185,6 +203,9 @@ def parallel_split(
     derived from row order, English and Nepali would adapt on different
     questions and the paired comparison would be meaningless.
 
+    This is the item-level primitive. Belebele's study split goes through
+    `passage_disjoint_split` instead, so shared FLORES passages cannot leak.
+
     Args:
         item_ids: All ids in the language.
         adaptation_size: How many to reserve for building the playbook.
@@ -205,8 +226,117 @@ def parallel_split(
     return sorted(shuffled[:adaptation_size]), sorted(shuffled[adaptation_size:])
 
 
+def assert_zero_passage_overlap(
+    adaptation_ids: Iterable[str],
+    eval_ids: Iterable[str],
+    examples: Sequence[Dict],
+) -> None:
+    """
+    Fail hard if any FLORES passage appears on both sides of the split.
+
+    Week 1 gate: ``assert passage_id not in eval_passages`` for every
+    adaptation item. Prose is not enforcement.
+    """
+    by_id = {e["id"]: e for e in examples}
+    adapt_passages: Set[str] = set()
+    eval_passages: Set[str] = set()
+
+    for iid in adaptation_ids:
+        example = by_id[iid]
+        pid = example["passage_id"]
+        assert pid not in eval_passages, (
+            f"passage_id {pid!r} already reserved for evaluation while building "
+            f"adaptation (item {iid})"
+        )
+        adapt_passages.add(pid)
+
+    for iid in eval_ids:
+        example = by_id[iid]
+        pid = example["passage_id"]
+        assert pid not in adapt_passages, (
+            f"passage_id {pid!r} overlaps adaptation and evaluation " f"(eval item {iid})"
+        )
+        eval_passages.add(pid)
+
+
+def passage_disjoint_split(
+    examples: Sequence[Dict],
+    adaptation_size: int,
+    seed: int,
+) -> Tuple[List[str], List[str]]:
+    """
+    Split examples so no `passage_id` appears in both adaptation and evaluation.
+
+    Passages are shuffled by `seed`, then packed greedily into adaptation until
+    `adaptation_size` questions are filled (exact), topping up with leftover
+    single- and double-question passages when the greedy pass undershoots.
+
+    Returns:
+        (adaptation_ids, eval_ids), both sorted and passage-disjoint.
+
+    Raises:
+        ValueError: If an exact passage-disjoint packing of `adaptation_size`
+            cannot be formed.
+    """
+    by_passage: Dict[str, List[str]] = defaultdict(list)
+    for example in examples:
+        by_passage[example["passage_id"]].append(example["id"])
+
+    for pid, ids in by_passage.items():
+        by_passage[pid] = sorted(ids)
+
+    passages = sorted(by_passage)
+    rng = random.Random(seed)
+    rng.shuffle(passages)
+
+    adapt_ids: List[str] = []
+    adapt_passages: Set[str] = set()
+    eval_passages: Set[str] = set()
+
+    for pid in passages:
+        ids = by_passage[pid]
+        if len(adapt_ids) + len(ids) <= adaptation_size:
+            adapt_ids.extend(ids)
+            adapt_passages.add(pid)
+        else:
+            eval_passages.add(pid)
+
+    need = adaptation_size - len(adapt_ids)
+    if need:
+        # Prefer singles so we can hit the exact target without overshooting.
+        for size in (1, 2):
+            if need <= 0:
+                break
+            candidates = [p for p in passages if p in eval_passages and len(by_passage[p]) == size]
+            for pid in candidates:
+                if len(by_passage[pid]) > need:
+                    continue
+                adapt_ids.extend(by_passage[pid])
+                adapt_passages.add(pid)
+                eval_passages.discard(pid)
+                need = adaptation_size - len(adapt_ids)
+                if need <= 0:
+                    break
+
+    if len(adapt_ids) != adaptation_size:
+        raise ValueError(
+            f"passage-disjoint split could not hit adaptation_size={adaptation_size}; "
+            f"got {len(adapt_ids)}"
+        )
+
+    eval_ids = [iid for pid in passages if pid in eval_passages for iid in by_passage[pid]]
+    adapt_ids_sorted, eval_ids_sorted = sorted(adapt_ids), sorted(eval_ids)
+
+    # Explicit Week 1 assertion: zero passage_id overlap.
+    assert_zero_passage_overlap(adapt_ids_sorted, eval_ids_sorted, examples)
+    for pid in adapt_passages:
+        assert pid not in eval_passages
+
+    return adapt_ids_sorted, eval_ids_sorted
+
+
 def study_split(
-    item_ids: Sequence[str],
+    examples: Sequence[Dict],
     seed: int,
     adaptation_size: Optional[int] = None,
 ) -> Tuple[List[str], List[str]]:
@@ -219,23 +349,31 @@ def study_split(
     were screened on *and* scored on. Model selection was therefore made on
     items the study reports over.
 
+    The split is passage-disjoint: sharing a FLORES passage across the boundary
+    would let adaptation see evaluation context.
+
     Args:
-        item_ids: All ids in the language.
+        examples: Normalised Belebele examples (must carry `id` and
+            `passage_id`).
         seed: Run seed.
         adaptation_size: Override, for tests and debugging only. A run that
             passes one is no longer on the study's split.
 
     Returns:
-        (adaptation_ids, eval_ids), both sorted and disjoint.
+        (adaptation_ids, eval_ids), both sorted, disjoint, and passage-disjoint.
     """
-    return parallel_split(item_ids, adaptation_size or ADAPTATION_SIZE, seed)
+    if not examples:
+        raise ValueError("study_split requires at least one example")
+    if "passage_id" not in examples[0]:
+        raise ValueError(
+            "study_split expects normalised Belebele examples with passage_id; "
+            "pass load_belebele(...) output, not bare id strings"
+        )
+    return passage_disjoint_split(examples, adaptation_size or ADAPTATION_SIZE, seed)
 
 
-# lm-evaluation-harness task names for the language variants we use.
-HARNESS_TASKS: Dict[str, str] = {
-    "en": "belebele_eng_Latn",
-    "ne": "belebele_npi_Deva",
-}
+# Custom lm-eval tasks (eval/tasks/) with deterministic option shuffling.
+HARNESS_TASKS: Dict[str, str] = dict(BELEBELE_HARNESS_TASKS)
 
 
 def harness_indices(

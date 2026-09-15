@@ -43,7 +43,7 @@ REPO_ROOT = _find_repo_root()
 # Models screened for the Nepali track.
 #
 # `nepali_capable` is not a claim -- it is filled in by the screening run
-# (scripts/screen_models.py) and gates entry to the main grid. The rule is
+# (scripts/screen.py) and gates entry to the main grid. The rule is
 # pre-registered: a model enters only if the lower bound of its Wilson interval
 # on Nepali Belebele clears CHANCE_FLOOR by a margin, not if its point estimate
 # happens to.
@@ -93,6 +93,20 @@ ADAPTATION_SIZE = 400
 CHANCE_FLOOR = 0.25
 SCREENING_N = 400
 SCREENING_FLOOR = 0.30
+
+# Week 1 screening lineup: Qwen3 (1.7B, 4B) and Gemma-3 (1B-it, 4B-it) on both
+# Belebele and Global-MMLU. Wilson lower bound > SCREENING_FLOOR locks the
+# primary task/model set before Week 2 adaptation work.
+SCREENING_MODELS = (
+    "qwen3-1.7b",
+    "qwen3-4b",
+    "gemma-3-1b",
+    "gemma-3-4b",
+)
+SCREENING_TASKS = (
+    "belebele",
+    "global_mmlu",
+)
 
 assert SCREENING_N <= ADAPTATION_SIZE, (
     f"Screening at n={SCREENING_N} cannot fit inside an adaptation split of "

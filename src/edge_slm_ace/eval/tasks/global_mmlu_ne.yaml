@@ -1,0 +1,19 @@
+# Global-MMLU Nepali with deterministic option shuffle.
+task: global_mmlu_ne
+dataset_path: CohereForAI/Global-MMLU
+dataset_name: ne
+test_split: test
+output_type: multiple_choice
+process_docs: !function utils.process_docs
+doc_to_text: "Question: {{question}}\nA. {{option_a}}\nB. {{option_b}}\nC. {{option_c}}\nD. {{option_d}}\nAnswer:"
+doc_to_choice: ["A", "B", "C", "D"]
+doc_to_target: "{{gold_option_idx}}"
+metric_list:
+  - metric: acc
+    aggregation: mean
+    higher_is_better: true
+  - metric: acc_norm
+    aggregation: mean
+    higher_is_better: true
+metadata:
+  version: 1.0
