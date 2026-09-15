@@ -150,7 +150,9 @@ class TestFallbackMessage:
         that installs.
         """
         import re
-        import tomllib
+
+        # Standard library only from 3.11; CI also runs 3.10, where this errored.
+        tomllib = pytest.importorskip("tomllib")
 
         source = (REPO_ROOT / "src/edge_slm_ace/memory/relevance.py").read_text(encoding="utf-8")
         pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
