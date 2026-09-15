@@ -12,8 +12,8 @@
 ### 1. Clone Repository
 
 ```bash
-git clone https://github.com/SirAlchemist1/edge-slm-ace.git
-cd edge-slm-ace
+git clone https://github.com/ancoda-labs/TinyACE.git
+cd TinyACE
 ```
 
 ### 2. Create Virtual Environment
@@ -114,10 +114,12 @@ For development, install additional dependencies:
 
 ```bash
 make install    # pip install -e ".[dev,retrieval,report]"
-make check      # tests + lint + format check, the same as CI
+make check      # tests + lint + format check
 ```
 
-The `dev` extra provides `pytest`, `pytest-cov`, `black` and `flake8`.
+The `dev` extra provides `pytest`, `pytest-cov`, `black` and `flake8`. CI runs
+more than `make check` — a data check and two real-model smoke runs as well;
+[CONTRIBUTING.md](../CONTRIBUTING.md#before-opening-a-pr) lists the commands.
 
 ## A checkout, not a library
 

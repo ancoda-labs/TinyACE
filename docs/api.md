@@ -8,7 +8,8 @@ detail and the rationale; this is the map.
 ## `edge_slm_ace.data`
 
 ```python
-from edge_slm_ace.data import load_belebele, study_split, BELEBELE_LANGUAGES
+from edge_slm_ace.data import load_belebele, study_split, parallel_split, BELEBELE_LANGUAGES
+from edge_slm_ace.data.belebele import item_id, harness_indices, HARNESS_TASKS
 ```
 
 | | |
@@ -121,7 +122,7 @@ from edge_slm_ace.memory.playbook import Playbook, PlaybookEntry, ScoringParams
 
 | | |
 |---|---|
-| `Playbook(entries, token_budget=None, scoring_params=None, tokenizer=None)` | `tokenizer` makes entry token counts real; without it they are `words * 1.3`, which is fertility-blind |
+| `Playbook(entries, token_budget=None, scoring_params=None, tokenizer=None, store_token_capacity=None)` | `tokenizer` makes entry token counts real; without it they are `words * 1.3`, which is fertility-blind. `store_token_capacity` caps the tokens kept and `token_budget` the tokens shown; no runner sets either |
 | `Playbook.load(path, token_budget=None, tokenizer=None, scoring_params=None)` | Pass the arm's `scoring_params`, or the playbook ranks under the defaults |
 | `get_top_k(domain, k, current_step, query=None)` | Retrieval ranking; `query` enables relevance blending |
 | `get_top_entries_for_budget(domain, token_budget, ...)` | The same ranking, greedily filled to a token budget |
@@ -146,8 +147,14 @@ phrase list.
 
 ### `LessonRelevance`
 
-Singleton cosine relevance over a **multilingual** encoder
-(`paraphrase-multilingual-MiniLM-L12-v2` by default; override with
+```python
+from edge_slm_ace.memory.relevance import LessonRelevance
+
+relevance = LessonRelevance.get_instance()
+```
+
+Singleton cosine relevance over a **multilingual** encoder (Reimers & Gurevych,
+2020; `paraphrase-multilingual-MiniLM-L12-v2` by default; override with
 `TINYACE_RELEVANCE_ENCODER`). `available` reports False rather than degrading
 silently — an English-only encoder maps Devanagari to near-noise, which looks
 like retrieval and is not.
@@ -161,10 +168,10 @@ comparison to be skipped.
 
 | | |
 |---|---|
-| `wilson_interval(successes, n, confidence=0.95)` | |
+| `wilson_interval(successes, n, confidence=0.95)` | Wilson (1927) score interval |
 | `summarize_accuracy(correctness, confidence=0.95)` | Adds `ci_halfwidth` — the number to compare a claimed improvement against |
-| `mcnemar_exact(arm_a, arm_b)` | Exact paired test. Read `n_discordant` |
-| `holm_bonferroni(p_values)` | Adjusted p-values, index-aligned |
+| `mcnemar_exact(arm_a, arm_b)` | Exact paired test (McNemar, 1947). Read `n_discordant` |
+| `holm_bonferroni(p_values)` | Holm (1979) adjusted p-values, index-aligned |
 | `align_on_key(a, b, metric="is_correct", key="qid")` | |
 | `compare_arms(a, b, ...)` | The whole comparison, with a one-line `verdict` |
 | `format_comparison(comparison)` | Human-readable block |
@@ -209,3 +216,19 @@ All are `python -m scripts.<name>`; `--help` on each.
 | `run_grid` | Every arm x language x model, one load per model. `--dry-run` |
 | `aggregate_results` | `summary_runs.csv`, `summary_accuracy.csv`, health warnings |
 | `compare_arms` | Paired tests against registered references, Holm-corrected |
+| `mutation_check` | Development only: mutates a module and reports the edits no test catches. `--list`, `--module` |
+
+---
+
+## References
+
+- Holm, S. (1979). A Simple Sequentially Rejective Multiple Test Procedure.
+  *Scandinavian Journal of Statistics*, 6(2), 65–70.
+- McNemar, Q. (1947). Note on the Sampling Error of the Difference Between
+  Correlated Proportions or Percentages. *Psychometrika*, 12(2), 153–157.
+- Reimers, N., & Gurevych, I. (2020). Making Monolingual Sentence Embeddings
+  Multilingual using Knowledge Distillation. *EMNLP 2020*.
+  [arXiv:2004.09813](https://arxiv.org/abs/2004.09813)
+- Wilson, E. B. (1927). Probable Inference, the Law of Succession, and
+  Statistical Inference. *Journal of the American Statistical Association*,
+  22(158), 209–212.

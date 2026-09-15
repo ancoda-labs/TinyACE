@@ -9,7 +9,8 @@ Everything here exists because some version of it went wrong before. The
 
 ## The split
 
-Belebele is 900 parallel questions per language. `data.study_split` divides them
+Belebele (Bandarkar et al., 2024) is 900 parallel questions per language, each
+over a FLORES-200 passage (NLLB Team, 2022). `data.study_split` divides them
 once, deterministically in `(seed, ids)` and independent of the order the ids
 arrive in:
 
@@ -80,14 +81,14 @@ At n=500 the 95% Wilson halfwidth near 40% is about 4.3 points. At n=50 near 74%
 it is about 12. A "+4%" improvement at n=50 is two questions.
 
 `summarize_accuracy` returns `ci_halfwidth` alongside every accuracy for exactly
-this comparison. Wilson rather than the normal approximation: the latter
+this comparison. Wilson (1927) rather than the normal approximation: the latter
 produces bounds above 1.0 near the ceiling and collapses to zero width at p=0
-or 1.
+or 1 (Brown, Cai & DasGupta, 2001).
 
 ### 2. A paired test
 
 The arms answer identical questions, so the comparison is paired and only the
-discordant pairs carry information. `mcnemar_exact` reports `b`, `c` and
+discordant pairs carry information (McNemar, 1947). `mcnemar_exact` reports `b`, `c` and
 `n_discordant` — **read `n_discordant`, not `n`**. It is the effective sample
 size of the test, and it is usually a small fraction of the split.
 
@@ -100,7 +101,7 @@ Ten arms against a reference is ten tests. At α=0.05 the chance of at least one
 false positive under the null is `1 − 0.95¹⁰ ≈ 40%`, so an uncorrected
 "significant" result from a sweep is close to expected rather than surprising.
 
-Every comparison printed together is one Holm-corrected family. Holm is
+Every comparison printed together is one Holm-corrected family (Holm, 1979). Holm is
 uniformly more powerful than Bonferroni and assumes nothing about independence,
 which matters because the arms are scored on the same items.
 
@@ -172,7 +173,8 @@ entries with the `words * 1.3` estimate rather than the run's tokenizer, because
 no model was loaded in that process.
 
 Words per lesson is roughly language-independent. Devanagari fertility is
-*tokens per word* — so the estimate cannot see it, and reports a Nepali lesson
+*tokens per word* (Rust et al., 2021; Petrov et al., 2023) — so the estimate
+cannot see it, and reports a Nepali lesson
 as **cheaper** than the English one it was translated from. Measured against
 Qwen2.5 the estimate is out by about 6× on Nepali and about 1× on English, which
 turns a 4.5× cost ratio into 0.58×.
@@ -215,7 +217,7 @@ and renders the four options itself, so a permutation applied in
 scored — the arm asymmetry the prompt layer exists to prevent. Belebele's gold
 position is close to uniform already (206/251/246/197 across the four slots),
 but "close to uniform" is not uniform, and the residual is worth a point or two
-to a model with a position bias. That is a limitation to state, not one the
+to a model with a position bias (Zheng et al., 2024). That is a limitation to state, not one the
 loader can seed away.
 
 ---
@@ -241,3 +243,31 @@ loader can seed away.
 - [ ] Any position-bias claim accounts for gold position being fixed, not
       permuted.
 - [ ] Nothing is ranked that did not survive correction.
+
+---
+
+## References
+
+- Bandarkar, L., et al. (2024). The Belebele Benchmark: a Parallel Reading
+  Comprehension Dataset in 122 Language Variants. *ACL 2024*.
+  [arXiv:2308.16884](https://arxiv.org/abs/2308.16884)
+- Brown, L. D., Cai, T. T., & DasGupta, A. (2001). Interval Estimation for a
+  Binomial Proportion. *Statistical Science*, 16(2), 101–133.
+- Holm, S. (1979). A Simple Sequentially Rejective Multiple Test Procedure.
+  *Scandinavian Journal of Statistics*, 6(2), 65–70.
+- McNemar, Q. (1947). Note on the Sampling Error of the Difference Between
+  Correlated Proportions or Percentages. *Psychometrika*, 12(2), 153–157.
+- NLLB Team (2022). No Language Left Behind: Scaling Human-Centered Machine
+  Translation. [arXiv:2207.04672](https://arxiv.org/abs/2207.04672)
+- Petrov, A., La Malfa, E., Torr, P. H. S., & Bibi, A. (2023). Language Model
+  Tokenizers Introduce Unfairness Between Languages. *NeurIPS 2023*.
+  [arXiv:2305.15425](https://arxiv.org/abs/2305.15425)
+- Rust, P., Pfeiffer, J., Vulić, I., Ruder, S., & Gurevych, I. (2021). How Good
+  is Your Tokenizer? On the Monolingual Performance of Multilingual Language
+  Models. *ACL 2021*. [arXiv:2012.15613](https://arxiv.org/abs/2012.15613)
+- Wilson, E. B. (1927). Probable Inference, the Law of Succession, and
+  Statistical Inference. *Journal of the American Statistical Association*,
+  22(158), 209–212.
+- Zheng, C., Zhou, H., Meng, F., Zhou, J., & Huang, M. (2024). Large Language
+  Models Are Not Robust Multiple Choice Selectors. *ICLR 2024*.
+  [arXiv:2309.03882](https://arxiv.org/abs/2309.03882)

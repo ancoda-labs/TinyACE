@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-title: "TinyACE-Nepali: Test-Time Context Adaptation for Small Language Models on a Low-Resource Language"
+title: "TinyACE: Test-Time Context Adaptation for Small Language Models on a Low-Resource Language"
 message: "If you use this software, please cite it as below."
 type: software
 authors:

@@ -5,6 +5,27 @@
 > `run_experiment.py`, `--mode ace`, `ace_working_memory`, `self_refine`, OMA.
 > The file is kept unedited, for provenance. For what the project does now, see
 > [../README.md](../README.md) and [evaluation.md](evaluation.md).
+>
+> These are the numbers the [TinyACE paper](../paper/tinyace.pdf) reports in
+> Tables 1–2: the first 50 items of the SciQ test split (Welbl et al., 2017) on
+> TinyLlama 1.1B (P. Zhang et al., 2024), Phi-3 Mini (Microsoft Research, 2024)
+> and Mistral 7B (Jiang et al., 2023). One figure differs: the paper's Table 1
+> gives Phi-3 Mini's baseline latency as 8.52 s, where the model table below
+> has 6.430 s.
+>
+> References, as the paper cites them:
+>
+> - Jiang, A. Q., et al. (2023). Mistral 7B.
+>   [arXiv:2310.06825](https://arxiv.org/abs/2310.06825)
+> - Microsoft Research (2024). Phi-3 Technical Report: A Highly Capable Language
+>   Model Locally on Your Phone. [arXiv:2404.14219](https://arxiv.org/abs/2404.14219)
+> - Shahi, S. B., Naik, S. H., & Harsh, A. TinyACE: Bounded Working-Memory
+>   Context Engineering for Small Language Models (SLMs).
+>   [paper/tinyace.pdf](../paper/tinyace.pdf)
+> - Welbl, J., Liu, N. F., & Gardner, M. (2017). Crowdsourcing Multiple Choice
+>   Science Questions. [arXiv:1707.06209](https://arxiv.org/abs/1707.06209)
+> - Zhang, P., et al. (2024). TinyLlama: An Open-Source Small Language Model.
+>   [arXiv:2401.02385](https://arxiv.org/abs/2401.02385)
 
 > **STATUS: WITHDRAWN PENDING RE-EVALUATION.**
 >
@@ -34,7 +55,7 @@
 > 8. **The ablations were compared against the wrong arm** -- see the section
 >    below.
 >
-> Re-run with `scripts/run_eval_grid.py` at n>=500 with >=3 seeds, then check
+> Re-run with `make grid` (`scripts/run_grid.py`) at n>=500 with >=3 seeds, then check
 > every delta with `scripts/compare_arms.py` before writing anything down.
 
 ---

@@ -1,4 +1,4 @@
-# TinyACE-Nepali — common tasks.
+# TinyACE — common tasks.
 #
 #   make install    development install with all extras
 #   make data       fetch and verify the Belebele language files

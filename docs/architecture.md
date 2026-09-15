@@ -3,6 +3,10 @@
 Two phases, one boundary between them. Everything about the design follows from
 where that boundary sits.
 
+The adaptation phase is ACE's loop of generation, reflection and curation
+(Zhang et al., 2025), run over the bounded playbook of the
+[TinyACE paper](../paper/tinyace.pdf).
+
 ```
       ┌─────────────────────────────────────┐
       │  ADAPTATION   (adaptation split)    │      code this project owns
@@ -18,8 +22,9 @@ where that boundary sits.
 **Nothing downstream of the freeze is ours.** No answer parsing, no option
 mapping, no bespoke accuracy — evaluation is a stock harness run over a file.
 The playbook is a file by the time evaluation starts, so nothing computed during
-evaluation can feed back into it. The previous version of this project had its
-own scoring loop, and had to withdraw its results.
+evaluation can feed back into it. The previous version of this project — the one
+the [TinyACE paper](../paper/tinyace.pdf) reports — had its own scoring loop, and
+had to withdraw its results.
 
 ---
 
@@ -28,15 +33,17 @@ own scoring loop, and had to withdraw its results.
 `src/edge_slm_ace/adapt.py`. One pass over the adaptation split; per step:
 
 1. **Retrieve** the top-k lessons for the domain, ranked by retention score
-   blended with cosine relevance to the question.
+   blended with cosine relevance to the question under a multilingual sentence
+   encoder (Reimers & Gurevych, 2020).
 2. **Score** the four options by loglikelihood — *identically to how evaluation
    will score them*.
 3. **Reflect**, on an error. The Reflector is shown the passage, the chosen
    option and the gold option, and asked for reusable reading strategies that
    name the trap that was fallen into.
 4. **Curate**. One extra generation screens the candidates for genericness.
-5. **Store**, with deduplication; prune periodically.
+5. **Store**, with deduplication.
 6. **Record feedback** on every lesson that was retrieved.
+7. **Prune** every `prune_every_n` steps, and on the last step.
 
 ### The correctness definition has to match
 
@@ -80,6 +87,8 @@ it corrupted the scored prediction in the arm that cited.
 `src/edge_slm_ace/memory/playbook.py`.
 
 ### Retention score
+
+Eq. 1 of the [TinyACE paper](../paper/tinyace.pdf):
 
 ```
 S(l, t) = α·(N_succ/(N_used+ε))          success
@@ -132,7 +141,8 @@ and from `words * 1.3` when it is not. `run_arm` passes the scorer's tokenizer,
 and records `token_counts_exact` so a run says which it used.
 
 The distinction is not cosmetic here. Words per lesson is roughly
-language-independent; Devanagari fertility is *tokens per word*, so the estimate
+language-independent; Devanagari fertility is *tokens per word* (Rust et al.,
+2021; Petrov et al., 2023), so the estimate
 cannot see it and reports a Nepali lesson as cheaper than the English one it was
 translated from. See [evaluation.md](evaluation.md#token-counts).
 
@@ -168,7 +178,7 @@ stated as a limitation rather than glossed.
 ## Evaluation
 
 `src/edge_slm_ace/harness/evaluate.py` is a thin wrapper over
-`lm_eval.simple_evaluate`:
+`lm_eval.simple_evaluate` (Biderman et al., 2024):
 
 - the split enters as `samples={task: indices}`, converted from
   language-independent ids to *this language's* document positions — the two
@@ -197,8 +207,12 @@ stated as a limitation rather than glossed.
   arms, model display names — and carries `implemented`, so an arm with no
   runner is refused rather than silently producing another arm's result under
   its label.
-- `load.py` is the only reader of `metrics.json` and `predictions.jsonl`. A
-  field the artefact already carries always wins over the path.
+- `load.py` reads `metrics.json` and `predictions.jsonl` into frames for
+  `aggregate_results`. A field the artefact already carries always wins over
+  the path.
+- `health.py` defines which conditions invalidate a run and which only limit
+  what it supports. `compare_arms` and `aggregate_results --strict` both act on
+  it, so the two cannot disagree about whether a run is reportable.
 
 ---
 
@@ -214,3 +228,27 @@ stated as a limitation rather than glossed.
 4. **A stated invariant gets an assertion.** Prose in a docstring is not
    enforcement; several of the worst defects here sat directly beneath a
    paragraph explaining why they must never happen.
+
+---
+
+## References
+
+- Biderman, S., Schoelkopf, H., Sutawika, L., et al. (2024). Lessons from the
+  Trenches on Reproducible Evaluation of Language Models.
+  [arXiv:2405.14782](https://arxiv.org/abs/2405.14782)
+- Petrov, A., La Malfa, E., Torr, P. H. S., & Bibi, A. (2023). Language Model
+  Tokenizers Introduce Unfairness Between Languages. *NeurIPS 2023*.
+  [arXiv:2305.15425](https://arxiv.org/abs/2305.15425)
+- Reimers, N., & Gurevych, I. (2020). Making Monolingual Sentence Embeddings
+  Multilingual using Knowledge Distillation. *EMNLP 2020*.
+  [arXiv:2004.09813](https://arxiv.org/abs/2004.09813)
+- Rust, P., Pfeiffer, J., Vulić, I., Ruder, S., & Gurevych, I. (2021). How Good
+  is Your Tokenizer? On the Monolingual Performance of Multilingual Language
+  Models. *ACL 2021*. [arXiv:2012.15613](https://arxiv.org/abs/2012.15613)
+- Shahi, S. B., Naik, S. H., & Harsh, A. TinyACE: Bounded Working-Memory Context
+  Engineering for Small Language Models (SLMs).
+  [paper/tinyace.pdf](../paper/tinyace.pdf). Its SciQ results are withdrawn; see
+  [results.md](results.md).
+- Zhang, Q., et al. (2025). Agentic Context Engineering: Evolving Contexts for
+  Self-Improving Language Models. *ICLR 2026*.
+  [arXiv:2510.04618](https://arxiv.org/abs/2510.04618)

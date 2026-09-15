@@ -1,4 +1,4 @@
-# TinyACE-Nepali
+# TinyACE
 
 **Test-time context adaptation for small language models on a low-resource language**
 
@@ -14,12 +14,15 @@ Can a small language model get better at a task without touching its weights,
 by accumulating a **playbook** of strategies it writes for itself — and does
 that still work in a language it barely reads?
 
-TinyACE builds a playbook on an adaptation split (score → reflect on errors →
-curate → memorise), **freezes it**, and then evaluates through a stock
+TinyACE adapts Agentic Context Engineering (ACE; Zhang et al., 2025) to small
+models, with the bounded playbook described in the
+[TinyACE paper](paper/tinyace.pdf). It builds a playbook on an adaptation split
+(score → reflect on errors → curate → memorise), **freezes it**, and then
+evaluates through a stock
 [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) run
-with the playbook as a static prompt prefix. The task is
+(Biderman et al., 2024) with the playbook as a static prompt prefix. The task is
 [Belebele](https://huggingface.co/datasets/facebook/belebele) reading
-comprehension, in English (`eng_Latn`) and Nepali (`npi_Deva`) — 900 parallel
+comprehension (Bandarkar et al., 2024), in English (`eng_Latn`) and Nepali (`npi_Deva`) — 900 parallel
 questions, the same items in both, which makes the cross-lingual comparison
 paired rather than merely matched.
 
@@ -113,23 +116,24 @@ another arm's result under their label.
 
 ```mermaid
 flowchart TB
-    subgraph adapt["Adaptation — adaptation split only"]
-        Q[Question] --> R{Retrieve top-k}
-        P[(Playbook)] --> R
-        R --> S[Score A–D by loglikelihood]
-        S -->|correct| F[Record feedback]
-        S -->|wrong| Refl[Reflector: why?]
-        Refl --> Cur[Curator: generic?]
-        Cur --> P
+    subgraph ADAPT["Adaptation: adaptation split only"]
+        Q["Question"] --> R{"Retrieve top-k"}
+        P[("Playbook")] --> R
+        R --> S["Score A-D by loglikelihood"]
+        S -->|"correct"| F["Record feedback"]
+        S -->|"wrong"| REFL["Reflector: why?"]
+        REFL --> CUR["Curator: generic?"]
+        CUR --> P
         F --> P
     end
 
-    P ==>|freeze top-k| Prefix[Static system_instruction]
+    P ==>|"freeze top-k"| PREFIX["Static system_instruction"]
 
-    subgraph eval["Evaluation — stock lm-eval run"]
-        Prefix --> H[simple_evaluate]
-        H --> Acc[acc]
+    subgraph EVAL["Evaluation: stock lm-eval run"]
+        H["simple_evaluate"] --> ACC["acc"]
     end
+
+    PREFIX --> H
 ```
 
 Adaptation decides "was this right?" the same way evaluation does — the
@@ -141,7 +145,8 @@ another.
 
 ### Retention scoring
 
-A lesson's retention score, used for retrieval ranking and for eviction:
+A lesson's retention score, used for retrieval ranking and for eviction (Eq. 1 of
+the [TinyACE paper](paper/tinyace.pdf)):
 
 ```
 S(l, t) = α·(N_succ/(N_used+ε)) − β·(N_fail/(N_used+ε)) + γ·exp(−λ·(t−t_last)) − δ·V(l)
@@ -156,13 +161,14 @@ ablation arm. Retrieval blends this with cosine relevance to the question;
 Three things decide whether a difference is real, and all three ship with the
 run:
 
-- **Intervals.** At n=500 the 95% Wilson halfwidth near 40% is about 4.3 points.
+- **Intervals.** At n=500 the 95% Wilson (1927) halfwidth near 40% is about 4.3
+  points.
   `summary_accuracy.csv` carries `ci_halfwidth` next to every accuracy.
 - **A paired test.** The arms answer identical questions, so the comparison is
-  McNemar's on the discordant pairs, not two independent proportions.
+  McNemar's (1947) on the discordant pairs, not two independent proportions.
 - **A correction.** Ten arms against a reference is ten tests; at α=0.05 the
   chance of at least one false positive under the null is about 40%. Every
-  comparison printed together is one Holm-corrected family, and the adjusted
+  comparison printed together is one Holm-corrected (Holm, 1979) family, and the adjusted
   p-value is the one that decides.
 
 `scripts/compare_arms.py` does all three. A delta that has not been through it
@@ -222,12 +228,34 @@ data/tasks/belebele/  The two committed language files.
 | [docs/results.md](docs/results.md) | Withdrawn results, kept for provenance |
 | `CHANGELOG.md` | Every defect found, and its fix |
 
+## References
+
+- Bandarkar, L., et al. (2024). The Belebele Benchmark: a Parallel Reading
+  Comprehension Dataset in 122 Language Variants. *ACL 2024*.
+  [arXiv:2308.16884](https://arxiv.org/abs/2308.16884)
+- Biderman, S., Schoelkopf, H., Sutawika, L., et al. (2024). Lessons from the
+  Trenches on Reproducible Evaluation of Language Models.
+  [arXiv:2405.14782](https://arxiv.org/abs/2405.14782)
+- Holm, S. (1979). A Simple Sequentially Rejective Multiple Test Procedure.
+  *Scandinavian Journal of Statistics*, 6(2), 65–70.
+- McNemar, Q. (1947). Note on the Sampling Error of the Difference Between
+  Correlated Proportions or Percentages. *Psychometrika*, 12(2), 153–157.
+- Shahi, S. B., Naik, S. H., & Harsh, A. TinyACE: Bounded Working-Memory Context
+  Engineering for Small Language Models (SLMs). [paper/tinyace.pdf](paper/tinyace.pdf).
+  Its SciQ results are withdrawn; see [docs/results.md](docs/results.md).
+- Wilson, E. B. (1927). Probable Inference, the Law of Succession, and
+  Statistical Inference. *Journal of the American Statistical Association*,
+  22(158), 209–212.
+- Zhang, Q., et al. (2025). Agentic Context Engineering: Evolving Contexts for
+  Self-Improving Language Models. *ICLR 2026*.
+  [arXiv:2510.04618](https://arxiv.org/abs/2510.04618)
+
 ## Citation
 
 ```bibtex
-@software{tinyace_nepali,
-  title  = {TinyACE-Nepali: Test-Time Context Adaptation for Small Language
-            Models on a Low-Resource Language},
+@software{tinyace,
+  title  = {TinyACE: Test-Time Context Adaptation for Small Language Models
+            on a Low-Resource Language},
   author = {Shahi, Suryodaya},
   year   = {2026},
   url    = {https://github.com/SirAlchemist1/edge-slm-ace}

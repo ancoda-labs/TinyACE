@@ -5,8 +5,8 @@ From a clean checkout to a result you are allowed to report.
 ## 1. Install
 
 ```bash
-git clone https://github.com/SirAlchemist1/edge-slm-ace.git
-cd edge-slm-ace
+git clone https://github.com/ancoda-labs/TinyACE.git
+cd TinyACE
 python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 make install
 ```
@@ -40,7 +40,7 @@ by position pairs unrelated questions while looking like a matched comparison.
 ## 3. Verify the pipeline runs
 
 ```bash
-make test     # 250 tests, no model downloads
+make test     # the full suite; no model downloads
 
 # One real arm end to end on a tiny random-weight checkpoint.
 python -m scripts.run_arm \
@@ -77,11 +77,15 @@ make grid DEVICE=cuda
 
 Eleven arms x two languages per model, with the model loaded once and reused.
 Completed cells are skipped unless the seed or the commit changed, so an
-interrupted grid resumes. Preview without running anything:
+interrupted grid resumes. Preview the plan without running anything:
 
 ```bash
 python -m scripts.run_grid --dry-run
 ```
+
+The plan's models are the screening survivors, so until `make screen` has
+written `screening.json` the dry run stops with "no models". Name one to preview
+anyway: `--models tiny-gpt2`.
 
 ## 6. Report
 
@@ -105,7 +109,7 @@ results/
   screening/screening.json
   {model}/{language}/{arm}/
     metrics.json          run-level summary, config and environment
-    predictions.jsonl     one row per item: qid, is_correct
+    predictions.jsonl     one row per item: qid, is_correct, arm, model, language
     playbook.jsonl        the frozen playbook (arms that adapt)
     adaptation_log.csv    one row per adaptation step
   summary_runs.csv

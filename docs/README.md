@@ -21,6 +21,10 @@ About to report a number:
 point estimate is not decidable at this sample size, and what invalidates a run
 outright.
 
+Want to contribute:
+[CONTRIBUTING.md](../CONTRIBUTING.md) — setup, what CI checks, and where help is
+needed.
+
 Wondering why something is built the way it is:
 the docstring above it names the failure mode it prevents. `CHANGELOG.md` has
 the same history in one place.
