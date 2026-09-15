@@ -134,6 +134,17 @@ class TestScreeningRule:
         low, _ = wilson_interval(int(0.35 * SCREENING_N), SCREENING_N)
         assert low > CHANCE_FLOOR, "a 35% model must be distinguishable from chance"
 
+    def test_week1_lineup_is_qwen3_and_gemma3_on_both_tasks(self):
+        from edge_slm_ace.utils import SCREENING_MODELS, SCREENING_TASKS
+
+        assert SCREENING_MODELS == (
+            "qwen3-1.7b",
+            "qwen3-4b",
+            "gemma-3-1b",
+            "gemma-3-4b",
+        )
+        assert SCREENING_TASKS == ("belebele", "global_mmlu")
+
 
 class TestLanguageOrdering:
     """

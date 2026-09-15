@@ -10,6 +10,7 @@ import pytest
 
 from edge_slm_ace.data import load_belebele
 from edge_slm_ace.data.belebele import HARNESS_TASKS, belebele_path, item_id
+from edge_slm_ace.eval.utils import shuffle_mcq_doc
 from edge_slm_ace.harness.prompts import (
     BELEBELE_DOC_TO_TEXT,
     CHOICE_LETTERS,
@@ -20,7 +21,7 @@ from edge_slm_ace.harness.prompts import (
     choice_continuations,
     render_question,
 )
-from edge_slm_ace.harness.evaluate import per_item_correctness
+from edge_slm_ace.harness.evaluate import per_item_correctness, task_manager
 from edge_slm_ace.harness.scorer import OptionScorer, option_margin
 
 lm_eval = pytest.importorskip("lm_eval", reason="lm-eval not installed")
@@ -103,7 +104,9 @@ class TestHarnessParity:
         differed by the whole template. Both shift the loglikelihoods, and more
         for the arm carrying the longer prefix.
         """
-        doc = list(local_belebele_task.test_docs())[0]
+        raw = list(local_belebele_task.test_docs())[0]
+        # Adaptation and the custom YAML both apply the same deterministic shuffle.
+        doc = shuffle_mcq_doc(dict(raw))
         expected = local_belebele_task.fewshot_context(
             doc,
             0,
@@ -111,8 +114,7 @@ class TestHarnessParity:
             apply_chat_template=apply_chat_template,
             chat_template=fake_chat_template if apply_chat_template else None,
         )
-        # load_belebele sorts by id, the raw file does not; join on the passage.
-        example = next(e for e in load_belebele("en") if e["context"] == doc["flores_passage"])
+        example = next(e for e in load_belebele("en") if e["id"] == item_id(raw))
 
         assert (
             build_context(
@@ -157,12 +159,10 @@ class TestHarnessParity:
         assert contexts.pop().startswith("<CHAT>system:")
         assert [continuation for _, continuation in seen] == ["A", "B", "C", "D"]
 
-    def test_task_names_exist_in_the_harness(self):
-        from lm_eval.tasks import TaskManager
-
-        available = set(TaskManager().all_tasks)
+    def test_custom_task_names_load_via_include_path(self):
+        available = set(task_manager().all_tasks)
         for task in HARNESS_TASKS.values():
-            assert task in available, f"{task} is not a task lm-eval knows"
+            assert task in available, f"{task} missing from TaskManager(include_path=...)"
 
 
 class TestSystemInstruction:

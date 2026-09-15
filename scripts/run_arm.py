@@ -168,7 +168,7 @@ def main(argv=None, lm=None) -> int:
     examples = load_belebele(args.language, domain=domain)
     by_id = {e["id"]: e for e in examples}
     adapt_ids, eval_ids = study_split(
-        [e["id"] for e in examples], seed=args.seed, adaptation_size=args.adaptation_size
+        examples, seed=args.seed, adaptation_size=args.adaptation_size
     )
     if args.limit:
         adapt_ids, eval_ids = adapt_ids[: args.limit], eval_ids[: args.limit]

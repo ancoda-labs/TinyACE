@@ -1,9 +1,10 @@
 """Frozen evaluation through lm-evaluation-harness.
 
-Evaluation is a stock harness run. The playbook enters as `system_instruction`,
-a static prefix, and the split enters as `samples`, a list of document
-positions. Nothing about scoring is ours: no answer parsing, no option mapping,
-no bespoke accuracy.
+Evaluation is a harness run over the custom TinyACE task YAMLs under
+`eval/tasks/` (loaded via ``TaskManager(include_path=...)``). The playbook
+enters as `system_instruction`, a static prefix, and the split enters as
+`samples`, a list of document positions. Nothing about scoring is ours: no
+answer parsing, no option mapping, no bespoke accuracy.
 
 That is the point of freezing the playbook first. A playbook that updated during
 evaluation would need our own loop, and our own loop is what the previous
@@ -14,8 +15,15 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Sequence
 
-from edge_slm_ace.data.belebele import HARNESS_TASKS, harness_indices
+from edge_slm_ace.data.belebele import HARNESS_TASKS as BELEBELE_HARNESS_TASKS
+from edge_slm_ace.data.belebele import harness_indices as belebele_harness_indices
+from edge_slm_ace.data.globalmmlu import HARNESS_TASKS as GLOBAL_MMLU_HARNESS_TASKS
+from edge_slm_ace.data.globalmmlu import harness_indices as globalmmlu_harness_indices
+from edge_slm_ace.eval.tasks import TASKS_DIR
 from edge_slm_ace.harness.prompts import CHOICE_LETTERS, build_system_instruction
+
+# Back-compat alias: Belebele remains the primary study task.
+HARNESS_TASKS = BELEBELE_HARNESS_TASKS
 
 
 def build_model_args(model_id: str, dtype: Optional[str] = None) -> str:
@@ -33,6 +41,33 @@ def build_model_args(model_id: str, dtype: Optional[str] = None) -> str:
     if dtype:
         parts.append(f"dtype={dtype}")
     return ",".join(parts)
+
+
+def task_manager():
+    """TaskManager that registers TinyACE YAMLs via ``--include_path``."""
+    from lm_eval.tasks import TaskManager
+
+    return TaskManager(include_path=str(TASKS_DIR))
+
+
+def resolve_task(language: str, benchmark: str = "belebele") -> str:
+    """Harness task name for a language on one of the Week 1 benchmarks."""
+    if benchmark == "belebele":
+        return BELEBELE_HARNESS_TASKS[language]
+    if benchmark == "global_mmlu":
+        return GLOBAL_MMLU_HARNESS_TASKS[language]
+    raise KeyError(f"Unknown benchmark '{benchmark}'. Known: belebele, global_mmlu")
+
+
+def resolve_indices(
+    language: str, item_ids: Sequence[str], benchmark: str = "belebele"
+) -> List[int]:
+    """Document positions for `samples=` on the chosen benchmark."""
+    if benchmark == "belebele":
+        return belebele_harness_indices(language, item_ids)
+    if benchmark == "global_mmlu":
+        return globalmmlu_harness_indices(language, item_ids)
+    raise KeyError(f"Unknown benchmark '{benchmark}'")
 
 
 class TruncationCounter(logging.Handler):
@@ -103,6 +138,7 @@ def run_frozen_eval(
     apply_chat_template: bool = True,
     log_samples: bool = True,
     lm=None,
+    benchmark: str = "belebele",
 ) -> Dict[str, Any]:
     """
     Evaluate one arm on one language, over a fixed item set.
@@ -110,7 +146,7 @@ def run_frozen_eval(
     Args:
         model_id: HuggingFace model id.
         language: "en" or "ne".
-        item_ids: The evaluation split, from `parallel_split`. Converted to this
+        item_ids: The evaluation split, from `study_split`. Converted to this
             language's document positions -- the two language files are in
             different row orders, so a shared index list would evaluate a
             different question set per language.
@@ -128,6 +164,7 @@ def run_frozen_eval(
         lm: A live `lm_eval.api.model.LM` to reuse instead of loading the
             checkpoint again. A grid runs a dozen arms per model, and reloading
             for each is the largest avoidable cost in the whole study.
+        benchmark: ``belebele`` (default) or ``global_mmlu``.
 
     Returns:
         The harness results dict, with the arm's configuration recorded under
@@ -135,8 +172,8 @@ def run_frozen_eval(
     """
     import lm_eval
 
-    task = HARNESS_TASKS[language]
-    indices = harness_indices(language, item_ids)
+    task = resolve_task(language, benchmark)
+    indices = resolve_indices(language, item_ids, benchmark)
     instruction = build_system_instruction(lessons, include_scaffold=include_scaffold)
 
     with TruncationCounter() as truncation:
@@ -144,6 +181,7 @@ def run_frozen_eval(
             model=lm if lm is not None else "hf",
             model_args=None if lm is not None else build_model_args(model_id, dtype),
             tasks=[task],
+            task_manager=task_manager(),
             samples={task: indices},
             system_instruction=instruction or None,
             apply_chat_template=apply_chat_template,
@@ -165,7 +203,9 @@ def run_frozen_eval(
         "tokens_dropped": truncation.tokens_dropped,
         "model_id": model_id,
         "language": language,
+        "benchmark": benchmark,
         "task": task,
+        "include_path": str(TASKS_DIR),
         "n_items": n_items,
         "seed": seed,
         "num_lessons": len(lessons or []),
@@ -176,7 +216,11 @@ def run_frozen_eval(
     return results
 
 
-def accuracy_of(results: Dict[str, Any], language: str) -> Optional[float]:
+def accuracy_of(
+    results: Dict[str, Any],
+    language: str,
+    benchmark: str = "belebele",
+) -> Optional[float]:
     """
     Pull the headline accuracy out of a harness results dict.
 
@@ -187,11 +231,12 @@ def accuracy_of(results: Dict[str, Any], language: str) -> Optional[float]:
     Args:
         results: A `run_frozen_eval` return value.
         language: "en" or "ne".
+        benchmark: ``belebele`` or ``global_mmlu``.
 
     Returns:
         Accuracy, or None when the task is absent.
     """
-    task = HARNESS_TASKS[language]
+    task = resolve_task(language, benchmark)
     return results.get("results", {}).get(task, {}).get("acc,none")
 
 
@@ -199,6 +244,7 @@ def per_item_correctness(
     results: Dict[str, Any],
     language: str,
     expected_ids: Optional[Sequence[str]] = None,
+    benchmark: str = "belebele",
 ) -> Dict[str, int]:
     """
     Per-item correctness, keyed by our cross-language item id.
@@ -209,11 +255,11 @@ def per_item_correctness(
     This is also the only place the `samples` selection can be checked, and it
     is the check that guards the study's largest untested assumption.
     `harness_indices` derives document positions from the committed jsonl, while
-    the harness loads the same split from `facebook/belebele` on the Hub. Those
-    two orders agreeing is an assumption, not a fact; if it ever fails, the run
-    scores a different question set per arm and still reports a clean accuracy.
-    Recovering the ids from the logged docs and comparing them to what was asked
-    for costs nothing and closes it.
+    the harness loads the same split from the Hub. Those two orders agreeing is
+    an assumption, not a fact; if it ever fails, the run scores a different
+    question set per arm and still reports a clean accuracy. Recovering the ids
+    from the logged docs and comparing them to what was asked for costs nothing
+    and closes it.
 
     Requires the run to have been made with `log_samples=True`.
 
@@ -222,6 +268,7 @@ def per_item_correctness(
         language: "en" or "ne".
         expected_ids: The ids the run was asked to score. When given, a mismatch
             raises rather than returning a plausible-looking subset.
+        benchmark: ``belebele`` or ``global_mmlu``.
 
     Returns:
         Mapping of item id -> 1/0.
@@ -230,9 +277,12 @@ def per_item_correctness(
         ValueError: If samples were not logged, if a sample is missing its doc
             or its `acc` metric, or if the ids scored are not the ids requested.
     """
-    from edge_slm_ace.data.belebele import item_id
+    if benchmark == "global_mmlu":
+        from edge_slm_ace.data.globalmmlu import item_id
+    else:
+        from edge_slm_ace.data.belebele import item_id
 
-    task = HARNESS_TASKS[language]
+    task = resolve_task(language, benchmark)
     samples: List[Dict] = results.get("samples", {}).get(task, [])
     if not samples:
         raise ValueError(

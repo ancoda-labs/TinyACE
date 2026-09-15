@@ -14,9 +14,11 @@ requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 
 # Scoring is lm-evaluation-harness; it brings torch and transformers via [hf].
+# `datasets` is listed explicitly because Global-MMLU loading uses it directly.
 # Nothing here re-implements a metric the harness already computes.
 dependencies = [
     "lm-eval[hf]>=0.4.9",
+    "datasets>=2.14.0",
     "pyyaml>=6.0",
 ]
 
@@ -51,6 +53,9 @@ Issues = "https://github.com/SirAlchemist1/edge-slm-ace/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+edge_slm_ace = ["eval/tasks/*.yaml"]
 
 [tool.black]
 line-length = 100

@@ -13,11 +13,13 @@ from edge_slm_ace.utils import ADAPTATION_SIZE, SCREENING_N
 from edge_slm_ace.data.belebele import (
     BELEBELE_LANGUAGES,
     HARNESS_TASKS,
+    assert_zero_passage_overlap,
     belebele_path,
     harness_indices,
     item_id,
     load_belebele,
     parallel_split,
+    passage_disjoint_split,
     study_split,
 )
 
@@ -37,10 +39,19 @@ class TestParallelism:
         en, ne = languages
         assert [e["id"] for e in en] == [e["id"] for e in ne]
 
-    def test_gold_agrees_across_languages(self, languages):
-        """A translated question keeps its answer; if not, the pairing is wrong."""
+    def test_gold_agrees_across_languages(self):
+        """Raw files share correct_answer_num; MD5(passage+question) may diverge after shuffle."""
+        raw = {}
+        for lang in ("en", "ne"):
+            with open(belebele_path(lang), encoding="utf-8") as f:
+                rows = [json.loads(line) for line in f if line.strip()]
+            raw[lang] = {item_id(r): r["correct_answer_num"] for r in rows}
+        assert raw["en"] == raw["ne"]
+
+    def test_shuffled_gold_is_internally_consistent(self, languages):
         en, ne = languages
-        assert all(a["gold_option_idx"] == b["gold_option_idx"] for a, b in zip(en, ne))
+        for examples in (en, ne):
+            assert all(e["answer"] == e["options"][e["gold_option_idx"]] for e in examples)
 
     def test_files_are_not_in_the_same_order(self):
         """The premise for every id-based join in this module."""
@@ -65,6 +76,14 @@ class TestItemIds:
         naive = {(str(r["link"]).rsplit("/", 1)[-1], r["question_number"]) for r in rows}
         assert len(naive) < len(rows), "the naive key is expected to collide"
         assert len({item_id(r) for r in rows}) == len(rows)
+
+    def test_passage_ids_are_shared_by_sibling_questions(self, languages):
+        en, _ = languages
+        by_passage = {}
+        for e in en:
+            by_passage.setdefault(e["passage_id"], []).append(e["id"])
+        assert len(by_passage) == 488
+        assert sum(1 for ids in by_passage.values() if len(ids) > 1) > 0
 
 
 class TestSplit:
@@ -97,6 +116,38 @@ class TestSplit:
         en, _ = languages
         with pytest.raises(ValueError):
             parallel_split([e["id"] for e in en], 900, seed=42)
+
+
+class TestPassageDisjointSplit:
+    """Week 1: adaptation must not share FLORES passages with evaluation."""
+
+    def test_zero_passage_id_overlap(self, languages):
+        en, _ = languages
+        adapt, evaluate = study_split(en, seed=42)
+        adapt_passages = {e["passage_id"] for e in en if e["id"] in set(adapt)}
+        eval_passages = {e["passage_id"] for e in en if e["id"] in set(evaluate)}
+        for passage_id_ in adapt_passages:
+            assert passage_id_ not in eval_passages
+        assert_zero_passage_overlap(adapt, evaluate, en)
+
+    def test_item_level_split_would_leak_passages(self, languages):
+        """Why study_split is passage-disjoint rather than a plain id shuffle."""
+        en, _ = languages
+        adapt, evaluate = parallel_split([e["id"] for e in en], ADAPTATION_SIZE, seed=42)
+        by_id = {e["id"]: e for e in en}
+        adapt_passages = {by_id[i]["passage_id"] for i in adapt}
+        eval_passages = {by_id[i]["passage_id"] for i in evaluate}
+        assert adapt_passages & eval_passages, "premise: item split leaks passages"
+
+    def test_hits_exact_adaptation_size(self, languages):
+        en, _ = languages
+        adapt, evaluate = passage_disjoint_split(en, ADAPTATION_SIZE, seed=42)
+        assert len(adapt) == ADAPTATION_SIZE
+        assert len(adapt) + len(evaluate) == 900
+
+    def test_identical_across_languages(self, languages):
+        en, ne = languages
+        assert study_split(en, seed=42) == study_split(ne, seed=42)
 
 
 class TestHarnessIndices:
@@ -165,7 +216,15 @@ class TestSchema:
     def test_examples_carry_what_the_runner_needs(self, languages):
         en, _ = languages
         example = en[0]
-        assert {"id", "question", "context", "options", "gold_option_idx", "answer"} <= set(example)
+        assert {
+            "id",
+            "passage_id",
+            "question",
+            "context",
+            "options",
+            "gold_option_idx",
+            "answer",
+        } <= set(example)
         assert len(example["options"]) == 4
         assert example["answer"] == example["options"][example["gold_option_idx"]]
 
@@ -180,20 +239,15 @@ class TestSchema:
 
     def test_harness_task_names_cover_both_languages(self):
         assert set(HARNESS_TASKS) == set(BELEBELE_LANGUAGES)
+        assert all(name in {"belebele_eng", "belebele_npi"} for name in HARNESS_TASKS.values())
 
 
 class TestStudySplit:
-    """One split for the whole study, so screening cannot leak into evaluation.
+    """One split for the whole study, so screening cannot leak into evaluation."""
 
-    `screen_models` split at 400 and `run_arm` at 200. The split is one shuffle
-    sliced at that index, so the 200 items between them were screened on *and*
-    scored on: models were selected on items their own results are reported
-    over.
-    """
-
-    def test_screening_and_evaluation_never_overlap(self):
-        ids = [f"bel-{i:04d}" for i in range(900)]
-        adapt, evaluate = study_split(ids, seed=42)
+    def test_screening_and_evaluation_never_overlap(self, languages):
+        en, _ = languages
+        adapt, evaluate = study_split(en, seed=42)
 
         screening = adapt[:SCREENING_N]
         assert len(screening) == SCREENING_N
@@ -203,11 +257,15 @@ class TestStudySplit:
         """The constraint the two entrypoints have to satisfy jointly."""
         assert SCREENING_N <= ADAPTATION_SIZE
 
-    def test_every_entrypoint_gets_the_same_split(self):
-        ids = [f"bel-{i:04d}" for i in range(900)]
-        assert study_split(ids, seed=42) == study_split(list(reversed(ids)), seed=42)
+    def test_every_entrypoint_gets_the_same_split(self, languages):
+        en, _ = languages
+        assert study_split(en, seed=42) == study_split(list(reversed(en)), seed=42)
 
-    def test_an_override_is_still_available_for_debugging(self):
-        ids = [f"bel-{i:04d}" for i in range(900)]
-        adapt, _ = study_split(ids, seed=42, adaptation_size=10)
+    def test_an_override_is_still_available_for_debugging(self, languages):
+        en, _ = languages
+        adapt, _ = study_split(en, seed=42, adaptation_size=10)
         assert len(adapt) == 10
+
+    def test_rejects_bare_id_strings(self):
+        with pytest.raises(ValueError, match="passage_id"):
+            study_split(["bel-0001", "bel-0002"], seed=42)  # type: ignore[arg-type]
