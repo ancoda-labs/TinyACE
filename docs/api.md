@@ -15,17 +15,19 @@ from edge_slm_ace.data.belebele import item_id, harness_indices, HARNESS_TASKS
 | | |
 |---|---|
 | `load_belebele(language, path=None, domain=None)` | Normalised examples, **sorted by id** so `load_belebele("en")[i]` and `load_belebele("ne")[i]` are the same question |
-| `study_split(item_ids, seed, adaptation_size=None)` | The study's one split. Every entrypoint uses this rather than sizing its own |
-| `parallel_split(item_ids, adaptation_size, seed)` | The primitive underneath it |
+| `study_split(examples, seed, adaptation_size=None)` | The study's one split, **passage-disjoint**: takes `load_belebele` output, not bare ids. Every entrypoint uses this rather than sizing its own |
+| `parallel_split(item_ids, adaptation_size, seed)` | The item-level primitive. Leaks shared passages, so the study does not split with it |
+| `passage_id(record)` | `bel-pass-<hash>`, from `link` — the key the split keeps on one side |
 | `item_id(record)` | `bel-<hash>-q<n>`, from `(link, question_number)` — the only safe cross-language join key |
 | `harness_indices(language, item_ids)` | Ids → this language's document positions |
-| `HARNESS_TASKS` | `{"en": "belebele_eng_Latn", "ne": "belebele_npi_Deva"}` |
+| `HARNESS_TASKS` | `{"en": "belebele_eng", "ne": "belebele_npi"}` — the custom tasks in `eval/tasks/`, which shuffle options |
 
 An example:
 
 ```python
 {
-  "id": "bel-015eac1bdc-q2", "language": "ne", "domain": "belebele_ne",
+  "id": "bel-015eac1bdc-q2", "passage_id": "bel-pass-015eac1bdc",
+  "language": "ne", "domain": "belebele_ne",
   "context": "<the FLORES passage>", "question": "...",
   "options": ["...", "...", "...", "..."],
   "gold_option_idx": 2, "answer": "...",
@@ -211,7 +213,8 @@ All are `python -m scripts.<name>`; `--help` on each.
 | | |
 |---|---|
 | `fetch_belebele` | Download or `--check` the language files |
-| `screen_models` | The pre-registered Nepali gate |
+| `fetch_globalmmlu` | `--check` the Global-MMLU en/ne splits on the Hub |
+| `screen` | The pre-registered Nepali gate, on Belebele and Global-MMLU. `screen_models` still works as an alias |
 | `run_arm` | One cell: adapt if the arm needs it, then evaluate frozen |
 | `run_grid` | Every arm x language x model, one load per model. `--dry-run` |
 | `aggregate_results` | `summary_runs.csv`, `summary_accuracy.csv`, health warnings |

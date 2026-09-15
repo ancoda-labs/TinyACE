@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Week 1 data layer
+
+- Global-MMLU (en/ne) loader and `scripts/fetch_globalmmlu.py`, and custom
+  lm-eval tasks under `eval/tasks/` that shuffle options deterministically per
+  item (MD5 of passage + question). The loader and the harness apply the same
+  permutation.
+- `scripts/screen.py` screens Qwen3 (1.7B, 4B) and Gemma-3 (1B-it, 4B-it) on
+  Nepali Belebele and Global-MMLU. `screen_models` is now an alias for it.
+
+### Changed — Week 1 data layer
+
+- The Belebele study split is passage-disjoint. The 900 questions share 488
+  FLORES passages, so an item-level split let adaptation read the passages of
+  evaluation items. `study_split` now takes examples rather than ids, and
+  `assert_zero_passage_overlap` enforces the invariant. Any run made before
+  this used a different split and unshuffled options, and must be regenerated.
+
+### Fixed — Week 1 review
+
+- `run_grid` read every passing screening row as a survivor. With one row per
+  model and task, a model that cleared Global-MMLU but not Belebele entered the
+  Belebele grid, and one that cleared both was planned twice. Only a Belebele
+  pass admits a model now.
+- `test_relevance` imported `tomllib`, which Python 3.10 does not have, so the
+  3.10 CI job failed on every commit and cancelled the 3.11 job with it. The
+  test skips on 3.10 now.
+
 ### Fixed — third review pass
 
 A review of the state the harness rebuild left behind. Every finding was
