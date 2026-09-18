@@ -123,6 +123,8 @@ class TestBelebelePassageSplit:
 class TestDeterministicOptionShuffling:
     def test_saves_gold_option_idx(self):
         doc = {
+            "link": "http://example/once",
+            "question_number": 1,
             "flores_passage": "Once upon a time.",
             "question": "Who?",
             "mc_answer1": "A1",
@@ -136,8 +138,17 @@ class TestDeterministicOptionShuffling:
         assert 0 <= out["gold_option_idx"] < 4
         assert out[f"mc_answer{out['gold_option_idx'] + 1}"] == "A2"
 
-    def test_seeded_on_md5_of_passage_and_question(self):
-        doc = {
+    def test_seeded_on_the_invariant_key_not_the_text(self):
+        """
+        Was `test_seeded_on_md5_of_passage_and_question`, which pinned the
+        defect: seeding on passage + question text gave a translated item a
+        different option order, and 857 of Belebele's 900 items disagreed
+        between English and Nepali while every downstream number still
+        computed. The seed now comes from (link, question_number).
+        """
+        english = {
+            "link": "http://example/p",
+            "question_number": 1,
             "flores_passage": "P",
             "question": "Q",
             "mc_answer1": "a",
@@ -146,13 +157,23 @@ class TestDeterministicOptionShuffling:
             "mc_answer4": "d",
             "correct_answer_num": "1",
         }
-        expected = __import__("hashlib").md5(b"P\nQ").hexdigest()
-        assert stable_item_hash(doc) == expected
-        assert isinstance(stable_item_seed(doc), int)
+        nepali = {
+            **english,
+            "flores_passage": "अनुच्छेद",
+            "question": "प्रश्न",
+            "mc_answer1": "क",
+            "mc_answer2": "ख",
+            "mc_answer3": "ग",
+            "mc_answer4": "घ",
+        }
+        assert stable_item_hash(english) == stable_item_hash(nepali)
+        assert isinstance(stable_item_seed(english), int)
 
     def test_idempotent_on_raw_docs(self):
         """Same raw input → identical shuffle every time (deterministic)."""
         doc = {
+            "link": "http://example/river",
+            "question_number": 2,
             "flores_passage": "The river flooded the plains.",
             "question": "What flooded?",
             "mc_answer1": "fire",
@@ -180,6 +201,8 @@ class TestDeterministicOptionShuffling:
         ds = datasets.Dataset.from_list(
             [
                 {
+                    "link": "http://example/ctx",
+                    "question_number": 1,
                     "flores_passage": "ctx",
                     "question": "q",
                     "mc_answer1": "a",

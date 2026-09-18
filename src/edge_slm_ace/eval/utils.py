@@ -1,8 +1,31 @@
 """Deterministic option shuffling for TinyACE lm-eval tasks.
 
-``process_docs`` permutes multiple-choice options with an RNG seeded on the
-MD5 of passage + question text, then records ``gold_option_idx`` so scoring
-and adaptation share one gold slot after the shuffle.
+``process_docs`` permutes multiple-choice options per item and records
+``gold_option_idx``, so scoring and adaptation share one gold slot after the
+shuffle. Both corpora put gold in a non-uniform slot, and a letter-biased small
+model turns that into accuracy it has not earned.
+
+**The seed key is the whole correctness story here.** It used to be
+``MD5(passage + question)`` -- that is, the item's *text*. A translation is
+different text, so English and Nepali hashed differently and the same item was
+scored with its options in a different order in each language. Measured on the
+900 Belebele items, 857 of them (95.2%) disagreed.
+
+Nothing about that failure is visible downstream. Accuracies still compute,
+McNemar still runs, a paired delta still gets reported -- it is simply no longer
+paired, because item *i* in one language is not the same rendering as item *i*
+in the other. That is the guard G1 names, and it is why the key is now an id the
+*dataset* guarantees is identical across languages, never anything derived from
+content.
+
+Per corpus, the invariant key is:
+
+    Global-MMLU   ``sample_id``       ("abstract_algebra/test/0")
+    Belebele      ``link`` + ``question_number``
+    normalised    ``id``              (already derived from the above)
+
+``invariant_item_key`` raises when it can find none of those rather than falling
+back to text, because a silent fallback is exactly the bug this module just had.
 """
 
 from __future__ import annotations
@@ -15,21 +38,57 @@ _N_OPTIONS = 4
 _LETTERS = ("A", "B", "C", "D")
 
 
-def stable_item_hash(doc: Mapping[str, Any]) -> str:
+def invariant_item_key(doc: Mapping[str, Any]) -> str:
     """
-    MD5 hex digest of passage + question text.
+    The language-invariant key for one MCQ document.
 
-    Belebele uses ``flores_passage``; Global-MMLU has no passage, so the
-    passage half is empty and the hash is driven by the question alone.
+    Args:
+        doc: A raw Belebele or Global-MMLU row, or a normalised example.
+
+    Returns:
+        A key identical across every language variant of the same item.
+
+    Raises:
+        ValueError: If the document carries none of the known invariant keys.
+            It does not fall back to hashing question text: that is precisely
+            what broke the pairing, and a fallback would make the failure
+            silent again the next time a caller passes an unexpected shape.
     """
-    passage = str(doc.get("flores_passage") or doc.get("context") or doc.get("passage") or "")
-    question = str(doc.get("question") or "").strip()
-    return hashlib.md5(f"{passage}\n{question}".encode("utf-8")).hexdigest()
+    sample_id = doc.get("sample_id")
+    if sample_id is not None and str(sample_id).strip():
+        return f"gmmlu:{sample_id}"
+
+    link, number = doc.get("link"), doc.get("question_number")
+    if link is not None and str(link).strip() and number is not None:
+        return f"belebele:{link}#{number}"
+
+    item = doc.get("id")
+    if item is not None and str(item).strip():
+        return f"id:{item}"
+
+    raise ValueError(
+        "Cannot derive a language-invariant key for this document: it has no "
+        "'sample_id', no ('link', 'question_number') and no 'id'. Refusing to "
+        "fall back to the question text -- a translated item hashes "
+        "differently in every language, which silently unpairs the study."
+    )
+
+
+def stable_item_hash(doc: Mapping[str, Any]) -> str:
+    """Hex digest of the document's language-invariant key."""
+    return hashlib.blake2s(invariant_item_key(doc).encode("utf-8"), digest_size=8).hexdigest()
 
 
 def stable_item_seed(doc: Mapping[str, Any]) -> int:
-    """Integer RNG seed derived from ``stable_item_hash``."""
-    return int(stable_item_hash(doc)[:16], 16)
+    """
+    Integer RNG seed derived from ``stable_item_hash``.
+
+    An int rather than the string itself: ``random.Random(some_str)`` seeds from
+    the string's hash, which ``PYTHONHASHSEED`` randomises per process, so the
+    adaptation run and the evaluation run would permute the same item
+    differently.
+    """
+    return int(stable_item_hash(doc), 16)
 
 
 def permute_options(options: Sequence[str], gold_idx: int, seed: int) -> tuple[List[str], int]:
