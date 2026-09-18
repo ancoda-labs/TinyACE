@@ -282,3 +282,43 @@ class TestTaskNamesDoNotCollideWithUpstream:
         for path in paths:
             declared = yaml.load(path.read_text(encoding="utf-8"), Loader=_IgnoreTags)["task"]
             assert declared == path.stem, f"{path.name} declares task: {declared}"
+
+
+class TestNoTaskDrawsFewShotFromTheEvaluationSplit:
+    """
+    Belebele ships only a `test` split, so a `fewshot_split` on these tasks can
+    only point at the split the study reports over -- and `sampler: first_n`
+    would draw demonstrations deterministically from its first documents.
+
+    It is inert while every run is 0-shot, which is why it went unnoticed. The
+    planned `icl_matched_budget` arm is what makes it live, so it is asserted
+    now rather than remembered then.
+    """
+
+    def test_no_yaml_declares_a_fewshot_source(self):
+        import yaml
+
+        from edge_slm_ace.eval.tasks import TASKS_DIR
+
+        class _IgnoreTags(yaml.SafeLoader):
+            pass
+
+        _IgnoreTags.add_multi_constructor("!", lambda loader, suffix, node: None)
+
+        for path in sorted(TASKS_DIR.glob("tinyace_*.yaml")):
+            config = yaml.load(path.read_text(encoding="utf-8"), Loader=_IgnoreTags)
+            assert "fewshot_split" not in config, f"{path.name} names a few-shot source"
+            assert "fewshot_config" not in config, f"{path.name} configures a few-shot sampler"
+
+    def test_the_loaded_tasks_have_no_fewshot_split(self):
+        pytest.importorskip("lm_eval")
+        from lm_eval.tasks import TaskManager
+
+        from edge_slm_ace.eval.tasks import TASKS_DIR
+
+        names = sorted(BELEBELE_HARNESS_TASKS.values())
+        manager = TaskManager(include_path=str(TASKS_DIR))
+        loaded = manager.load(names)
+        tasks = loaded["tasks"] if "tasks" in loaded else loaded
+        for name in names:
+            assert tasks[name].config.fewshot_split is None, name
