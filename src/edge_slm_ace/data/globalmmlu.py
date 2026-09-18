@@ -46,8 +46,8 @@ _N_OPTIONS = 4
 
 # lm-eval task names registered under eval/tasks/.
 HARNESS_TASKS: Dict[str, str] = {
-    "en": "global_mmlu_en",
-    "ne": "global_mmlu_ne",
+    "en": "tinyace_global_mmlu_en",
+    "ne": "tinyace_global_mmlu_ne",
 }
 
 

@@ -12,13 +12,13 @@ TASKS_DIR = Path(__file__).resolve().parent
 
 # Day-1 task names from the build plan.
 BELEBELE_HARNESS_TASKS = {
-    "en": "belebele_eng",
-    "ne": "belebele_npi",
+    "en": "tinyace_belebele_eng",
+    "ne": "tinyace_belebele_npi",
 }
 
 GLOBAL_MMLU_HARNESS_TASKS = {
-    "en": "global_mmlu_en",
-    "ne": "global_mmlu_ne",
+    "en": "tinyace_global_mmlu_en",
+    "ne": "tinyace_global_mmlu_ne",
 }
 
 HARNESS_TASKS_BY_BENCHMARK = {

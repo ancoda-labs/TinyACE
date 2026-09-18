@@ -54,7 +54,7 @@ class TestGlobalMMLULoader:
     def test_hub_id_and_expected_counts(self):
         assert HF_DATASET == "CohereForAI/Global-MMLU"
         assert EXPECTED_SIZES == {"test": 14042, "dev": 285}
-        assert GMMLU_TASKS == {"en": "global_mmlu_en", "ne": "global_mmlu_ne"}
+        assert GMMLU_TASKS == {"en": "tinyace_global_mmlu_en", "ne": "tinyace_global_mmlu_ne"}
         assert GLOBAL_MMLU_HARNESS_TASKS == GMMLU_TASKS
 
     def test_verify_schema_records_item_counts(self):
@@ -116,8 +116,8 @@ class TestBelebelePassageSplit:
             assert len(sides) == 1, "questions from one link must not straddle the split"
 
     def test_harness_task_name_is_belebele_npi(self):
-        assert BELEBELE_HARNESS_TASKS["ne"] == "belebele_npi"
-        assert BELEBELE_HARNESS_TASKS["en"] == "belebele_eng"
+        assert BELEBELE_HARNESS_TASKS["ne"] == "tinyace_belebele_npi"
+        assert BELEBELE_HARNESS_TASKS["en"] == "tinyace_belebele_eng"
 
 
 class TestDeterministicOptionShuffling:
@@ -225,3 +225,60 @@ class TestWilsonScreeningRule:
         assert screening_verdict(0.31) is True
         assert screening_verdict(0.30) is False
         assert SCREENING_FLOOR == 0.30
+
+
+class TestTaskNamesDoNotCollideWithUpstream:
+    """
+    Every TinyACE task carries a `tinyace_` prefix, and the prefix is load
+    bearing.
+
+    `global_mmlu_en` is a task lm-eval already ships, reading Global-MMLU
+    *Lite* -- a different and much smaller corpus, with its own prompt
+    template. Ours used the same name, so which definition won depended on
+    whether `--include_path` was passed. Worse, the collision was asymmetric:
+    upstream has no `global_mmlu_ne`, so a run without the include path would
+    silently score English against Lite while Nepali failed as not-found.
+
+    Two different corpora under one name is the same silent label-swap the
+    arm registry exists to prevent, so it is asserted rather than remembered.
+    """
+
+    @staticmethod
+    def _ours():
+        return set(BELEBELE_HARNESS_TASKS.values()) | set(GLOBAL_MMLU_HARNESS_TASKS.values())
+
+    def test_every_task_name_is_namespaced(self):
+        assert all(name.startswith("tinyace_") for name in self._ours())
+
+    def test_no_name_collides_with_an_upstream_task(self):
+        pytest.importorskip("lm_eval")
+        from lm_eval.tasks import TaskManager
+
+        collisions = self._ours() & set(TaskManager().all_tasks)
+        assert not collisions, f"{sorted(collisions)} would shadow, or be shadowed by, lm-eval"
+
+    def test_all_four_register_from_the_include_path(self):
+        pytest.importorskip("lm_eval")
+        from lm_eval.tasks import TaskManager
+
+        from edge_slm_ace.eval.tasks import TASKS_DIR
+
+        available = set(TaskManager(include_path=str(TASKS_DIR)).all_tasks)
+        assert self._ours() <= available
+
+    def test_every_yaml_declares_the_name_its_file_is_called(self):
+        """A file/task mismatch registers something nobody is looking for."""
+        import yaml
+
+        from edge_slm_ace.eval.tasks import TASKS_DIR
+
+        class _IgnoreTags(yaml.SafeLoader):
+            """lm-eval's `!function` tag is not a YAML tag SafeLoader knows."""
+
+        _IgnoreTags.add_multi_constructor("!", lambda loader, suffix, node: None)
+
+        paths = sorted(TASKS_DIR.glob("tinyace_*.yaml"))
+        assert len(paths) == 4, f"expected four task files, found {[p.name for p in paths]}"
+        for path in paths:
+            declared = yaml.load(path.read_text(encoding="utf-8"), Loader=_IgnoreTags)["task"]
+            assert declared == path.stem, f"{path.name} declares task: {declared}"

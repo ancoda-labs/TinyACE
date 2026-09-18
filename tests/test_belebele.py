@@ -239,7 +239,10 @@ class TestSchema:
 
     def test_harness_task_names_cover_both_languages(self):
         assert set(HARNESS_TASKS) == set(BELEBELE_LANGUAGES)
-        assert all(name in {"belebele_eng", "belebele_npi"} for name in HARNESS_TASKS.values())
+        assert all(
+            name in {"tinyace_belebele_eng", "tinyace_belebele_npi"}
+            for name in HARNESS_TASKS.values()
+        )
 
 
 class TestStudySplit:
