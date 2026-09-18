@@ -27,6 +27,7 @@ from edge_slm_ace.core.ace_roles import (
 )
 from edge_slm_ace.harness.prompts import CHOICE_LETTERS
 from edge_slm_ace.harness.scorer import OptionScorer, option_margin
+from edge_slm_ace.data.splits import assert_not_in_eval
 from edge_slm_ace.memory.playbook import Playbook
 
 # Columns of the per-step adaptation log, in write order. Defined next to the
@@ -110,6 +111,7 @@ def adapt_playbook(
     use_curator: bool = True,
     max_new_tokens: int = 192,
     progress: bool = True,
+    eval_manifest: Optional[str] = None,
 ) -> Dict:
     """
     Run one adaptation pass and return the log.
@@ -137,6 +139,10 @@ def adapt_playbook(
         use_curator: Screen candidate lessons with one extra generation.
         max_new_tokens: Cap on reflection and curation length.
         progress: Print per-step progress.
+        eval_manifest: Name of the frozen evaluation manifest for this task.
+            When given, every item is checked against it as it enters the
+            loop. None skips the check and is for tests and synthetic examples
+            only; a real run passes it.
 
     Returns:
         Dict with `log` (one row per step), `accuracy`, and counters.
@@ -148,6 +154,13 @@ def adapt_playbook(
     correct_count = 0
 
     for step, example in enumerate(examples, start=1):
+        # G3, per item and inside the loop. Checking only where the split is
+        # built verifies the split that was built; this verifies the item
+        # actually about to be reasoned over, which is what survives a
+        # `--limit`, a resumed run, or a caller assembling its own batch.
+        if eval_manifest is not None:
+            assert_not_in_eval(example["id"], eval_manifest)
+
         retrieved = playbook.get_top_k(
             domain, k=top_k, current_step=step, query=example["question"]
         )

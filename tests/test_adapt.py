@@ -411,3 +411,64 @@ class TestEntryCapHoldsOnAnySplitLength:
     def test_the_final_prune_is_counted_in_the_log(self):
         _, summary = self.adapt(7)
         assert sum(row["num_evictions"] for row in summary["log"]) > 0
+
+
+class TestEvalSplitGuard:
+    """
+    G3. The guard sits inside the loop, per item, not only where the split is
+    built. A construction-time check verifies the split that was built; this
+    verifies the item actually about to be reasoned over, which is what
+    survives a `--limit`, a resumed run, or a caller assembling its own batch.
+    """
+
+    @staticmethod
+    def _freeze(tmp_path, monkeypatch, ids):
+        from edge_slm_ace.data.splits import clear_manifest_cache, write_manifest
+
+        monkeypatch.setattr("edge_slm_ace.data.splits.REPO_ROOT", tmp_path)
+        clear_manifest_cache()
+        write_manifest("fixture_eval", {"task": "t", "item_ids": ids})
+
+    def test_an_evaluation_item_stops_the_run(self, tmp_path, monkeypatch):
+        from edge_slm_ace.data.splits import clear_manifest_cache
+
+        self._freeze(tmp_path, monkeypatch, ["item-2"])
+        with pytest.raises(ValueError, match="frozen evaluation split"):
+            run([0, 1, 2, 3], eval_manifest="fixture_eval")
+        clear_manifest_cache()
+
+    def test_it_fails_before_the_item_is_scored(self, tmp_path, monkeypatch):
+        """
+        A guard that fired after scoring would already have shown the
+        Reflector a gold answer for an evaluation item.
+        """
+        from edge_slm_ace.data.splits import clear_manifest_cache
+
+        self._freeze(tmp_path, monkeypatch, ["item-0"])
+        scorer = StubScorer([0, 1, 2, 3])
+        with pytest.raises(ValueError, match="frozen evaluation split"):
+            adapt_playbook(
+                scorer,
+                make_examples(4),
+                Playbook(token_budget=256),
+                domain="belebele_en",
+                generate=stub_generate(),
+                prune_every_n=0,
+                progress=False,
+                eval_manifest="fixture_eval",
+            )
+        assert scorer.seen_lessons == [], "the item was scored before the guard fired"
+        clear_manifest_cache()
+
+    def test_a_clean_split_runs_to_completion(self, tmp_path, monkeypatch):
+        from edge_slm_ace.data.splits import clear_manifest_cache
+
+        self._freeze(tmp_path, monkeypatch, ["item-99"])
+        out, _, _ = run([0, 1, 2, 3], eval_manifest="fixture_eval")
+        assert out["num_examples"] == 4
+        clear_manifest_cache()
+
+    def test_the_guard_is_opt_in_for_synthetic_examples(self):
+        """Tests and smoke runs pass no manifest; a real run passes one."""
+        out, _, _ = run([0, 1, 2, 3])
+        assert out["num_examples"] == 4
