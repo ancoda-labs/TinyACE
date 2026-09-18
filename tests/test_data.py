@@ -54,7 +54,7 @@ class TestGlobalMMLULoader:
     def test_hub_id_and_expected_counts(self):
         assert HF_DATASET == "CohereForAI/Global-MMLU"
         assert EXPECTED_SIZES == {"test": 14042, "dev": 285}
-        assert GMMLU_TASKS == {"en": "global_mmlu_en", "ne": "global_mmlu_ne"}
+        assert GMMLU_TASKS == {"en": "tinyace_global_mmlu_en", "ne": "tinyace_global_mmlu_ne"}
         assert GLOBAL_MMLU_HARNESS_TASKS == GMMLU_TASKS
 
     def test_verify_schema_records_item_counts(self):
@@ -116,13 +116,15 @@ class TestBelebelePassageSplit:
             assert len(sides) == 1, "questions from one link must not straddle the split"
 
     def test_harness_task_name_is_belebele_npi(self):
-        assert BELEBELE_HARNESS_TASKS["ne"] == "belebele_npi"
-        assert BELEBELE_HARNESS_TASKS["en"] == "belebele_eng"
+        assert BELEBELE_HARNESS_TASKS["ne"] == "tinyace_belebele_npi"
+        assert BELEBELE_HARNESS_TASKS["en"] == "tinyace_belebele_eng"
 
 
 class TestDeterministicOptionShuffling:
     def test_saves_gold_option_idx(self):
         doc = {
+            "link": "http://example/once",
+            "question_number": 1,
             "flores_passage": "Once upon a time.",
             "question": "Who?",
             "mc_answer1": "A1",
@@ -136,8 +138,17 @@ class TestDeterministicOptionShuffling:
         assert 0 <= out["gold_option_idx"] < 4
         assert out[f"mc_answer{out['gold_option_idx'] + 1}"] == "A2"
 
-    def test_seeded_on_md5_of_passage_and_question(self):
-        doc = {
+    def test_seeded_on_the_invariant_key_not_the_text(self):
+        """
+        Was `test_seeded_on_md5_of_passage_and_question`, which pinned the
+        defect: seeding on passage + question text gave a translated item a
+        different option order, and 857 of Belebele's 900 items disagreed
+        between English and Nepali while every downstream number still
+        computed. The seed now comes from (link, question_number).
+        """
+        english = {
+            "link": "http://example/p",
+            "question_number": 1,
             "flores_passage": "P",
             "question": "Q",
             "mc_answer1": "a",
@@ -146,13 +157,23 @@ class TestDeterministicOptionShuffling:
             "mc_answer4": "d",
             "correct_answer_num": "1",
         }
-        expected = __import__("hashlib").md5(b"P\nQ").hexdigest()
-        assert stable_item_hash(doc) == expected
-        assert isinstance(stable_item_seed(doc), int)
+        nepali = {
+            **english,
+            "flores_passage": "अनुच्छेद",
+            "question": "प्रश्न",
+            "mc_answer1": "क",
+            "mc_answer2": "ख",
+            "mc_answer3": "ग",
+            "mc_answer4": "घ",
+        }
+        assert stable_item_hash(english) == stable_item_hash(nepali)
+        assert isinstance(stable_item_seed(english), int)
 
     def test_idempotent_on_raw_docs(self):
         """Same raw input → identical shuffle every time (deterministic)."""
         doc = {
+            "link": "http://example/river",
+            "question_number": 2,
             "flores_passage": "The river flooded the plains.",
             "question": "What flooded?",
             "mc_answer1": "fire",
@@ -180,6 +201,8 @@ class TestDeterministicOptionShuffling:
         ds = datasets.Dataset.from_list(
             [
                 {
+                    "link": "http://example/ctx",
+                    "question_number": 1,
                     "flores_passage": "ctx",
                     "question": "q",
                     "mc_answer1": "a",
@@ -202,3 +225,100 @@ class TestWilsonScreeningRule:
         assert screening_verdict(0.31) is True
         assert screening_verdict(0.30) is False
         assert SCREENING_FLOOR == 0.30
+
+
+class TestTaskNamesDoNotCollideWithUpstream:
+    """
+    Every TinyACE task carries a `tinyace_` prefix, and the prefix is load
+    bearing.
+
+    `global_mmlu_en` is a task lm-eval already ships, reading Global-MMLU
+    *Lite* -- a different and much smaller corpus, with its own prompt
+    template. Ours used the same name, so which definition won depended on
+    whether `--include_path` was passed. Worse, the collision was asymmetric:
+    upstream has no `global_mmlu_ne`, so a run without the include path would
+    silently score English against Lite while Nepali failed as not-found.
+
+    Two different corpora under one name is the same silent label-swap the
+    arm registry exists to prevent, so it is asserted rather than remembered.
+    """
+
+    @staticmethod
+    def _ours():
+        return set(BELEBELE_HARNESS_TASKS.values()) | set(GLOBAL_MMLU_HARNESS_TASKS.values())
+
+    def test_every_task_name_is_namespaced(self):
+        assert all(name.startswith("tinyace_") for name in self._ours())
+
+    def test_no_name_collides_with_an_upstream_task(self):
+        pytest.importorskip("lm_eval")
+        from lm_eval.tasks import TaskManager
+
+        collisions = self._ours() & set(TaskManager().all_tasks)
+        assert not collisions, f"{sorted(collisions)} would shadow, or be shadowed by, lm-eval"
+
+    def test_all_four_register_from_the_include_path(self):
+        pytest.importorskip("lm_eval")
+        from lm_eval.tasks import TaskManager
+
+        from edge_slm_ace.eval.tasks import TASKS_DIR
+
+        available = set(TaskManager(include_path=str(TASKS_DIR)).all_tasks)
+        assert self._ours() <= available
+
+    def test_every_yaml_declares_the_name_its_file_is_called(self):
+        """A file/task mismatch registers something nobody is looking for."""
+        import yaml
+
+        from edge_slm_ace.eval.tasks import TASKS_DIR
+
+        class _IgnoreTags(yaml.SafeLoader):
+            """lm-eval's `!function` tag is not a YAML tag SafeLoader knows."""
+
+        _IgnoreTags.add_multi_constructor("!", lambda loader, suffix, node: None)
+
+        paths = sorted(TASKS_DIR.glob("tinyace_*.yaml"))
+        assert len(paths) == 4, f"expected four task files, found {[p.name for p in paths]}"
+        for path in paths:
+            declared = yaml.load(path.read_text(encoding="utf-8"), Loader=_IgnoreTags)["task"]
+            assert declared == path.stem, f"{path.name} declares task: {declared}"
+
+
+class TestNoTaskDrawsFewShotFromTheEvaluationSplit:
+    """
+    Belebele ships only a `test` split, so a `fewshot_split` on these tasks can
+    only point at the split the study reports over -- and `sampler: first_n`
+    would draw demonstrations deterministically from its first documents.
+
+    It is inert while every run is 0-shot, which is why it went unnoticed. The
+    planned `icl_matched_budget` arm is what makes it live, so it is asserted
+    now rather than remembered then.
+    """
+
+    def test_no_yaml_declares_a_fewshot_source(self):
+        import yaml
+
+        from edge_slm_ace.eval.tasks import TASKS_DIR
+
+        class _IgnoreTags(yaml.SafeLoader):
+            pass
+
+        _IgnoreTags.add_multi_constructor("!", lambda loader, suffix, node: None)
+
+        for path in sorted(TASKS_DIR.glob("tinyace_*.yaml")):
+            config = yaml.load(path.read_text(encoding="utf-8"), Loader=_IgnoreTags)
+            assert "fewshot_split" not in config, f"{path.name} names a few-shot source"
+            assert "fewshot_config" not in config, f"{path.name} configures a few-shot sampler"
+
+    def test_the_loaded_tasks_have_no_fewshot_split(self):
+        pytest.importorskip("lm_eval")
+        from lm_eval.tasks import TaskManager
+
+        from edge_slm_ace.eval.tasks import TASKS_DIR
+
+        names = sorted(BELEBELE_HARNESS_TASKS.values())
+        manager = TaskManager(include_path=str(TASKS_DIR))
+        loaded = manager.load(names)
+        tasks = loaded["tasks"] if "tasks" in loaded else loaded
+        for name in names:
+            assert tasks[name].config.fewshot_split is None, name

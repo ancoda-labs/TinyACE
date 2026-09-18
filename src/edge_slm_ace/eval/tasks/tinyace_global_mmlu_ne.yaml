@@ -1,5 +1,5 @@
 # Global-MMLU Nepali with deterministic option shuffle.
-task: global_mmlu_ne
+task: tinyace_global_mmlu_ne
 dataset_path: CohereForAI/Global-MMLU
 dataset_name: ne
 test_split: test

@@ -20,7 +20,7 @@ from edge_slm_ace.data.belebele import item_id, harness_indices, HARNESS_TASKS
 | `passage_id(record)` | `bel-pass-<hash>`, from `link` — the key the split keeps on one side |
 | `item_id(record)` | `bel-<hash>-q<n>`, from `(link, question_number)` — the only safe cross-language join key |
 | `harness_indices(language, item_ids)` | Ids → this language's document positions |
-| `HARNESS_TASKS` | `{"en": "belebele_eng", "ne": "belebele_npi"}` — the custom tasks in `eval/tasks/`, which shuffle options |
+| `HARNESS_TASKS` | `{"en": "tinyace_belebele_eng", "ne": "tinyace_belebele_npi"}` — the custom tasks in `eval/tasks/`, which shuffle options |
 
 An example:
 

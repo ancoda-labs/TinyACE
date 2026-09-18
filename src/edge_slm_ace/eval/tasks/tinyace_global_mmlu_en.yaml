@@ -1,5 +1,5 @@
 # Global-MMLU English with deterministic option shuffle.
-task: global_mmlu_en
+task: tinyace_global_mmlu_en
 dataset_path: CohereForAI/Global-MMLU
 dataset_name: en
 test_split: test
