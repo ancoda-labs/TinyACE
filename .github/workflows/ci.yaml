@@ -31,6 +31,14 @@ jobs:
     - name: Verify the Belebele files are the parallel corpus we assume
       run: python -m scripts.fetch_belebele --check
 
+    # The splits are committed and every run loads them from disk. This fails
+    # the build if a manifest stops hashing to its recorded checksum, or if the
+    # two Global-MMLU splits stop being disjoint -- rather than a grid run
+    # discovering it three weeks later. Reads only data/splits/, so it needs no
+    # corpus and no network.
+    - name: Verify the frozen splits
+      run: python -m scripts.freeze_splits --check
+
     - name: Run tests
       run: pytest tests/ -v --cov=edge_slm_ace --cov-report=term-missing
 
