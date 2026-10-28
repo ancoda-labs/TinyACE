@@ -1,5 +1,7 @@
 """Tests for accuracy intervals and paired significance testing."""
 
+import random
+
 import pytest
 
 from edge_slm_ace.eval.stats import (
@@ -85,6 +87,46 @@ class TestMcNemar:
     def test_empty_arms(self):
         result = mcnemar_exact([], [])
         assert result["n"] == 0 and result["p_value"] == 1.0
+
+    def test_exact_half_probabilities(self):
+        """p = min(1, 2 * sum(comb(n, i) for i <= k) / 2**n) at the two tails."""
+        # b=0, c=10: 2 * comb(10, 0) / 2**10 = 2/1024.
+        one_sided = mcnemar_exact([0] * 10, [1] * 10)
+        assert one_sided["b"] == 0 and one_sided["c"] == 10
+        assert one_sided["p_value"] == 0.001953125
+
+        # b=c: the doubled lower tail includes the centre and is capped at 1.
+        tied = mcnemar_exact([1] * 5 + [0] * 5, [0] * 5 + [1] * 5)
+        assert tied["b"] == 5 and tied["c"] == 5
+        assert tied["p_value"] == 1.0
+
+    @pytest.mark.parametrize("n_disc", [1030, 5000])
+    def test_large_discordant_count_does_not_raise(self, n_disc):
+        """comb(n, n/2) no longer fits in a float once n is about 1030.
+
+        A balanced split is the case that used to raise OverflowError, and
+        the one a near-chance comparison on the 2000-item Global-MMLU split
+        can hit. b == c, so the exact two-sided p-value is 1.
+        """
+        b = n_disc // 2
+        c = n_disc - b
+        result = mcnemar_exact([1] * b + [0] * c, [0] * b + [1] * c)
+        assert result["n_discordant"] == n_disc
+        assert result["b"] == b and result["c"] == c
+        assert result["p_value"] == 1.0
+
+    def test_matches_scipy_binomtest_on_seeded_pairs(self):
+        """Same two-sided p as binomtest(k, n, 0.5) when scipy is installed."""
+        scipy_stats = pytest.importorskip("scipy.stats")
+        rng = random.Random(0)
+        for _ in range(50):
+            b = rng.randint(0, 4000)
+            c = rng.randint(0, 4000)
+            if b + c == 0:
+                c = 1
+            got = mcnemar_exact([1] * b + [0] * c, [0] * b + [1] * c)["p_value"]
+            expected = scipy_stats.binomtest(min(b, c), b + c, 0.5).pvalue
+            assert got == pytest.approx(expected, abs=1e-12, rel=1e-12)
 
 
 class TestAlignment:

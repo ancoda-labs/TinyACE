@@ -12,6 +12,7 @@ dependency is missing.
 """
 
 import math
+from fractions import Fraction
 from typing import Dict, Iterable, List, Sequence, Tuple
 
 # Two-sided z for common confidence levels.
@@ -55,8 +56,38 @@ def wilson_interval(
     return max(0.0, center - half), min(1.0, center + half)
 
 
+def _half_binom_cdf(k: int, n: int) -> Fraction:
+    """Exact P(X <= k) for X ~ Binomial(n, 1/2).
+
+    This is sum(comb(n, i) for i in range(k + 1)) / 2**n. The coefficients
+    follow comb(n, i+1) = comb(n, i) * (n - i) / (i + 1), which stays an
+    integer, so a comparison with thousands of discordant pairs does not
+    rebuild each comb from scratch. The ratio stays a Fraction: comb(n, n/2)
+    does not fit in a float once n is about 1030, and a Global-MMLU
+    comparison (2000 items) can have that many discordant pairs.
+    """
+    if k < 0:
+        return Fraction(0)
+    # i > n contributes 0, same as math.comb(n, i) == 0.
+    limit = min(k, n)
+    term = 1  # comb(n, 0)
+    total = 0
+    for i in range(limit + 1):
+        if i:
+            term = term * (n - i + 1) // i
+        total += term
+    return Fraction(total, 2**n)
+
+
 def _binom_cdf(k: int, n: int, p: float = 0.5) -> float:
-    """P(X <= k) for X ~ Binomial(n, p)."""
+    """P(X <= k) for X ~ Binomial(n, p).
+
+    p = 0.5 is summed in integers and converted from Fraction only at the
+    end. The float product comb(n, i) * p**i * (1-p)**(n-i) raises
+    OverflowError once n is about 1030.
+    """
+    if p == 0.5:
+        return float(_half_binom_cdf(k, n))
     return sum(math.comb(n, i) * (p**i) * ((1 - p) ** (n - i)) for i in range(k + 1))
 
 
@@ -112,8 +143,12 @@ def mcnemar_exact(arm_a: Sequence[int], arm_b: Sequence[int]) -> Dict:
     if n_disc == 0:
         p_value = 1.0
     else:
-        # Two-sided exact binomial test on b out of (b + c) at p = 0.5.
-        p_value = min(1.0, 2.0 * _binom_cdf(min(b, c), n_disc, 0.5))
+        # Two-sided exact test at p = 0.5:
+        # min(1, 2 * sum(comb(n, i) for i <= k) / 2**n), k = min(b, c).
+        # Doubling and the cap stay in Fraction; float() runs once, on the
+        # finished p-value. 2 * float(cdf) would round the tail first.
+        k = min(b, c)
+        p_value = float(min(Fraction(1), 2 * _half_binom_cdf(k, n_disc)))
 
     acc_a = sum(arm_a) / n
     acc_b = sum(arm_b) / n
