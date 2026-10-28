@@ -6,11 +6,13 @@ which makes every branch reachable and every counter checkable.
 """
 
 import csv
+from pathlib import Path
 
 import pytest
 
 from edge_slm_ace.adapt import (
     ADAPT_LOG_FIELDS,
+    NO_EVAL_GUARD,
     adapt_playbook,
     build_reflector_prompt,
     frozen_lessons,
@@ -95,7 +97,17 @@ def run(picks, playbook=None, **kwargs):
     kwargs.setdefault("generate", stub_generate())
     kwargs.setdefault("prune_every_n", 0)
     kwargs.setdefault("progress", False)
-    out = adapt_playbook(scorer, examples, playbook, domain="belebele_en", **kwargs)
+    # Synthetic ids are not in a frozen manifest. A caller that passes
+    # eval_manifest is testing the guard and must not be overwritten.
+    eval_manifest = kwargs.pop("eval_manifest", NO_EVAL_GUARD)
+    out = adapt_playbook(
+        scorer,
+        examples,
+        playbook,
+        domain="belebele_en",
+        eval_manifest=eval_manifest,
+        **kwargs,
+    )
     return out, playbook, scorer
 
 
@@ -395,6 +407,7 @@ class TestEntryCapHoldsOnAnySplitLength:
             prune_every_n=prune_every_n,
             max_entries_per_domain=cap,
             progress=False,
+            eval_manifest=NO_EVAL_GUARD,
         )
         return playbook, summary
 
@@ -468,7 +481,76 @@ class TestEvalSplitGuard:
         assert out["num_examples"] == 4
         clear_manifest_cache()
 
-    def test_the_guard_is_opt_in_for_synthetic_examples(self):
-        """Tests and smoke runs pass no manifest; a real run passes one."""
-        out, _, _ = run([0, 1, 2, 3])
-        assert out["num_examples"] == 4
+    def test_one_frozen_eval_id_raises_inside_the_loop(self):
+        """
+        The check runs per item, as the loop reaches it. A scan of the whole
+        list before the loop would refuse the batch without scoring the
+        clean item that comes first.
+        """
+        from edge_slm_ace.data.splits import clear_manifest_cache, eval_manifest_for, manifest_ids
+
+        clear_manifest_cache()
+        manifest = eval_manifest_for("belebele")
+        eval_ids = set(manifest_ids(manifest))
+        examples = make_examples(3)
+        assert examples[0]["id"] not in eval_ids
+        frozen_eval_id = next(iter(eval_ids))
+        examples[1]["id"] = frozen_eval_id
+        scorer = StubScorer([0, 0, 0])
+        with pytest.raises(ValueError, match="frozen evaluation split"):
+            adapt_playbook(
+                scorer,
+                examples,
+                Playbook(token_budget=256),
+                domain="belebele_en",
+                generate=stub_generate(),
+                prune_every_n=0,
+                progress=False,
+                eval_manifest=manifest,
+            )
+        assert len(scorer.seen_lessons) == 1
+        assert examples[1]["id"] == frozen_eval_id
+
+    def test_omitting_eval_manifest_raises_type_error(self):
+        """
+        The argument used to default to None, and None skipped the check.
+        The production caller omitted it, so the guard never ran. Omitting
+        it is now a TypeError rather than a silent skip.
+        """
+        with pytest.raises(TypeError, match="eval_manifest"):
+            adapt_playbook(
+                StubScorer([0, 1, 2, 3]),
+                make_examples(4),
+                Playbook(token_budget=256),
+                domain="belebele_en",
+                generate=stub_generate(),
+                progress=False,
+            )
+
+
+class TestNoEvalGuardIsNotUsedInProduction:
+    """
+    The sentinel skips the leak check. It is defined for tests with
+    synthetic ids. A file under scripts/ or src/ that names it, other than
+    that definition, is a caller turning the guard off.
+    """
+
+    def test_the_name_appears_only_at_its_definition(self):
+        """
+        Grep scripts/ and src/. The only file that may name the sentinel is
+        the module that defines it; that module is what interprets the
+        value. Any other file is a caller, and a caller that passes it
+        adapts with the leak check off.
+        """
+        root = Path(__file__).resolve().parents[1]
+        definition = (root / "src" / "edge_slm_ace" / "adapt.py").resolve()
+        source = definition.read_text(encoding="utf-8")
+        assert 'NO_EVAL_GUARD = "__tests_only__"' in source
+        offenders = []
+        for folder in ("scripts", "src"):
+            for path in (root / folder).rglob("*.py"):
+                if path.resolve() == definition:
+                    continue
+                if "NO_EVAL_GUARD" in path.read_text(encoding="utf-8"):
+                    offenders.append(str(path.relative_to(root)))
+        assert offenders == []

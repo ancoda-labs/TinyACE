@@ -338,6 +338,7 @@ class TestRunArmReadsTheFrozenSplit:
 
         def fake_adapt(scorer, examples, playbook, **kwargs):
             captured["adapt"] = [example["id"] for example in examples]
+            captured["adapt_kwargs"] = kwargs
             return {"accuracy": 0.0, "playbook_size": 0, "log": []}
 
         def fake_eval(model_id, language, item_ids, **kwargs):
@@ -409,6 +410,15 @@ class TestRunArmReadsTheFrozenSplit:
         second = self.run(tmp_path / "b", monkeypatch, seed=42)
         assert first["adapt"] == second["adapt"]
         assert first["eval"] == second["eval"]
+
+    def test_adaptation_is_called_with_a_real_manifest_name(self, tmp_path, monkeypatch):
+        """The leak guard used to be skipped because this call omitted it."""
+        from edge_slm_ace.data.splits import MANIFESTS, eval_manifest_for
+
+        captured = self.run(tmp_path, monkeypatch, seed=42)
+        name = captured["adapt_kwargs"].get("eval_manifest")
+        assert name == eval_manifest_for("belebele")
+        assert name in MANIFESTS
 
     def test_limit_keeps_the_same_prefix_in_different_orders(self, tmp_path, monkeypatch):
         from edge_slm_ace.data.splits import frozen_split

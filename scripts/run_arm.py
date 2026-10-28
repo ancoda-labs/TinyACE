@@ -34,7 +34,7 @@ from typing import Sequence
 
 from edge_slm_ace.adapt import adapt_playbook, frozen_lessons, save_adaptation_log
 from edge_slm_ace.data import load_belebele
-from edge_slm_ace.data.splits import frozen_split
+from edge_slm_ace.data.splits import eval_manifest_for, frozen_split
 from edge_slm_ace.harness import OptionScorer, accuracy_of, per_item_correctness, run_frozen_eval
 from edge_slm_ace.memory.playbook import Playbook, ScoringParams
 from edge_slm_ace.memory.relevance import LessonRelevance
@@ -192,7 +192,11 @@ def main(argv=None, lm=None) -> int:
 
     examples = load_belebele(args.language, domain=domain)
     by_id = {e["id"]: e for e in examples}
-    adapt_ids, eval_ids = frozen_split("belebele")
+    # The ids and the leak guard share this name. A second literal could
+    # pair these items with the other task's manifest, which would refuse
+    # every item or guard the wrong set.
+    benchmark = "belebele"
+    adapt_ids, eval_ids = frozen_split(benchmark)
     if args.limit:
         # Prefix in manifest order, then shuffle. Shuffling first would make
         # --limit a seed-dependent sample of the frozen set.
@@ -233,12 +237,15 @@ def main(argv=None, lm=None) -> int:
 
     elif needs_playbook:
         print("  adapting...")
+        # Required. Omitting it used to skip the per-item leak check, so a
+        # real run never refused an evaluation id that had reached this loop.
         adapt_summary = adapt_playbook(
             scorer,
             [by_id[i] for i in adaptation_order],
             playbook,
             domain=domain,
             use_curator=not args.no_curator,
+            eval_manifest=eval_manifest_for(benchmark),
         )
         playbook.save(args.output_dir / "playbook.jsonl")
         save_adaptation_log(adapt_summary["log"], args.output_dir / "adaptation_log.csv")
