@@ -328,6 +328,133 @@ class TestScreeningSurvivors:
                 survivors(tmp_path)
 
 
+class TestGridModelSelection:
+    """
+    Who enters the grid is chosen before screening, one model per family.
+
+    `survivors()` returns every model that cleared the floor. Both sizes of
+    one family would then be in the grid, and which size the paper reports
+    would be a choice made after the scores existed.
+    """
+
+    def write(self, root, rows):
+        directory = root / "screening"
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "screening_global_mmlu_ne.json").write_text(
+            json.dumps({"benchmark": "global_mmlu", "language": "ne", "models": rows}),
+            encoding="utf-8",
+        )
+
+    def row(self, model, ci_low, passes, task="global_mmlu"):
+        return {"model": model, "task": task, "passes": passes, "ci_low": ci_low}
+
+    def test_the_config_is_the_pre_registered_rule(self):
+        import yaml
+
+        from edge_slm_ace.utils import REPO_ROOT
+
+        loaded = yaml.safe_load(
+            (REPO_ROOT / "configs" / "model_selection.yaml").read_text(encoding="utf-8")
+        )
+        assert loaded["statistic"] == "wilson_ci_low"
+        assert loaded["benchmark"] == "global_mmlu"
+        assert loaded["language"] == "ne"
+        assert loaded["families"] == {
+            "qwen3": ["qwen3-1.7b", "qwen3-4b"],
+            "gemma3": ["gemma-3-1b", "gemma-3-4b"],
+            "phi4": ["phi-4-mini"],
+        }
+        assert loaded["excluded"] == ["phi-3.5-mini", "smollm3-3b"]
+        assert "Belebele becomes the primary task" in loaded["rule"]
+
+    def test_one_winner_per_family(self, tmp_path):
+        from scripts.run_grid import select_grid_models
+
+        self.write(
+            tmp_path,
+            [
+                self.row("qwen3-1.7b", 0.40, True),
+                self.row("qwen3-4b", 0.55, True),
+                self.row("gemma-3-1b", 0.48, True),
+                self.row("gemma-3-4b", 0.60, True),
+                self.row("phi-4-mini", 0.41, True),
+                # Cleared the floor by more than anyone. Not in a family.
+                self.row("phi-3.5-mini", 0.99, True),
+            ],
+        )
+        assert select_grid_models(tmp_path) == ["qwen3-4b", "gemma-3-4b", "phi-4-mini"]
+
+    def test_a_tie_goes_to_the_smaller_model(self, tmp_path):
+        """The family list is smaller-first. 1.7B is listed ahead of 4B."""
+        from scripts.run_grid import select_grid_models
+
+        self.write(
+            tmp_path,
+            [
+                self.row("qwen3-1.7b", 0.50, True),
+                self.row("qwen3-4b", 0.50, True),
+                self.row("gemma-3-1b", 0.20, False),
+                self.row("gemma-3-4b", 0.20, False),
+                self.row("phi-4-mini", 0.20, False),
+            ],
+        )
+        assert select_grid_models(tmp_path) == ["qwen3-1.7b"]
+
+    def test_a_family_with_no_pass_is_skipped(self, tmp_path):
+        """Nothing stands in for a family that failed, including an excluded model."""
+        from scripts.run_grid import select_grid_models
+
+        self.write(
+            tmp_path,
+            [
+                self.row("qwen3-1.7b", 0.20, False),
+                self.row("qwen3-4b", 0.25, False),
+                self.row("gemma-3-1b", 0.45, True),
+                self.row("gemma-3-4b", 0.40, True),
+                self.row("phi-4-mini", 0.10, False),
+                self.row("phi-3.5-mini", 0.99, True),
+            ],
+        )
+        assert select_grid_models(tmp_path) == ["gemma-3-1b"]
+
+    def test_no_passes_at_all_raises(self, tmp_path):
+        """The Belebele fallback is a study decision. The grid does not take it."""
+        from scripts.run_grid import select_grid_models
+
+        self.write(
+            tmp_path,
+            [
+                self.row("qwen3-1.7b", 0.20, False),
+                self.row("qwen3-4b", 0.20, False),
+                self.row("gemma-3-1b", 0.20, False),
+                self.row("gemma-3-4b", 0.20, False),
+                self.row("phi-4-mini", 0.20, False),
+                self.row("phi-3.5-mini", 0.90, True),
+            ],
+        )
+        with pytest.raises(ValueError, match="no model"):
+            select_grid_models(tmp_path)
+
+    def test_the_default_grid_uses_the_family_rule(self, tmp_path, capsys):
+        """Without --models the plan is the selection, not every survivor."""
+        from scripts.run_grid import main
+
+        self.write(
+            tmp_path,
+            [
+                self.row("qwen3-1.7b", 0.40, True),
+                self.row("qwen3-4b", 0.55, True),
+                self.row("gemma-3-1b", 0.20, False),
+                self.row("gemma-3-4b", 0.20, False),
+                self.row("phi-4-mini", 0.20, False),
+            ],
+        )
+        assert main(["--results-root", str(tmp_path), "--dry-run"]) == 0
+        out = capsys.readouterr().out
+        assert "qwen3-4b" in out
+        assert "qwen3-1.7b" not in out
+
+
 class TestScreenWritesOneFilePerTaskAndLanguage:
     """Each task and language keeps the manifest and the git state it ran under."""
 

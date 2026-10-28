@@ -86,9 +86,10 @@ interrupted grid resumes. Preview the plan without running anything:
 python -m scripts.run_grid --dry-run
 ```
 
-The plan's models are the screening survivors, so until `make screen` has
-written `screening_global_mmlu_ne.json` the dry run stops with no models. Name
-one to preview anyway: `--models tiny-gpt2`.
+The plan's models are one passing model per family from
+`configs/model_selection.yaml`, read off `screening_global_mmlu_ne.json`.
+Until that file exists the dry run stops. Name one to preview anyway:
+`--models tiny-gpt2`.
 
 ## 6. Report
 

@@ -1,0 +1,13 @@
+statistic: wilson_ci_low          # the screening rule's own statistic
+benchmark: global_mmlu
+language: ne
+families:                         # at most one model per family
+  qwen3:  [qwen3-1.7b, qwen3-4b]
+  gemma3: [gemma-3-1b, gemma-3-4b]
+  phi4:   [phi-4-mini]
+rule: >
+  For each family, take the passing model with the highest wilson_ci_low;
+  on a tie, the smaller model. A family with no passing model contributes
+  nothing and is not replaced. Phi-4-mini enters only if it passes.
+  If no model passes, Belebele becomes the primary task (Blueprint v3 fallback).
+excluded: [phi-3.5-mini, smollm3-3b]   # contrast model not screened; SmolLM3 dropped

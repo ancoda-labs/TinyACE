@@ -32,9 +32,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import yaml
+
 from edge_slm_ace.harness.evaluate import hflm_kwargs
 from edge_slm_ace.reporting import cell_dir, get_arm, legacy_screening_path, screening_path
-from edge_slm_ace.utils import DEFAULT_SEED, capture_environment, resolve_model, set_seed
+from edge_slm_ace.utils import (
+    DEFAULT_SEED,
+    REPO_ROOT,
+    capture_environment,
+    resolve_model,
+    set_seed,
+)
+
+# Written before screening. The grid reads this and does not restate the rule.
+MODEL_SELECTION = REPO_ROOT / "configs" / "model_selection.yaml"
+# screen.py names the statistic wilson_ci_low and stores the number as ci_low.
+_CI_LOW_FIELD = "ci_low"
 
 
 @dataclass(frozen=True)
@@ -160,7 +173,11 @@ def parse_args(argv=None) -> argparse.Namespace:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     p.add_argument(
-        "--models", nargs="*", default=None, help="Model keys (default: screening survivors)"
+        "--models",
+        nargs="*",
+        default=None,
+        help="Model keys (default: one passing model per family, from "
+        "configs/model_selection.yaml)",
     )
     p.add_argument("--languages", nargs="*", default=["en", "ne"])
     p.add_argument("--results-root", type=Path, default=Path("results"))
@@ -186,6 +203,160 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--force", action="store_true", help="Re-run cells already complete")
     p.add_argument("--no-chat-template", action="store_true")
     return p.parse_args(argv)
+
+
+def _screening_payload(results_root: Path, benchmark: str, language: str) -> dict:
+    """
+    The one screening file the grid may read for this task and language.
+
+    The pre-v3 ``screening.json`` has no language in its name. When it is
+    still on disk it is ignored. A payload whose body names a different
+    language or benchmark is refused: the filename is not the check.
+    """
+    path = screening_path(results_root, benchmark, language)
+    legacy = legacy_screening_path(results_root)
+    if legacy.exists():
+        # The name cannot say which language this is. Using it would let an
+        # English overwrite of the old file decide the Nepali gate.
+        warnings.warn(
+            f"ignoring {legacy}: it is the pre-v3 single screening.json, which "
+            f"has no language in its name. This grid reads {path.name}.",
+            # survivors() warned at stacklevel=2, naming its caller. This
+            # helper is one frame deeper, so 3 keeps that attribution.
+            stacklevel=3,
+        )
+
+    if not path.exists():
+        raise FileNotFoundError(
+            f"no screening result at {path}. The grid admits models from a "
+            f"{language} {benchmark} screen."
+        )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    got_language = payload.get("language")
+    got_benchmark = payload.get("benchmark")
+    if got_language != language or got_benchmark != benchmark:
+        raise ValueError(
+            f"{path.name}: payload is language={got_language!r} "
+            f"benchmark={got_benchmark!r}, expected language={language!r} "
+            f"benchmark={benchmark!r}."
+        )
+    return payload
+
+
+def _model_selection() -> dict:
+    """The pre-registered family rule. Absent or rewritten fields are a raise."""
+    if not MODEL_SELECTION.exists():
+        raise FileNotFoundError(f"no model-selection rule at {MODEL_SELECTION}")
+    loaded = yaml.safe_load(MODEL_SELECTION.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{MODEL_SELECTION.name} did not contain a mapping")
+    statistic = loaded.get("statistic")
+    if statistic != "wilson_ci_low":
+        raise ValueError(
+            f"{MODEL_SELECTION.name}: statistic is {statistic!r}, expected 'wilson_ci_low'."
+        )
+    benchmark, language = loaded.get("benchmark"), loaded.get("language")
+    if not benchmark or not language:
+        raise ValueError(f"{MODEL_SELECTION.name}: benchmark and language are required")
+    families = loaded.get("families")
+    if not isinstance(families, dict) or not families:
+        raise ValueError(f"{MODEL_SELECTION.name}: families must name at least one family")
+    seen: List[str] = []
+    for name, members in families.items():
+        if not isinstance(members, list) or not members:
+            raise ValueError(f"{MODEL_SELECTION.name}: family {name} has no models")
+        for key in members:
+            if key in seen:
+                raise ValueError(f"{MODEL_SELECTION.name}: {key} is listed in more than one family")
+            seen.append(key)
+    excluded = loaded.get("excluded") or []
+    if not isinstance(excluded, list):
+        raise ValueError(f"{MODEL_SELECTION.name}: excluded must be a list")
+    return loaded
+
+
+def _family_winner(
+    members: List[str],
+    by_model: Dict[str, dict],
+    excluded: set,
+    benchmark: str,
+) -> Optional[str]:
+    """
+    The passing member with the highest Wilson lower bound.
+
+    ``members`` is smaller-first. A tie keeps the earlier name, which is the
+    smaller model, instead of parsing a parameter-count string.
+    """
+    candidates = []
+    for index, key in enumerate(members):
+        if key in excluded:
+            continue
+        row = by_model.get(key)
+        if row is None or not row.get("passes"):
+            continue
+        # A row that names another task does not count, even inside this file.
+        if row.get("task", benchmark) != benchmark:
+            continue
+        score = row.get(_CI_LOW_FIELD)
+        if isinstance(score, bool) or not isinstance(score, (int, float)):
+            raise ValueError(f"{key} passes but has no wilson_ci_low ({_CI_LOW_FIELD}) to rank on")
+        # Highest score first, then the earlier (smaller) list entry.
+        candidates.append((-float(score), index, key))
+    if not candidates:
+        return None
+    candidates.sort()
+    return candidates[0][2]
+
+
+def select_grid_models(results_root: Path) -> List[str]:
+    """
+    One model per family from the pre-registered rule.
+
+    ``survivors()`` returns every model that cleared the floor, so both sizes
+    of one family would enter and the size the paper reports would be chosen
+    after the scores existed. This reads ``configs/model_selection.yaml`` and
+    the screening file that yaml names. A family with no passing model is
+    absent from the result and is not replaced. If nobody passes, this raises
+    rather than switching the study to Belebele: that fallback is written in
+    the config, and taking it here would hide it inside the grid.
+
+    Args:
+        results_root: Directory that contains ``screening/``.
+
+    Returns:
+        Chosen model keys, in family order, one per family that had a pass.
+
+    Raises:
+        FileNotFoundError: The config or the screening file is absent.
+        ValueError: The payload does not match the config, a passing candidate
+            has no Wilson lower bound, or no family contributes a model.
+    """
+    selection = _model_selection()
+    benchmark = selection["benchmark"]
+    language = selection["language"]
+    payload = _screening_payload(results_root, benchmark, language)
+    excluded = set(selection["excluded"])
+
+    by_model: Dict[str, dict] = {}
+    for row in payload["models"]:
+        key = row.get("model")
+        if key in by_model:
+            raise ValueError(f"{key} appears more than once in the {benchmark}/{language} screen")
+        by_model[key] = row
+
+    chosen = []
+    for members in selection["families"].values():
+        winner = _family_winner(members, by_model, excluded, benchmark)
+        if winner is not None:
+            chosen.append(winner)
+    if not chosen:
+        rule = " ".join(str(selection.get("rule") or "").split())
+        raise ValueError(
+            "no model passes the pre-registered grid selection rule "
+            f"({benchmark}/{language}). {rule}"
+        )
+    return chosen
 
 
 def survivors(
@@ -219,33 +390,7 @@ def survivors(
         ValueError: The payload's language or benchmark is missing or differs
             from the file that was requested.
     """
-    path = screening_path(results_root, benchmark, language)
-    legacy = legacy_screening_path(results_root)
-    if legacy.exists():
-        # The name cannot say which language this is. Using it would let an
-        # English overwrite of the old file decide the Nepali gate.
-        warnings.warn(
-            f"ignoring {legacy}: it is the pre-v3 single screening.json, which "
-            f"has no language in its name. This grid reads {path.name}.",
-            stacklevel=2,
-        )
-
-    if not path.exists():
-        raise FileNotFoundError(
-            f"no screening result at {path}. The grid admits models from a "
-            f"{language} {benchmark} screen."
-        )
-
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    got_language = payload.get("language")
-    got_benchmark = payload.get("benchmark")
-    if got_language != language or got_benchmark != benchmark:
-        raise ValueError(
-            f"{path.name}: payload is language={got_language!r} "
-            f"benchmark={got_benchmark!r}, expected language={language!r} "
-            f"benchmark={benchmark!r}."
-        )
-
+    payload = _screening_payload(results_root, benchmark, language)
     passed = []
     for row in payload["models"]:
         if not row.get("passes"):
@@ -267,7 +412,7 @@ def main(argv=None) -> int:
         models = list(args.models)
     else:
         try:
-            models = survivors(args.results_root)
+            models = select_grid_models(args.results_root)
         except (FileNotFoundError, ValueError) as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 1
