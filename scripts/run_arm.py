@@ -34,7 +34,11 @@ from typing import Sequence
 
 from edge_slm_ace.adapt import adapt_playbook, frozen_lessons, save_adaptation_log
 from edge_slm_ace.data import load_belebele
-from edge_slm_ace.data.splits import eval_manifest_for, frozen_split
+from edge_slm_ace.data.belebele import BELEBELE_REVISION
+from edge_slm_ace.data.belebele import HF_DATASET as BELEBELE_DATASET
+from edge_slm_ace.data.globalmmlu import GLOBAL_MMLU_REVISION
+from edge_slm_ace.data.globalmmlu import HF_DATASET as GLOBAL_MMLU_DATASET
+from edge_slm_ace.data.splits import eval_manifest_for, frozen_split, ids_checksum, load_manifest
 from edge_slm_ace.harness import OptionScorer, accuracy_of, per_item_correctness, run_frozen_eval
 from edge_slm_ace.memory.playbook import Playbook, ScoringParams
 from edge_slm_ace.memory.relevance import LessonRelevance
@@ -331,14 +335,50 @@ def main(argv=None, lm=None) -> int:
             file=sys.stderr,
         )
 
+    manifest_name = eval_manifest_for(benchmark)
+    # The manifest's own checksum, not the prefix --limit may have sliced.
+    # The prefix has adaptation_ids_checksum and n_eval; the manifest name
+    # says which pre-registered file those ids were taken from.
+    manifest_checksum = load_manifest(manifest_name)["ids_sha256"]
+    init_path = str(args.init_playbook) if args.init_playbook else None
+    init_sha = (
+        hashlib.sha256(args.init_playbook.read_bytes()).hexdigest() if args.init_playbook else None
+    )
+
     metrics = {
         "arm": args.arm,
+        "benchmark": benchmark,
+        # No runner sets a context ceiling yet. Null, not a guessed budget:
+        # a made-up number here would be read as the condition the run was under.
+        "budget": None,
         "model_id": spec.hf_id,
         "model_key": spec.key,
         "model_params": spec.params,
         "model_generation": spec.generation,
+        "model_revision": spec.revision,
+        "enable_thinking": spec.enable_thinking,
+        # Both study datasets. The pin is a property of this checkout; a cell
+        # that recorded only the dataset it scored would make the paper's
+        # reproducibility section depend on which file was opened.
+        "dataset_revisions": {
+            BELEBELE_DATASET: BELEBELE_REVISION,
+            GLOBAL_MMLU_DATASET: GLOBAL_MMLU_REVISION,
+        },
         "language": args.language,
         "seed": args.seed,
+        "top_k": args.top_k,
+        "no_curator": bool(args.no_curator),
+        "limit": args.limit,
+        # True whenever --limit is set, including 0. A falsy check would
+        # leave `--limit 0` looking like a full run.
+        "debug": args.limit is not None,
+        # The set that was walked, order-independent. Distinct from
+        # adaptation_order_sha256, which is the seed's walk order.
+        "adaptation_ids_checksum": ids_checksum(adapt_ids),
+        "eval_manifest": manifest_name,
+        "eval_manifest_checksum": manifest_checksum,
+        "init_playbook": init_path,
+        "init_playbook_sha256": init_sha,
         # The set is the frozen manifest. These two say which seed ordered
         # the walk and which order that was, so two seeds cannot be mistaken
         # for the same adaptation.

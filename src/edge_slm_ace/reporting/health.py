@@ -8,6 +8,10 @@ same kind of thing:
   for Belebele eats the passage, and a longer prefix truncates more -- so an ACE
   arm loses passages that its control keeps, on the same items. A delta across
   that pair is a difference in how much of the passage each arm got to read.
+  A ``--limit`` run is the other case: ``debug: true`` means the cell scored a
+  prefix of the frozen split, so its accuracy is not the study's number.
+  ``aggregate_results`` leaves those cells out of the summary tables, and
+  ``compare_arms`` leaves them out of the test family.
 - **Limiting.** The measurement is sound; what it supports is narrower. A run
   with no embedding backend really did score what it scored, it just was not
   query-conditioned while doing it.
@@ -50,6 +54,36 @@ def load_metrics(cell_dir: Union[str, Path]) -> Optional[Dict[str, Any]]:
         return None
 
 
+def is_debug_run(metrics: Optional[Dict[str, Any]]) -> bool:
+    """
+    Whether this cell was produced with ``--limit``.
+
+    A missing flag is not a debug run. Cells written before the flag existed
+    do not say, and treating that silence as a prefix would drop them from
+    the tables. ``pandas`` may surface the JSON bool as ``numpy.bool_``,
+    which is not a subclass of ``bool``, so both are accepted.
+
+    Args:
+        metrics: A parsed ``metrics.json``, or None.
+
+    Returns:
+        True only when the recorded flag is true.
+    """
+    if not metrics:
+        return False
+    value = metrics.get("debug")
+    if isinstance(value, bool):
+        return bool(value)
+    try:
+        import numpy as np
+
+        if isinstance(value, np.bool_):
+            return bool(value)
+    except ImportError:
+        pass
+    return False
+
+
 def health_issues(metrics: Optional[Dict[str, Any]]) -> List[HealthIssue]:
     """
     Everything wrong with one run, worst first.
@@ -80,6 +114,20 @@ def health_issues(metrics: Optional[Dict[str, Any]]) -> List[HealthIssue]:
                     f"dropped from the LEFT -- that is the passage. A longer prefix "
                     f"truncates more, so this arm is not comparable with a "
                     f"shorter-prefix arm on these items"
+                ),
+            )
+        )
+
+    if is_debug_run(metrics):
+        limit = metrics.get("limit")
+        issues.append(
+            HealthIssue(
+                field="debug",
+                invalidating=True,
+                message=(
+                    f"this is a --limit debug run (limit={limit}), so it scored a "
+                    f"prefix of the frozen split rather than the pre-registered "
+                    f"items. It must not be aggregated or compared"
                 ),
             )
         )

@@ -3,7 +3,7 @@
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 # Environment override for the directory holding `data/tasks/`, for the case
 # where the package is installed away from its datasets.
@@ -55,21 +55,81 @@ class ModelSpec:
     hf_id: str
     params: str
     generation: str  # "2026" or "2024", for the generational contrast
+    # Hub commit from HfApi().model_info(hf_id).sha. A floating "main" would
+    # move the weights under a reported number.
+    revision: str
+    # False turns the chat template's thinking switch off. None means the
+    # checkpoint has no such switch; passing False to those templates is a
+    # different prompt, and passing True makes Qwen3 think.
+    enable_thinking: Optional[bool] = None
 
 
+# Revisions looked up 2026-10-28. enable_thinking is False for Qwen3, whose
+# template defaults to thinking. SmolLM3-3B was in this list and was removed
+# the same day: with enable_thinking=False the rendered prompt still contains
+# "Today Date: ..." from the template's strftime_now, so the string changes
+# every day. It is not a study model.
 MODELS: Dict[str, ModelSpec] = {
     m.key: m
     for m in [
-        ModelSpec("qwen3-1.7b", "Qwen/Qwen3-1.7B", "1.7B", "2026"),
-        ModelSpec("qwen3-4b", "Qwen/Qwen3-4B", "4B", "2026"),
-        ModelSpec("gemma-3-1b", "google/gemma-3-1b-it", "1B", "2026"),
-        ModelSpec("gemma-3-4b", "google/gemma-3-4b-it", "4B", "2026"),
-        ModelSpec("phi-4-mini", "microsoft/Phi-4-mini-instruct", "3.8B", "2026"),
-        ModelSpec("smollm3-3b", "HuggingFaceTB/SmolLM3-3B", "3B", "2026"),
+        ModelSpec(
+            "qwen3-1.7b",
+            "Qwen/Qwen3-1.7B",
+            "1.7B",
+            "2026",
+            "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+            False,
+        ),
+        ModelSpec(
+            "qwen3-4b",
+            "Qwen/Qwen3-4B",
+            "4B",
+            "2026",
+            "1cfa9a7208912126459214e8b04321603b3df60c",
+            False,
+        ),
+        ModelSpec(
+            "gemma-3-1b",
+            "google/gemma-3-1b-it",
+            "1B",
+            "2026",
+            "dcc83ea841ab6100d6b47a070329e1ba4cf78752",
+            None,
+        ),
+        ModelSpec(
+            "gemma-3-4b",
+            "google/gemma-3-4b-it",
+            "4B",
+            "2026",
+            "093f9f388b31de276ce2de164bdc2081324b9767",
+            None,
+        ),
+        ModelSpec(
+            "phi-4-mini",
+            "microsoft/Phi-4-mini-instruct",
+            "3.8B",
+            "2026",
+            "cfbefacb99257ffa30c83adab238a50856ac3083",
+            None,
+        ),
         # Generational contrast: a 2024-era model on the same protocol.
-        ModelSpec("phi-3.5-mini", "microsoft/Phi-3.5-mini-instruct", "3.8B", "2024"),
+        ModelSpec(
+            "phi-3.5-mini",
+            "microsoft/Phi-3.5-mini-instruct",
+            "3.8B",
+            "2024",
+            "2fe192450127e6a83f7441aef6e3ca586c338b77",
+            None,
+        ),
         # Debug only. Random weights; never report a number from it.
-        ModelSpec("tiny-gpt2", "sshleifer/tiny-gpt2", "0.008B", "debug"),
+        ModelSpec(
+            "tiny-gpt2",
+            "sshleifer/tiny-gpt2",
+            "0.008B",
+            "debug",
+            "5f91d94bd9cd7190a9f3216ff93cd1dd95f2c7be",
+            None,
+        ),
     ]
 }
 
@@ -143,7 +203,11 @@ def resolve_model(key_or_id: str) -> ModelSpec:
     for spec in MODELS.values():
         if spec.hf_id == key_or_id:
             return spec
-    return ModelSpec(key_or_id, key_or_id, "unknown", "unknown")
+    # Not in the registry, so there is no pinned commit. "main" is the
+    # revision HFLM already defaults to; it is not a study pin, and thinking
+    # stays off the template because we do not know whether the model has
+    # the switch.
+    return ModelSpec(key_or_id, key_or_id, "unknown", "unknown", "main", None)
 
 
 def model_keys(generation: str = None) -> List[str]:

@@ -18,12 +18,18 @@ from collections import Counter
 
 from edge_slm_ace.data.belebele import (
     BELEBELE_LANGUAGES,
+    BELEBELE_REVISION,
     belebele_path,
     item_id,
     load_belebele,
 )
 
-SOURCE = "https://huggingface.co/datasets/facebook/belebele/resolve/main/data/{flores}.jsonl"
+# The revision is the study pin, not "main". A re-fetch of main would replace
+# the committed jsonl with a later Hub commit while evaluation still scores
+# the pin (or the reverse, if the YAML moved and this URL did not).
+SOURCE = (
+    "https://huggingface.co/datasets/facebook/belebele/resolve/" "{revision}/data/{flores}.jsonl"
+)
 EXPECTED_ROWS = 900
 
 
@@ -32,7 +38,7 @@ def fetch(language: str) -> int:
     flores = BELEBELE_LANGUAGES[language]
     dest = belebele_path(language)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    urllib.request.urlretrieve(SOURCE.format(flores=flores), dest)
+    urllib.request.urlretrieve(SOURCE.format(revision=BELEBELE_REVISION, flores=flores), dest)
     with open(dest, encoding="utf-8") as f:
         return sum(1 for line in f if line.strip())
 

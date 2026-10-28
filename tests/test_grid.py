@@ -543,7 +543,7 @@ class TestRunArmReadsTheFrozenSplit:
     different questions.
     """
 
-    def run(self, tmp_path, monkeypatch, seed, limit=None):
+    def run(self, tmp_path, monkeypatch, seed, limit=None, extra=None):
         from scripts import run_arm
 
         captured = {}
@@ -596,6 +596,8 @@ class TestRunArmReadsTheFrozenSplit:
         ]
         if limit is not None:
             argv += ["--limit", str(limit)]
+        if extra:
+            argv += extra
         assert run_arm.main(argv) == 0
         captured["metrics"] = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
         return captured
@@ -647,6 +649,94 @@ class TestRunArmReadsTheFrozenSplit:
         assert first["adapt"] != second["adapt"]
         assert first["eval"] == list(evaluate[:4])
         assert second["eval"] == first["eval"]
+
+    def test_metrics_record_the_run_settings(self, tmp_path, monkeypatch):
+        """A cell must say which split, pin and flags produced it.
+
+        top_k, the curator switch and --limit used to be absent, so a debug
+        prefix and a full run were the same file apart from n_eval.
+        """
+        from edge_slm_ace.data.belebele import BELEBELE_REVISION
+        from edge_slm_ace.data.globalmmlu import GLOBAL_MMLU_REVISION
+        from edge_slm_ace.data.splits import (
+            BELEBELE_SPLIT,
+            frozen_split,
+            ids_checksum,
+            load_manifest,
+        )
+        from edge_slm_ace.utils import resolve_model
+
+        captured = self.run(tmp_path, monkeypatch, seed=42)
+        metrics = captured["metrics"]
+        adapt, _evaluate = frozen_split("belebele")
+        manifest = load_manifest(BELEBELE_SPLIT)
+
+        for field in (
+            "benchmark",
+            "budget",
+            "top_k",
+            "no_curator",
+            "adaptation_ids_checksum",
+            "eval_manifest",
+            "eval_manifest_checksum",
+            "init_playbook",
+            "init_playbook_sha256",
+            "model_revision",
+            "dataset_revisions",
+            "limit",
+            "debug",
+            "enable_thinking",
+        ):
+            assert field in metrics, field
+
+        assert metrics["benchmark"] == "belebele"
+        assert metrics["budget"] is None
+        assert metrics["top_k"] == 5
+        assert metrics["no_curator"] is False
+        assert metrics["adaptation_ids_checksum"] == ids_checksum(adapt)
+        assert metrics["eval_manifest"] == BELEBELE_SPLIT
+        assert metrics["eval_manifest_checksum"] == manifest["ids_sha256"]
+        assert metrics["init_playbook"] is None
+        assert metrics["init_playbook_sha256"] is None
+        assert metrics["model_revision"] == resolve_model("tiny-gpt2").revision
+        assert metrics["dataset_revisions"] == {
+            "facebook/belebele": BELEBELE_REVISION,
+            "CohereForAI/Global-MMLU": GLOBAL_MMLU_REVISION,
+        }
+        assert metrics["limit"] is None
+        assert metrics["debug"] is False
+        assert metrics["enable_thinking"] is None
+        for field in ("lm_eval_version", "nv_tegra_release", "nvpmodel"):
+            assert field in metrics["environment"], field
+        assert metrics["environment"]["lm_eval_version"]
+
+    def test_an_init_playbook_is_recorded_with_its_digest(self, tmp_path, monkeypatch):
+        playbook = tmp_path / "borrowed.jsonl"
+        playbook.write_text("", encoding="utf-8")
+        captured = self.run(
+            tmp_path / "cell",
+            monkeypatch,
+            seed=42,
+            extra=["--init-playbook", str(playbook)],
+        )
+        metrics = captured["metrics"]
+        assert metrics["init_playbook"] == str(playbook)
+        assert metrics["init_playbook_sha256"] == hashlib.sha256(b"").hexdigest()
+
+    def test_a_limit_run_is_flagged_debug(self, tmp_path, monkeypatch):
+        from edge_slm_ace.data.splits import frozen_split, ids_checksum
+        from edge_slm_ace.reporting import health_issues, is_reportable
+
+        adapt, _evaluate = frozen_split("belebele")
+        captured = self.run(tmp_path, monkeypatch, seed=42, limit=4)
+        metrics = captured["metrics"]
+        assert metrics["limit"] == 4
+        assert metrics["debug"] is True
+        assert metrics["adaptation_ids_checksum"] == ids_checksum(adapt[:4])
+        issues = [issue for issue in health_issues(metrics) if issue.field == "debug"]
+        assert len(issues) == 1
+        assert issues[0].invalidating is True
+        assert is_reportable(metrics) is False
 
 
 class TestRunnersDoNotRebuildTheSplit:

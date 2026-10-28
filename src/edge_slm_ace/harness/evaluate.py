@@ -21,25 +21,79 @@ from edge_slm_ace.data.globalmmlu import HARNESS_TASKS as GLOBAL_MMLU_HARNESS_TA
 from edge_slm_ace.data.globalmmlu import harness_indices as globalmmlu_harness_indices
 from edge_slm_ace.eval.tasks import TASKS_DIR
 from edge_slm_ace.harness.prompts import CHOICE_LETTERS, build_system_instruction
+from edge_slm_ace.utils.config import resolve_model
 
 # Back-compat alias: Belebele remains the primary study task.
 HARNESS_TASKS = BELEBELE_HARNESS_TASKS
+
+
+def hflm_kwargs(
+    model_id: str,
+    *,
+    batch_size: Optional[int] = None,
+    device: Optional[str] = None,
+    dtype: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Keyword arguments for every ``HFLM(...)`` this study constructs.
+
+    ``revision`` and ``enable_thinking`` come from the ModelSpec. A loader
+    that omitted them would score ``main`` with thinking left at the
+    template default, which for Qwen3 is on. ``enable_thinking``
+    is always present, including None: that is how a model without the
+    switch is distinguished from one where it was turned off.
+
+    Args:
+        model_id: Model key or HuggingFace id. Resolved to a ModelSpec.
+        batch_size: Requests per forward batch, when this process builds the model.
+        device: "cuda", "mps", "cpu", or None to let the harness decide.
+        dtype: Torch dtype name.
+
+    Returns:
+        Arguments for ``HFLM`` or, via ``build_model_args``, for ``model_args``.
+    """
+    spec = resolve_model(model_id)
+    kwargs: Dict[str, Any] = {
+        "pretrained": spec.hf_id,
+        "revision": spec.revision,
+        "enable_thinking": spec.enable_thinking,
+    }
+    if batch_size is not None:
+        kwargs["batch_size"] = batch_size
+    if device is not None:
+        kwargs["device"] = device
+    if dtype is not None:
+        kwargs["dtype"] = dtype
+    return kwargs
 
 
 def build_model_args(model_id: str, dtype: Optional[str] = None) -> str:
     """
     Render the `model_args` string the harness expects.
 
+    ``batch_size`` and ``device`` are arguments of ``simple_evaluate`` itself,
+    not of this string. The revision and the thinking switch are.
+
     Args:
-        model_id: HuggingFace model id.
+        model_id: HuggingFace model id or a registry key.
         dtype: Optional torch dtype name, recorded so a run is reproducible.
 
     Returns:
-        A comma-separated key=value string.
+        A comma-separated key=value string. ``enable_thinking=None`` is
+        included on purpose: the harness parses it back to None.
     """
-    parts = [f"pretrained={model_id}"]
-    if dtype:
-        parts.append(f"dtype={dtype}")
+    kwargs = hflm_kwargs(model_id, dtype=dtype)
+    parts = []
+    for key in ("pretrained", "revision", "dtype", "enable_thinking"):
+        if key not in kwargs:
+            continue
+        value = kwargs[key]
+        if isinstance(value, bool):
+            parts.append(f"{key}={value}")
+        elif value is None:
+            parts.append(f"{key}=None")
+        else:
+            parts.append(f"{key}={value}")
     return ",".join(parts)
 
 

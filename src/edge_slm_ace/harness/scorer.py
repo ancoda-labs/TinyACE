@@ -20,6 +20,7 @@ set on one path and not the other.
 
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from edge_slm_ace.harness.evaluate import hflm_kwargs
 from edge_slm_ace.harness.prompts import (
     build_context,
     build_system_instruction,
@@ -60,9 +61,11 @@ class OptionScorer:
         else:
             from lm_eval.models.huggingface import HFLM
 
-            kwargs = {"pretrained": model_id, "batch_size": batch_size}
-            if device is not None:
-                kwargs["device"] = device
+            # revision and enable_thinking come from the ModelSpec. Building
+            # HFLM from the bare id used to load "main" and leave Qwen3
+            # thinking, so adaptation scored a different prompt than
+            # the pinned evaluation.
+            kwargs = hflm_kwargs(model_id, batch_size=batch_size, device=device)
             self.lm = HFLM(**kwargs)
         self.model_id = model_id
         self.apply_chat_template = apply_chat_template

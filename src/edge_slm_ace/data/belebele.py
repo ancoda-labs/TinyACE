@@ -38,6 +38,15 @@ from edge_slm_ace.eval.tasks import BELEBELE_HARNESS_TASKS
 from edge_slm_ace.eval.utils import permute_options, stable_item_seed
 from edge_slm_ace.utils.config import ADAPTATION_SIZE, REPO_ROOT
 
+# Hub id. The task YAMLs name the same repo; their dataset_kwargs.revision
+# and this constant are the same commit, checked by tests/test_repro_pins.py.
+HF_DATASET = "facebook/belebele"
+
+# HfApi().dataset_info("facebook/belebele").sha on 2026-10-28.
+# Evaluation loads this commit from the Hub. Adaptation reads the committed
+# jsonl. Those two drifting is a different question set under the same ids.
+BELEBELE_REVISION = "7899cdfa4e1e0d733fd77c848e2c273cb1d32be2"
+
 # Short language code -> the FLORES-200 code Belebele files are named by.
 BELEBELE_LANGUAGES: Dict[str, str] = {
     "en": "eng_Latn",

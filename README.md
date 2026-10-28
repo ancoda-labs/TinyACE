@@ -14,7 +14,7 @@ Original ACE (Zhang et al., ICLR 2026) assumes context abundance (10K–100K tok
 
 ### Core Research Questions
 1. **Sub-1K Survival:** Does test-time context adaptation improve accuracy under $T_{\text{max}} \in \{256, 512, 1024\}$ context ceilings?
-2. **Token Economics vs. Capability:** Does Devanagari script token inflation (~4.5× cl100k cost vs. English) mechanically degrade context adaptation budgets?
+2. **Token Economics vs. Capability:** Does Devanagari script token inflation mechanically degrade context adaptation budgets? The ratio on this study's models, measured with each model's own tokenizer, is `results/fertility/fertility.csv`.
 
 ---
 

@@ -1,0 +1,59 @@
+---
+description: TinyACE v3 research-integrity rules. Apply to every change in this repo.
+globs:
+alwaysApply: true
+---
+
+# TinyACE v3 rules
+
+This repo produces numbers for a paper. A bug that changes a number is worse than a crash.
+Follow these rules on every task. If a task asks you to break one, stop and say so.
+
+## Stop conditions
+- If the code does not match what the prompt describes (file moved, function renamed, issue
+  already fixed), STOP and report what you found. Do not guess, and do not fix something else.
+- If a fix needs a decision the prompt does not make (a threshold, a default, prompt wording
+  shown to a model, a file format), STOP and ask. Never invent research parameters.
+- Never edit `configs/hypotheses.yaml`, `configs/teacher_qualification.yaml`, screening
+  constants in `utils/config.py`, or any pre-registered threshold unless the prompt says so.
+
+## Measurement integrity
+- lm-evaluation-harness produces every reported accuracy (`run_frozen_eval`). Project code
+  never computes a reported accuracy itself.
+- Item ids come ONLY from the frozen manifests in `data/splits/` (via `frozen_split()` /
+  `manifest_ids()` once they exist). `--seed` controls randomness, never which items are used.
+- Never regenerate, re-sample or hand-edit `data/splits/*.json`. Never run
+  `make splits-REGENERATE` or `freeze_splits --force`. A NEW manifest only when a prompt says so.
+- The adaptation loop must never see an evaluation item: every production call to
+  `adapt_playbook` passes the real evaluation manifest.
+- Adaptation and evaluation render prompts identically. Any prompt-rendering change keeps
+  `assert_matches_harness()` and the byte-identity tests passing.
+- Prompt truncation invalidates a run; never truncate or drop lessons silently.
+- Token counts use the study model's own tokenizer with `add_special_tokens=False`, never
+  `words * 1.3`.
+- A run with `--limit` is a debug run and must never be aggregated.
+
+## Repo conventions
+- Results paths go through `reporting/layout.py` only. Arms are registered in
+  `reporting/schema.py` before any runner uses them. Health rules live in `reporting/health.py`.
+- Text shown to a model (scaffolds, reflector/curator/guide prompts) lives in files under
+  `prompts/` so the paper can quote it exactly.
+- Keep the existing docstring style: explain WHY a line exists, especially when it guards a
+  past bug. Don't delete those explanations; update them.
+- Keep the CI smoke tests in `.github/workflows/ci.yaml` working (`run_arm` with `tiny-gpt2`).
+
+## Teacher model
+- All teacher calls go through the teacher client and its on-disk cache; everything is
+  archived under `artifacts/teacher/`. Evaluation runs in replay mode (no network).
+- API keys come from environment variables. Never write a key, token or `.env` file into the repo.
+
+## Engineering
+- `pyproject.toml` is the only packaging source. Use the project `.venv`; never the system or
+  Homebrew Python.
+- Write the failing test first, then the fix. Unit tests never touch the network or HF cache;
+  tests that do are marked `@pytest.mark.network`.
+- Keep `flake8`, `black --check --target-version py311 src/ scripts/ tests/`,
+  `python -m scripts.freeze_splits --check` and `pytest -m "not network"` passing.
+- Small diffs. No unrelated refactors, renames or formatting sweeps.
+- When done, print: files changed, tests added, the commands you ran and their results, and a
+  suggested commit message. The human commits after every prompt.

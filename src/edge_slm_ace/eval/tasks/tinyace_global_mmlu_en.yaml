@@ -2,6 +2,10 @@
 task: tinyace_global_mmlu_en
 dataset_path: CohereForAI/Global-MMLU
 dataset_name: en
+# Hub commit. Same value as globalmmlu.GLOBAL_MMLU_REVISION.
+# CohereForAI/Global-MMLU @ dataset_info.sha, 2026-10-28.
+dataset_kwargs:
+  revision: 0e619dbeb34206cd48705a1a0ea7fb21cae09993
 test_split: test
 output_type: multiple_choice
 process_docs: !function utils.process_docs

@@ -14,7 +14,13 @@ import os
 import platform
 import random
 import subprocess
+from pathlib import Path
 from typing import Any, Dict, Optional
+
+# Present on a Jetson, absent everywhere else. The contents plus `nvpmodel -q`
+# are what a power-mode difference has to be blamed on; a Mac recording
+# None keeps the schema the same on both machines.
+_TEGRA_RELEASE = Path("/etc/nv_tegra_release")
 
 DEFAULT_SEED = 42
 
@@ -97,6 +103,40 @@ def _git_is_dirty() -> Optional[bool]:
     return None
 
 
+def _jetson_snapshot() -> Dict[str, Optional[str]]:
+    """
+    Jetson power-mode identity, or nulls when this is not a Jetson.
+
+    Returns:
+        ``nv_tegra_release`` is the file text. ``nvpmodel`` is what
+        ``nvpmodel -q`` printed. Both are None when ``/etc/nv_tegra_release``
+        is absent, and ``nvpmodel`` is None when the file is present but the
+        command cannot be run.
+    """
+    if not _TEGRA_RELEASE.is_file():
+        return {"nv_tegra_release": None, "nvpmodel": None}
+
+    try:
+        release = _TEGRA_RELEASE.read_text(encoding="utf-8", errors="replace").strip() or None
+    except OSError:
+        release = None
+
+    nvpmodel = None
+    try:
+        out = subprocess.run(
+            ["nvpmodel", "-q"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        rendered = ((out.stdout or "") + (out.stderr or "")).strip()
+        nvpmodel = rendered or None
+    except (OSError, subprocess.SubprocessError):
+        nvpmodel = None
+
+    return {"nv_tegra_release": release, "nvpmodel": nvpmodel}
+
+
 def capture_environment() -> Dict[str, Any]:
     """
     Snapshot everything needed to explain why a number came out the way it did.
@@ -117,6 +157,9 @@ def capture_environment() -> Dict[str, Any]:
         "cuda_version": None,
         "gpu_name": None,
         "gpu_count": 0,
+        "lm_eval_version": None,
+        "nv_tegra_release": None,
+        "nvpmodel": None,
     }
 
     try:
@@ -145,4 +188,12 @@ def capture_environment() -> Dict[str, Any]:
     except ImportError:
         pass
 
+    try:
+        import lm_eval
+
+        env["lm_eval_version"] = lm_eval.__version__
+    except ImportError:
+        pass
+
+    env.update(_jetson_snapshot())
     return env

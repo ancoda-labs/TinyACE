@@ -25,6 +25,7 @@ import pandas as pd
 
 from edge_slm_ace.reporting import (
     health_issues,
+    is_debug_run,
     load_predictions,
     load_run_metrics,
     summarize_predictions,
@@ -80,7 +81,27 @@ def print_health_warnings(runs: pd.DataFrame) -> int:
     return invalid
 
 
-def main() -> int:
+def _debug_paths(runs: pd.DataFrame) -> set:
+    """Cell directories whose metrics say debug: true."""
+    if runs.empty or "_path" not in runs.columns:
+        return set()
+    paths = set()
+    for _, row in runs.iterrows():
+        record = row.to_dict()
+        if is_debug_run(record):
+            paths.add(str(record["_path"]))
+    return paths
+
+
+def _without_debug(frame: pd.DataFrame, debug_paths: set) -> pd.DataFrame:
+    """Drop rows that belong to a --limit cell. The tables must not carry them."""
+    if frame.empty or not debug_paths or "_path" not in frame.columns:
+        return frame
+    keep = ~frame["_path"].astype(str).isin(debug_paths)
+    return frame.loc[keep].copy()
+
+
+def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="Aggregate experiment results into summary tables.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -114,7 +135,7 @@ def main() -> int:
         "with one bad cell; turn it on for CI or a pre-publication check.",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     root = Path(args.results_root)
     if not root.exists():
@@ -131,17 +152,29 @@ def main() -> int:
         print(f"Error: no metrics.json or predictions.jsonl under {root}", file=sys.stderr)
         return 1
 
-    if not runs.empty:
-        columns = [c for c in _RUN_COLUMNS if c in runs.columns]
-        runs_out = runs[columns]
+    # --limit cells are invalidating. compare_arms drops them from the test
+    # family via health_issues; the summary tables have to drop them too, or
+    # a debug accuracy still reaches the paper by way of the CSV.
+    debug_paths = _debug_paths(runs)
+    if debug_paths:
+        print(
+            f"{len(debug_paths)} debug run(s) excluded from the summary tables.",
+            file=sys.stderr,
+        )
+    reportable_runs = _without_debug(runs, debug_paths)
+    reportable_predictions = _without_debug(predictions, debug_paths)
+
+    if not reportable_runs.empty:
+        columns = [c for c in _RUN_COLUMNS if c in reportable_runs.columns]
+        runs_out = reportable_runs[columns]
         runs_path = out_dir / "summary_runs.csv"
         runs_out.to_csv(runs_path, index=False)
         if not args.quiet:
-            print(f"\n{len(runs)} run(s) -> {runs_path}\n")
+            print(f"\n{len(reportable_runs)} run(s) -> {runs_path}\n")
             print(runs_out.to_string(index=False))
 
-    if not predictions.empty:
-        accuracy = summarize_predictions(predictions, confidence=args.confidence)
+    if not reportable_predictions.empty:
+        accuracy = summarize_predictions(reportable_predictions, confidence=args.confidence)
         accuracy_path = out_dir / "summary_accuracy.csv"
         accuracy.to_csv(accuracy_path, index=False)
         if not args.quiet:

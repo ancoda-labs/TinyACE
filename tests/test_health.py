@@ -97,6 +97,31 @@ class TestUnknownHealthIsNotBadHealth:
     def test_metrics_without_the_fields_are_reportable(self):
         assert is_reportable({"arm": "tinyace", "accuracy": 0.4}) is True
 
+    def test_an_absent_debug_flag_is_not_a_debug_run(self):
+        """Older cells predate the flag. Missing is unknown, not debug."""
+        assert is_reportable(with_()) is True
+        assert invalidating_issues(with_(debug=False)) == []
+
+
+class TestDebugRunIsInvalidating:
+    """--limit scores a prefix of the frozen split.
+
+    That accuracy is not the study's number. compare_arms and
+    aggregate_results both key off this flag, so a debug cell cannot enter
+    a table or a test family.
+    """
+
+    def test_debug_true_is_invalidating(self):
+        metrics = with_(debug=True, limit=4)
+        issues = invalidating_issues(metrics)
+        assert [issue.field for issue in issues] == ["debug"]
+        assert is_reportable(metrics) is False
+        assert "prefix" in issues[0].message
+
+    def test_it_sorts_ahead_of_a_limitation(self):
+        metrics = with_(debug=True, relevance_active=False)
+        assert [issue.invalidating for issue in health_issues(metrics)] == [True, False]
+
 
 class TestLoadMetrics:
     def test_it_reads_the_file_beside_the_predictions(self, tmp_path):
@@ -122,7 +147,7 @@ class TestCompareArmsExcludesAnInvalidatedPair:
     evidence at all.
     """
 
-    def tree(self, tmp_path, truncated_arm=None):
+    def tree(self, tmp_path, truncated_arm=None, debug_arm=None):
         import json as _json
 
         ids = [f"q{i}" for i in range(40)]
@@ -145,6 +170,8 @@ class TestCompareArmsExcludesAnInvalidatedPair:
                         "tokens_dropped": truncated * 50,
                         "relevance_active": True,
                         "token_counts_exact": True,
+                        "debug": arm == debug_arm,
+                        "limit": 4 if arm == debug_arm else None,
                     }
                 ),
                 encoding="utf-8",
@@ -201,3 +228,9 @@ class TestCompareArmsExcludesAnInvalidatedPair:
     def test_the_reason_names_the_passage(self, tmp_path):
         out = self.run(self.tree(tmp_path, truncated_arm="tinyace")).stdout
         assert "that is the passage" in out
+
+    def test_a_debug_arm_leaves_an_empty_family(self, tmp_path):
+        out = self.run(self.tree(tmp_path, debug_arm="tinyace")).stdout
+        assert "family size 0" in out
+        assert "NOT REPORTABLE" in out
+        assert "prefix" in out

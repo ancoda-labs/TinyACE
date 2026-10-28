@@ -17,6 +17,10 @@ from edge_slm_ace.utils.config import ADAPTATION_SIZE, REPO_ROOT
 # User-facing Hub id from the Week 1 checklist. HF redirects CohereForAI → CohereLabs.
 HF_DATASET = "CohereForAI/Global-MMLU"
 
+# HfApi().dataset_info("CohereForAI/Global-MMLU").sha on 2026-10-28.
+# The task YAMLs pin the same commit in dataset_kwargs.revision.
+GLOBAL_MMLU_REVISION = "0e619dbeb34206cd48705a1a0ea7fb21cae09993"
+
 GLOBAL_MMLU_LANGUAGES: Dict[str, str] = {
     "en": "en",
     "ne": "ne",
@@ -116,7 +120,9 @@ def _load_split_from_hub(language: str, split: str) -> List[Dict[str, Any]]:
         ) from exc
 
     config = GLOBAL_MMLU_LANGUAGES[language] if language in GLOBAL_MMLU_LANGUAGES else language
-    ds = load_dataset(HF_DATASET, config, split=split)
+    # Same commit as the task YAML. Omitting it loads whatever "main" is
+    # today, which is not the split the manifest was frozen against.
+    ds = load_dataset(HF_DATASET, config, split=split, revision=GLOBAL_MMLU_REVISION)
     return [dict(row) for row in ds]
 
 

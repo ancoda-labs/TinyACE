@@ -380,3 +380,29 @@ class TestEveryRegisteredArmCanBeProduced:
     def test_an_unimplemented_arm_is_marked_as_such(self):
         assert not get_arm("tinyace_retrieval").implemented
         assert not get_arm("generative_cot").implemented
+
+
+class TestDebugRunsStayOutOfTheTables:
+    """A --limit cell is unusable. It must not land in summary_*.csv."""
+
+    def test_a_debug_cell_is_omitted_from_both_summaries(self, tmp_path):
+        from scripts.aggregate_results import main
+
+        write_cell(tmp_path, "tiny-gpt2", "en", "baseline", 20)
+        debug = write_cell(tmp_path, "tiny-gpt2", "en", "tinyace", 40)
+        metrics_path = debug / "metrics.json"
+        metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+        metrics["debug"] = True
+        metrics["limit"] = 4
+        metrics_path.write_text(json.dumps(metrics), encoding="utf-8")
+
+        assert main(["--results-root", str(tmp_path), "--out-dir", str(tmp_path), "--quiet"]) == 0
+
+        runs = (tmp_path / "summary_runs.csv").read_text(encoding="utf-8")
+        accuracy = (tmp_path / "summary_accuracy.csv").read_text(encoding="utf-8")
+        # summary_runs.csv prints the display label; summary_accuracy.csv
+        # groups on the arm key the predictions file carries.
+        assert "Baseline" in runs
+        assert "TinyACE" not in runs
+        assert "baseline" in accuracy
+        assert "tinyace" not in accuracy

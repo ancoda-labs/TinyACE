@@ -48,6 +48,21 @@ def screening_path(root: Union[str, Path], benchmark: str, language: str) -> Pat
     return Path(root) / "screening" / f"screening_{benchmark}_{language}.json"
 
 
+def fertility_csv(root: Union[str, Path]) -> Path:
+    """
+    The Nepali/English token-ratio table, one row per study model.
+
+    This is the file the README points at. A hand-typed ratio in the README
+    is how the unsourced 4.5x figure got into the paper draft.
+    """
+    return Path(root) / "fertility" / "fertility.csv"
+
+
+def fertility_json(root: Union[str, Path]) -> Path:
+    """The same rows as ``fertility_csv``, plus the provenance the csv cannot hold."""
+    return Path(root) / "fertility" / "fertility.json"
+
+
 def legacy_screening_path(root: Union[str, Path]) -> Path:
     """
     The single screening file written before results were split by task and language.

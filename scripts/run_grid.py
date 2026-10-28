@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from edge_slm_ace.harness.evaluate import hflm_kwargs
 from edge_slm_ace.reporting import cell_dir, get_arm, legacy_screening_path, screening_path
 from edge_slm_ace.utils import DEFAULT_SEED, capture_environment, resolve_model, set_seed
 
@@ -348,11 +349,16 @@ def main(argv=None) -> int:
 
             spec = resolve_model(model_key)
             print(f"\nloading {spec.hf_id}")
-            kwargs = {"pretrained": spec.hf_id, "batch_size": args.batch_size}
-            if args.device:
-                kwargs["device"] = args.device
-            if args.dtype:
-                kwargs["dtype"] = args.dtype
+            # The same revision and enable_thinking build_model_args passes
+            # when a cell loads the model itself. The grid loads once and
+            # hands the object over, so this is the only place those pins
+            # can reach a grid cell.
+            kwargs = hflm_kwargs(
+                spec.hf_id,
+                batch_size=args.batch_size,
+                device=args.device,
+                dtype=args.dtype,
+            )
             lm, current_model = HFLM(**kwargs), model_key
 
         argv_cell = [

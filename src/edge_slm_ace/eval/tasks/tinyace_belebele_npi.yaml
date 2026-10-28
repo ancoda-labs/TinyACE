@@ -2,6 +2,12 @@
 task: tinyace_belebele_npi
 dataset_path: facebook/belebele
 dataset_name: npi_Deva
+# Hub commit. Adaptation reads data/tasks/belebele/; evaluation loads the Hub.
+# Without this pin those two can drift and still agree on ids.
+# facebook/belebele @ dataset_info.sha, 2026-10-28. Same value as
+# belebele.BELEBELE_REVISION.
+dataset_kwargs:
+  revision: 7899cdfa4e1e0d733fd77c848e2c273cb1d32be2
 test_split: test
 # No fewshot_split, deliberately. Belebele ships only a `test` split, so the
 # only thing it could point at is the split the study reports over -- and with
