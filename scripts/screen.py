@@ -5,8 +5,9 @@ Evaluates Qwen3-1.7B, Qwen3-4B, Gemma-3-1B-it, and Gemma-3-4B-it on Global-MMLU
 Nepali and Belebele. A model/task cell passes only if the Wilson score lower
 bound (95% CI) on accuracy exceeds 30%. Chance on these 4-option tasks is 25%.
 
-Screening draws from the adaptation split only, so model selection never
-touches items the study reports on.
+Screening uses the frozen adaptation ids, in manifest order, so model
+selection never touches an item the study reports on. --seed seeds model
+and sampling RNGs. It does not choose or reorder screening items.
 
 Usage:
     python -m scripts.screen --device cuda
@@ -19,9 +20,7 @@ import json
 import sys
 from pathlib import Path
 
-from edge_slm_ace.data import load_belebele, load_globalmmlu
-from edge_slm_ace.data.belebele import study_split as belebele_study_split
-from edge_slm_ace.data.globalmmlu import study_split as globalmmlu_study_split
+from edge_slm_ace.data.splits import frozen_split
 from edge_slm_ace.eval.stats import summarize_accuracy, wilson_interval
 from edge_slm_ace.harness import per_item_correctness, run_frozen_eval
 from edge_slm_ace.utils import (
@@ -66,7 +65,14 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="Language for both tasks (default: ne)",
     )
     p.add_argument("--results-root", type=Path, default=Path("results"))
-    p.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_SEED,
+        help="Seeds model and sampling RNGs. Screening items are the frozen "
+        "adaptation ids in manifest order; the seed does not choose or "
+        "reorder them.",
+    )
     p.add_argument("--device", default=None, choices=["cpu", "cuda", "mps"])
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--dtype", default=None)
@@ -77,18 +83,6 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="Score as raw completion. Only correct for a base (non-instruct) model.",
     )
     return p.parse_args(argv)
-
-
-def _load_and_split(task: str, language: str, seed: int):
-    if task == "belebele":
-        examples = load_belebele(language)
-        adapt_ids, eval_ids = belebele_study_split(examples, seed)
-        return examples, adapt_ids, eval_ids
-    if task == "global_mmlu":
-        examples = load_globalmmlu(language, split="test")
-        adapt_ids, eval_ids = globalmmlu_study_split([e["id"] for e in examples], seed)
-        return examples, adapt_ids, eval_ids
-    raise KeyError(f"Unknown screening task '{task}'")
 
 
 def main(argv=None) -> int:
@@ -112,7 +106,10 @@ def main(argv=None) -> int:
     )
 
     for task in tasks:
-        _, adapt_ids, eval_ids = _load_and_split(task, args.language, args.seed)
+        # Manifest order, not a seed shuffle. run_arm shuffles its adaptation
+        # walk; screening must not, or --n would score a different prefix
+        # per seed while still claiming to be the frozen adaptation set.
+        adapt_ids, eval_ids = frozen_split(task)
         if args.n > len(adapt_ids):
             print(
                 f"Error: --n {args.n} exceeds the {task} adaptation split "

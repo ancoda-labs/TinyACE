@@ -39,7 +39,7 @@ import json
 import random
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from edge_slm_ace.utils.config import REPO_ROOT
 
@@ -219,6 +219,90 @@ def load_manifest(name: str) -> Dict[str, Any]:
 def manifest_ids(name: str) -> List[str]:
     """The item ids of a frozen split."""
     return list(load_manifest(name)["item_ids"])
+
+
+def eval_manifest_for(benchmark: str) -> str:
+    """
+    Name of the frozen evaluation manifest for a benchmark.
+
+    One mapping, so a caller cannot pair Belebele adaptation ids with the
+    Global-MMLU evaluation file. The adaptation leak guard takes this name;
+    the wrong file either refuses every item or guards the wrong set.
+
+    Args:
+        benchmark: ``belebele`` or ``global_mmlu``.
+
+    Returns:
+        Manifest name, suitable for ``assert_not_in_eval``.
+
+    Raises:
+        ValueError: If ``benchmark`` is not one of those two.
+    """
+    if benchmark == "belebele":
+        return BELEBELE_SPLIT
+    if benchmark == "global_mmlu":
+        return GLOBAL_MMLU_EVAL
+    raise ValueError(f"unknown benchmark {benchmark!r}. Known: belebele, global_mmlu")
+
+
+def frozen_split(benchmark: str) -> Tuple[List[str], List[str]]:
+    """
+    The pre-registered adaptation and evaluation ids for a benchmark.
+
+    Runners take item ids from here. ``study_split`` rebuilds the split from
+    a seed, so a second seed used to score a different set of items from the
+    one CI checksums. The seed may still order the adaptation walk. It does
+    not decide membership, and this function does not shuffle.
+
+    Belebele keeps both sides in one file. ``load_manifest`` checks
+    ``ids_sha256``, which covers only ``item_ids`` (the evaluation side).
+    The adaptation list has its own checksum and used to be able to change
+    without that check noticing.
+
+    Args:
+        benchmark: ``belebele`` or ``global_mmlu``.
+
+    Returns:
+        ``(adapt_ids, eval_ids)`` in manifest order. Copies, so a caller
+        that shuffles its own list does not mutate the cached manifest.
+
+    Raises:
+        ValueError: Unknown benchmark, a checksum mismatch, or any id that
+            sits on both sides.
+    """
+    if benchmark == "belebele":
+        body = load_manifest(BELEBELE_SPLIT)
+        adapt = list(body["adaptation_item_ids"])
+        # load_manifest verified ids_sha256 against item_ids. The adaptation
+        # list is a second list in the same file, with its own checksum, and
+        # nothing else re-checks it.
+        recorded = body.get("adaptation_ids_sha256")
+        actual = ids_checksum(adapt)
+        if recorded != actual:
+            path = manifest_path(BELEBELE_SPLIT)
+            raise ValueError(
+                f"{path.name}: adaptation_ids_sha256 is {recorded}, but the "
+                f"adaptation ids hash to {actual}. The manifest has been edited "
+                f"or truncated; this is no longer the split the study "
+                f"pre-registered."
+            )
+        eval_ids = list(body["item_ids"])
+    elif benchmark == "global_mmlu":
+        # Each call goes through load_manifest, so a tampered id list fails
+        # on that file's ids_sha256 before it can be returned.
+        adapt = manifest_ids(GLOBAL_MMLU_ADAPT)
+        eval_ids = manifest_ids(GLOBAL_MMLU_EVAL)
+    else:
+        raise ValueError(f"unknown benchmark {benchmark!r}. Known: belebele, global_mmlu")
+
+    overlap = set(adapt) & set(eval_ids)
+    if overlap:
+        raise ValueError(
+            f"{benchmark}: {len(overlap)} ids are in both the adaptation and "
+            f"evaluation splits. Adapting on an evaluation item would tune the "
+            f"playbook on a question the study reports over."
+        )
+    return adapt, eval_ids
 
 
 @lru_cache(maxsize=None)

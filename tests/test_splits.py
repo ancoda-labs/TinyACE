@@ -25,6 +25,8 @@ from edge_slm_ace.data.splits import (
     SUBSAMPLE_SEED,
     assert_not_in_eval,
     clear_manifest_cache,
+    eval_manifest_for,
+    frozen_split,
     ids_checksum,
     load_manifest,
     manifest_ids,
@@ -245,3 +247,47 @@ class TestBelebelePassageDisjointness:
         assert_zero_passage_overlap(
             body["adaptation_item_ids"], body["item_ids"], load_belebele("ne")
         )
+
+
+class TestFrozenSplit:
+    """Runners read the committed ids. Rebuilding the split from a seed is how
+    SEED=43 scored a different set from the one CI checksums.
+    """
+
+    def test_belebele_is_the_committed_manifest(self):
+        adapt, evaluate = frozen_split("belebele")
+        body = load_manifest(BELEBELE_SPLIT)
+        assert adapt == list(body["adaptation_item_ids"])
+        assert evaluate == list(body["item_ids"])
+        assert len(adapt) == 400
+        assert len(evaluate) == 500
+        assert not set(adapt) & set(evaluate)
+        assert eval_manifest_for("belebele") == BELEBELE_SPLIT
+
+    def test_global_mmlu_is_the_two_committed_manifests(self):
+        adapt, evaluate = frozen_split("global_mmlu")
+        assert adapt == manifest_ids(GLOBAL_MMLU_ADAPT)
+        assert evaluate == manifest_ids(GLOBAL_MMLU_EVAL)
+        assert len(adapt) == ADAPT_SUBSAMPLE_SIZE
+        assert len(evaluate) == EVAL_SUBSAMPLE_SIZE
+        assert not set(adapt) & set(evaluate)
+        assert eval_manifest_for("global_mmlu") == GLOBAL_MMLU_EVAL
+
+    def test_a_tampered_adaptation_list_raises(self, tmp_path, monkeypatch):
+        """load_manifest only checks ids_sha256, which covers the eval ids.
+        An edited adaptation list must still fail, or the playbook is built
+        on items the checksum claimed not to have changed.
+        """
+        body = json.loads(manifest_path(BELEBELE_SPLIT).read_text(encoding="utf-8"))
+        body["adaptation_item_ids"] = list(body["adaptation_item_ids"])
+        body["adaptation_item_ids"][0] = "bel-tampered"
+        dest = tmp_path / "data" / "splits"
+        dest.mkdir(parents=True)
+        (dest / f"{BELEBELE_SPLIT}.json").write_text(json.dumps(body), encoding="utf-8")
+        monkeypatch.setattr("edge_slm_ace.data.splits.REPO_ROOT", tmp_path)
+        clear_manifest_cache()
+        try:
+            with pytest.raises(ValueError, match="adaptation_ids_sha256"):
+                frozen_split("belebele")
+        finally:
+            clear_manifest_cache()

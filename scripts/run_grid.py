@@ -15,6 +15,10 @@ curation, so adaptation dominates. Two consequences shape this runner:
 Ordering matters: an arm with `playbook_from` runs after the arm it borrows
 from, which is why the plan is built before anything executes.
 
+This runner does not choose items. Each cell calls run_arm, which reads
+the frozen manifest. --seed is forwarded for model and sampling RNGs and
+for the order that cell walks its adaptation ids.
+
 Usage:
     python -m scripts.run_grid --dry-run
     python -m scripts.run_grid --models qwen3-1.7b qwen3-4b --device cuda
@@ -158,11 +162,24 @@ def parse_args(argv=None) -> argparse.Namespace:
     )
     p.add_argument("--languages", nargs="*", default=["en", "ne"])
     p.add_argument("--results-root", type=Path, default=Path("results"))
-    p.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_SEED,
+        help="Forwarded to each cell. Seeds model and sampling RNGs and the "
+        "order that cell walks the frozen adaptation ids. It does not choose "
+        "which items are used.",
+    )
     p.add_argument("--device", default=None, choices=["cpu", "cuda", "mps"])
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--dtype", default=None)
-    p.add_argument("--limit", type=int, default=None, help="Truncate both splits (debug)")
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Forwarded to each cell: first N ids of each frozen split "
+        "(debug). Not a study run.",
+    )
     p.add_argument("--dry-run", action="store_true", help="Print the plan and stop")
     p.add_argument("--force", action="store_true", help="Re-run cells already complete")
     p.add_argument("--no-chat-template", action="store_true")

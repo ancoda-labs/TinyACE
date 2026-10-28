@@ -7,6 +7,10 @@ lm-evaluation-harness run over a frozen artifact. Nothing computed during
 evaluation can feed back into the playbook, because the playbook is a file by
 then.
 
+Item ids come from the frozen manifest. --seed seeds the model and
+sampling RNGs and the order those adaptation ids are walked. It does not
+choose which items are used. --limit is a debug prefix of that manifest.
+
 Usage:
     # Control arm: the scaffold, no playbook
     python -m scripts.run_arm --model qwen3-1.7b --language ne --arm scaffold_control
@@ -20,13 +24,17 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
+import random
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from typing import Sequence
 
 from edge_slm_ace.adapt import adapt_playbook, frozen_lessons, save_adaptation_log
-from edge_slm_ace.data import load_belebele, study_split
+from edge_slm_ace.data import load_belebele
+from edge_slm_ace.data.splits import frozen_split
 from edge_slm_ace.harness import OptionScorer, accuracy_of, per_item_correctness, run_frozen_eval
 from edge_slm_ace.memory.playbook import Playbook, ScoringParams
 from edge_slm_ace.memory.relevance import LessonRelevance
@@ -45,13 +53,12 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--language", required=True, choices=["en", "ne"])
     p.add_argument("--arm", required=True, help="Arm key from reporting/schema.py")
     p.add_argument("--output-dir", required=True, type=Path)
-    p.add_argument("--seed", type=int, default=DEFAULT_SEED)
     p.add_argument(
-        "--adaptation-size",
+        "--seed",
         type=int,
-        default=None,
-        help="Override the study's adaptation split size. Debugging only: a "
-        "run that sets it is not on the split screening was gated on.",
+        default=DEFAULT_SEED,
+        help="Seeds model and sampling RNGs, and the order adaptation walks "
+        "the frozen adaptation ids. It does not choose which items are used.",
     )
     p.add_argument("--device", default=None, choices=["cpu", "cuda", "mps"])
     p.add_argument("--batch-size", type=int, default=8)
@@ -63,7 +70,14 @@ def parse_args(argv=None) -> argparse.Namespace:
         "built, so the dtype it was built with is passed in to be recorded.",
     )
     p.add_argument("--top-k", type=int, default=5, help="Lessons in the frozen prefix")
-    p.add_argument("--limit", type=int, default=None, help="Truncate both splits (debug)")
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Use only the first N ids of each frozen split, in manifest "
+        "order, then shuffle that adaptation prefix (debug). A run that sets "
+        "this is not a study run.",
+    )
     p.add_argument(
         "--init-playbook",
         type=Path,
@@ -92,6 +106,17 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="Score as raw completion. Only correct for a base (non-instruct) model.",
     )
     return p.parse_args(argv)
+
+
+def adaptation_order_sha256(item_ids: Sequence[str]) -> str:
+    """
+    sha256 of the adaptation walk, in walk order.
+
+    ``ids_checksum`` sorts before hashing. That is right for a split, which
+    is a set, and wrong here: two seeds walk the same items in different
+    orders, and a sorted hash would record them as the same walk.
+    """
+    return hashlib.sha256("\n".join(item_ids).encode("utf-8")).hexdigest()
 
 
 def playbook_tokenizer(lm, scorer) -> object:
@@ -167,11 +192,16 @@ def main(argv=None, lm=None) -> int:
 
     examples = load_belebele(args.language, domain=domain)
     by_id = {e["id"]: e for e in examples}
-    adapt_ids, eval_ids = study_split(
-        examples, seed=args.seed, adaptation_size=args.adaptation_size
-    )
+    adapt_ids, eval_ids = frozen_split("belebele")
     if args.limit:
+        # Prefix in manifest order, then shuffle. Shuffling first would make
+        # --limit a seed-dependent sample of the frozen set.
         adapt_ids, eval_ids = adapt_ids[: args.limit], eval_ids[: args.limit]
+    # Copy: the manifest list must stay in manifest order for the next caller.
+    # Evaluation ids are not shuffled; the harness does not score by position.
+    # Screening does not shuffle either. Only this walk does.
+    adaptation_order = list(adapt_ids)
+    random.Random(args.seed).shuffle(adaptation_order)
 
     print(f"{spec.hf_id} | {args.language} | {args.arm}")
     print(f"  {len(adapt_ids)} adaptation / {len(eval_ids)} evaluation items")
@@ -205,7 +235,7 @@ def main(argv=None, lm=None) -> int:
         print("  adapting...")
         adapt_summary = adapt_playbook(
             scorer,
-            [by_id[i] for i in adapt_ids],
+            [by_id[i] for i in adaptation_order],
             playbook,
             domain=domain,
             use_curator=not args.no_curator,
@@ -302,6 +332,11 @@ def main(argv=None, lm=None) -> int:
         "model_generation": spec.generation,
         "language": args.language,
         "seed": args.seed,
+        # The set is the frozen manifest. These two say which seed ordered
+        # the walk and which order that was, so two seeds cannot be mistaken
+        # for the same adaptation.
+        "adaptation_order_seed": args.seed,
+        "adaptation_order_sha256": adaptation_order_sha256(adaptation_order),
         "accuracy": accuracy,
         "n_eval": len(eval_ids),
         "n_adaptation": len(adapt_ids) if needs_playbook and not args.init_playbook else 0,

@@ -6,7 +6,10 @@ A borrowing arm that cannot see the lessons it borrowed is the dangerous case --
 it produces a complete, plausible result that is silently the control arm.
 """
 
+import ast
+import hashlib
 import json
+from pathlib import Path
 
 
 from edge_slm_ace.memory.playbook import Playbook
@@ -309,3 +312,133 @@ class TestPlaybookGetsARealTokenizer:
             tokenizer = object()
 
         assert self.picker()(LM(), None) is None
+
+
+def _ordered_id_sha256(item_ids) -> str:
+    """Order-sensitive. ids_checksum sorts, which would hide a seed change."""
+    return hashlib.sha256("\n".join(item_ids).encode("utf-8")).hexdigest()
+
+
+class TestRunArmReadsTheFrozenSplit:
+    """The adaptation and evaluation sets come from the manifest.
+
+    The seed orders the adaptation walk and nothing else. Two seeds that
+    selected different items would make the multi-seed grid a comparison of
+    different questions.
+    """
+
+    def run(self, tmp_path, monkeypatch, seed, limit=None):
+        from scripts import run_arm
+
+        captured = {}
+
+        class Scorer:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        def fake_adapt(scorer, examples, playbook, **kwargs):
+            captured["adapt"] = [example["id"] for example in examples]
+            return {"accuracy": 0.0, "playbook_size": 0, "log": []}
+
+        def fake_eval(model_id, language, item_ids, **kwargs):
+            captured["eval"] = list(item_ids)
+            return {
+                "results": {"tinyace_belebele_eng": {"acc,none": 0.25}},
+                "tinyace": {
+                    "truncated_prompts": 0,
+                    "truncation_rate": 0.0,
+                    "tokens_dropped": 0,
+                },
+            }
+
+        def fake_items(results, language, expected_ids=None, **kwargs):
+            return {item_id: 1 for item_id in expected_ids}
+
+        class Rel:
+            available = False
+            encoder_name = None
+
+        monkeypatch.setattr(run_arm, "OptionScorer", Scorer)
+        monkeypatch.setattr(run_arm, "adapt_playbook", fake_adapt)
+        monkeypatch.setattr(run_arm, "run_frozen_eval", fake_eval)
+        monkeypatch.setattr(run_arm, "per_item_correctness", fake_items)
+        monkeypatch.setattr(run_arm.LessonRelevance, "get_instance", classmethod(lambda cls: Rel()))
+
+        argv = [
+            "--model",
+            "tiny-gpt2",
+            "--language",
+            "en",
+            "--arm",
+            "tinyace",
+            "--output-dir",
+            str(tmp_path),
+            "--seed",
+            str(seed),
+            "--no-chat-template",
+        ]
+        if limit is not None:
+            argv += ["--limit", str(limit)]
+        assert run_arm.main(argv) == 0
+        captured["metrics"] = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
+        return captured
+
+    def test_two_seeds_share_the_manifest_sets(self, tmp_path, monkeypatch):
+        from edge_slm_ace.data.splits import frozen_split
+
+        adapt, evaluate = frozen_split("belebele")
+        first = self.run(tmp_path / "s42", monkeypatch, seed=42)
+        second = self.run(tmp_path / "s43", monkeypatch, seed=43)
+
+        assert set(first["adapt"]) == set(adapt)
+        assert set(second["adapt"]) == set(adapt)
+        assert first["eval"] == list(evaluate)
+        assert second["eval"] == list(evaluate)
+        assert first["adapt"] != second["adapt"]
+        assert first["metrics"]["adaptation_order_seed"] == 42
+        assert second["metrics"]["adaptation_order_seed"] == 43
+        assert first["metrics"]["adaptation_order_sha256"] == _ordered_id_sha256(first["adapt"])
+        assert second["metrics"]["adaptation_order_sha256"] == _ordered_id_sha256(second["adapt"])
+        assert (
+            first["metrics"]["adaptation_order_sha256"]
+            != second["metrics"]["adaptation_order_sha256"]
+        )
+
+    def test_the_same_seed_walks_adaptation_in_the_same_order(self, tmp_path, monkeypatch):
+        first = self.run(tmp_path / "a", monkeypatch, seed=42)
+        second = self.run(tmp_path / "b", monkeypatch, seed=42)
+        assert first["adapt"] == second["adapt"]
+        assert first["eval"] == second["eval"]
+
+    def test_limit_keeps_the_same_prefix_in_different_orders(self, tmp_path, monkeypatch):
+        from edge_slm_ace.data.splits import frozen_split
+
+        adapt, evaluate = frozen_split("belebele")
+        first = self.run(tmp_path / "s42", monkeypatch, seed=42, limit=4)
+        second = self.run(tmp_path / "s43", monkeypatch, seed=43, limit=4)
+        assert set(first["adapt"]) == set(adapt[:4])
+        assert set(second["adapt"]) == set(adapt[:4])
+        assert first["adapt"] != second["adapt"]
+        assert first["eval"] == list(evaluate[:4])
+        assert second["eval"] == first["eval"]
+
+
+class TestRunnersDoNotRebuildTheSplit:
+    """A runner that calls study_split again selects items with --seed."""
+
+    def test_entry_points_do_not_name_the_split_builders(self):
+        forbidden = {"study_split", "parallel_split", "passage_disjoint_split"}
+        root = Path(__file__).resolve().parents[1] / "scripts"
+        for name in ("run_arm.py", "screen.py", "run_grid.py"):
+            tree = ast.parse((root / name).read_text(encoding="utf-8"))
+            found = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name) and node.id in forbidden:
+                    found.add(node.id)
+                elif isinstance(node, ast.Attribute) and node.attr in forbidden:
+                    found.add(node.attr)
+                elif isinstance(node, ast.alias) and (
+                    node.name in forbidden or node.asname in forbidden
+                ):
+                    found.add(node.name)
+            assert not found, f"{name} references {sorted(found)}"

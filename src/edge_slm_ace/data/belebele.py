@@ -341,13 +341,19 @@ def study_split(
     adaptation_size: Optional[int] = None,
 ) -> Tuple[List[str], List[str]]:
     """
-    The study's one split of Belebele into adaptation and evaluation.
+    Passage-disjoint split of Belebele into adaptation and evaluation.
 
-    Every entrypoint must call this rather than `parallel_split` directly.
-    Screening and the grid each chose their own size -- 400 and 200 -- and since
-    the split is one shuffle sliced at that index, the 200 items between them
-    were screened on *and* scored on. Model selection was therefore made on
-    items the study reports over.
+    Runners must not call this. They load ``data/splits/belebele_split.json``
+    through ``frozen_split``, so a run seed cannot move the study onto a
+    different set of items. ``scripts/freeze_splits.py`` calls
+    ``passage_disjoint_split`` directly to write that file; this wrapper
+    remains for the packer tests.
+
+    Screening and the grid once each chose their own size -- 400 and 200 --
+    and since the split is one shuffle sliced at that index, the 200 items
+    between them were screened on *and* scored on. Model selection was
+    therefore made on items the study reports over. Freezing the ids is what
+    closed that.
 
     The split is passage-disjoint: sharing a FLORES passage across the boundary
     would let adaptation see evaluation context.
@@ -355,9 +361,10 @@ def study_split(
     Args:
         examples: Normalised Belebele examples (must carry `id` and
             `passage_id`).
-        seed: Run seed.
-        adaptation_size: Override, for tests and debugging only. A run that
-            passes one is no longer on the study's split.
+        seed: Seed for the passage shuffle. The committed manifest was built
+            at ``DEFAULT_SEED``. A run seed does not belong here.
+        adaptation_size: Override, for tests of the packer. A manifest written
+            with an override is not the study's split.
 
     Returns:
         (adaptation_ids, eval_ids), both sorted, disjoint, and passage-disjoint.

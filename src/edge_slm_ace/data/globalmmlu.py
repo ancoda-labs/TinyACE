@@ -263,7 +263,15 @@ def study_split(
     seed: int,
     adaptation_size: Optional[int] = None,
 ) -> Tuple[List[str], List[str]]:
-    """Adaptation / evaluation split for Global-MMLU (item-level; no passages)."""
+    """
+    Item-level adaptation / evaluation split for Global-MMLU.
+
+    No passages, so this is ``parallel_split``. Runners must not call it.
+    The study's Global-MMLU ids are the frozen subsample in ``data/splits/``,
+    loaded through ``frozen_split``. Rebuilding from a seed draws a different
+    400 and a different 2,000 from the full test set, which is not the split
+    that was pre-registered.
+    """
     from edge_slm_ace.data.belebele import parallel_split
 
     return parallel_split(item_ids, adaptation_size or ADAPTATION_SIZE, seed)
