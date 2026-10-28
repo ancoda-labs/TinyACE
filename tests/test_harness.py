@@ -90,6 +90,7 @@ class TestHarnessParity:
         assert BELEBELE_DOC_TO_TEXT.endswith("Answer:")
 
     @needs_data
+    @pytest.mark.network
     @pytest.mark.parametrize("apply_chat_template", [False, True])
     @pytest.mark.parametrize("instruction", [None, "Read the passage."])
     def test_context_is_byte_identical_to_the_harness(
@@ -127,6 +128,7 @@ class TestHarnessParity:
         )
 
     @needs_data
+    @pytest.mark.network
     @pytest.mark.parametrize("apply_chat_template", [False, True])
     def test_continuations_are_the_harness_continuations(
         self, local_belebele_task, apply_chat_template

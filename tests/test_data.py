@@ -310,7 +310,9 @@ class TestNoTaskDrawsFewShotFromTheEvaluationSplit:
             assert "fewshot_split" not in config, f"{path.name} names a few-shot source"
             assert "fewshot_config" not in config, f"{path.name} configures a few-shot sampler"
 
+    @pytest.mark.network
     def test_the_loaded_tasks_have_no_fewshot_split(self):
+        # Loads facebook/belebele via ConfigurableTask → datasets.load_dataset.
         pytest.importorskip("lm_eval")
         from lm_eval.tasks import TaskManager
 

@@ -40,7 +40,7 @@ jobs:
       run: python -m scripts.freeze_splits --check
 
     - name: Run tests
-      run: pytest tests/ -v --cov=edge_slm_ace --cov-report=term-missing
+      run: pytest tests/ -v -m "not network" --cov=edge_slm_ace --cov-report=term-missing
 
     # Which checks and why: .flake8, which `make lint` reads too.
     - name: Lint (syntax errors, undefined names, dead imports)

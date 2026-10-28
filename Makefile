@@ -3,7 +3,8 @@
 #   make install    development install with all extras
 #   make data       fetch/verify Belebele + Global-MMLU (en/ne)
 #   make splits     verify the committed frozen split manifests
-#   make test       run the test suite
+#   make test       run the test suite (offline; excludes @pytest.mark.network)
+#   make test-all   full suite, including Hub/cache tests
 #   make check      test + lint + format check (what CI runs)
 #   make screen     Week 1 gate: Qwen3+Gemma-3 on Belebele & Global-MMLU
 #   make grid       every arm, both languages, one seed
@@ -22,8 +23,8 @@ RESULTS ?= results
 DEVICE  ?= cuda
 PY      ?= python
 
-.PHONY: install data splits splits-REGENERATE test check lint format screen grid \
-	report mutants clean
+.PHONY: install data splits splits-REGENERATE test test-all check lint format \
+	screen grid report mutants clean
 
 install:
 	$(PY) -m pip install -e ".[dev,retrieval,report]"
@@ -43,6 +44,11 @@ splits-REGENERATE:
 	$(PY) -m scripts.freeze_splits --force
 
 test:
+	$(PY) -m pytest tests/ -v -m "not network"
+
+# Includes @pytest.mark.network tests (Hub / HF cache). Skipped by conftest when
+# HF_HOME is missing or the Hub is unreachable.
+test-all:
 	$(PY) -m pytest tests/ -v
 
 # Flags live in .flake8, so this and CI cannot drift apart.

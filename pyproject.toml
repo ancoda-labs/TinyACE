@@ -63,3 +63,6 @@ line-length = 100
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "network: needs the Hugging Face Hub or an HF cache (skipped when either is unavailable)",
+]
