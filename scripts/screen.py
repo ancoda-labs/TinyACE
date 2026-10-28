@@ -9,6 +9,11 @@ Screening uses the frozen adaptation ids, in manifest order, so model
 selection never touches an item the study reports on. --seed seeds model
 and sampling RNGs. It does not choose or reorder screening items.
 
+Each task and language is written to
+``results/screening/screening_{task}_{language}.json``. The grid reads the
+Nepali Global-MMLU file. An English screen does not replace it, and a
+Belebele pass does not admit a model.
+
 Usage:
     python -m scripts.screen --device cuda
     python -m scripts.screen --models qwen3-1.7b --tasks belebele global_mmlu
@@ -20,9 +25,15 @@ import json
 import sys
 from pathlib import Path
 
-from edge_slm_ace.data.splits import frozen_split
+from edge_slm_ace.data.splits import (
+    BELEBELE_SPLIT,
+    GLOBAL_MMLU_ADAPT,
+    frozen_split,
+    load_manifest,
+)
 from edge_slm_ace.eval.stats import summarize_accuracy, wilson_interval
 from edge_slm_ace.harness import per_item_correctness, run_frozen_eval
+from edge_slm_ace.reporting import screening_path
 from edge_slm_ace.utils import (
     ADAPTATION_SIZE,
     CHANCE_FLOOR,
@@ -85,6 +96,23 @@ def parse_args(argv=None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def adaptation_manifest(task: str) -> tuple[str, str]:
+    """
+    Name and checksum of the manifest whose adaptation ids screening uses.
+
+    Global-MMLU adaptation is its own file, so ``ids_sha256`` covers those
+    ids. Belebele keeps both sides in one file, and ``ids_sha256`` covers the
+    evaluation ids. Screening reads ``adaptation_item_ids``.
+    """
+    if task == "global_mmlu":
+        body = load_manifest(GLOBAL_MMLU_ADAPT)
+        return body["name"], body["ids_sha256"]
+    if task == "belebele":
+        body = load_manifest(BELEBELE_SPLIT)
+        return body["name"], body["adaptation_ids_sha256"]
+    raise ValueError(f"unknown task {task!r}. Known: belebele, global_mmlu")
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
     set_seed(args.seed)
@@ -92,9 +120,7 @@ def main(argv=None) -> int:
     keys = args.models or list(SCREENING_MODELS)
     tasks = args.tasks or list(SCREENING_TASKS)
 
-    out_dir = args.results_root / "screening"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    rows = []
+    pending = []
 
     print(
         f"Screening language={args.language}, n≤{args.n}, "
@@ -129,6 +155,7 @@ def main(argv=None) -> int:
 
         print(f"=== {task} ({args.language}), n={len(screen_ids)} ===")
 
+        task_rows = []
         for key in keys:
             spec = resolve_model(key)
             print(f"  {spec.hf_id} ...", flush=True)
@@ -148,7 +175,7 @@ def main(argv=None) -> int:
                 )
             except Exception as e:
                 print(f"    FAILED: {type(e).__name__}: {e}", file=sys.stderr)
-                rows.append(
+                task_rows.append(
                     {
                         "task": task,
                         "model": key,
@@ -168,7 +195,7 @@ def main(argv=None) -> int:
             passes = screening_verdict(ci_low)
             health = results["tinyace"]
 
-            rows.append(
+            task_rows.append(
                 {
                     "task": task,
                     "model": key,
@@ -195,25 +222,41 @@ def main(argv=None) -> int:
                 )
             )
         print()
+        pending.append((task, task_rows))
 
-    payload = {
-        "language": args.language,
-        "n": args.n,
-        "seed": args.seed,
-        "tasks": tasks,
-        "rule": {
-            "chance": CHANCE_FLOOR,
-            "floor": SCREENING_FLOOR,
-            "statistic": "wilson_ci_low",
-            "confidence": 0.95,
-            "pre_registered": True,
-            "adaptation_size": ADAPTATION_SIZE,
-            "drawn_from": "adaptation_split",
-        },
-        "models": rows,
-        "environment": capture_environment(),
+    environment = capture_environment()
+    rule = {
+        "chance": CHANCE_FLOOR,
+        "floor": SCREENING_FLOOR,
+        "statistic": "wilson_ci_low",
+        "confidence": 0.95,
+        "pre_registered": True,
+        "adaptation_size": ADAPTATION_SIZE,
+        "drawn_from": "adaptation_split",
     }
-    (out_dir / "screening.json").write_text(json.dumps(payload, indent=2, default=str), "utf-8")
+    written = []
+    rows = []
+    for task, task_rows in pending:
+        rows.extend(task_rows)
+        manifest_name, manifest_checksum = adaptation_manifest(task)
+        payload = {
+            "benchmark": task,
+            "language": args.language,
+            "manifest_name": manifest_name,
+            "manifest_checksum": manifest_checksum,
+            "n": args.n,
+            "seed": args.seed,
+            # One file is one task. Listing every task from this invocation
+            # would describe rows that were written to a different file.
+            "tasks": [task],
+            "rule": rule,
+            "models": task_rows,
+            "environment": environment,
+        }
+        path = screening_path(args.results_root, task, args.language)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+        written.append(path)
 
     survivors = [f"{r['model']}@{r.get('task', '?')}" for r in rows if r.get("passes")]
     print(
@@ -226,7 +269,8 @@ def main(argv=None) -> int:
             "study becomes a screening + fertility + audit paper.",
             file=sys.stderr,
         )
-    print(f"-> {out_dir / 'screening.json'}")
+    for path in written:
+        print(f"-> {path}")
     return 0
 
 

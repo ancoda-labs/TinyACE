@@ -13,7 +13,14 @@ from edge_slm_ace.reporting.health import (
     is_reportable,
     load_metrics,
 )
-from edge_slm_ace.reporting.layout import CELL_DEPTH, Cell, cell_dir, parse_cell
+from edge_slm_ace.reporting.layout import (
+    CELL_DEPTH,
+    Cell,
+    cell_dir,
+    legacy_screening_path,
+    parse_cell,
+    screening_path,
+)
 from edge_slm_ace.reporting.load import (
     PRIMARY_METRIC,
     load_predictions,
@@ -51,6 +58,7 @@ __all__ = [
     "invalidating_issues",
     "is_reportable",
     "is_ablation",
+    "legacy_screening_path",
     "load_metrics",
     "load_predictions",
     "load_run_metrics",
@@ -58,5 +66,6 @@ __all__ = [
     "normalize_columns",
     "parse_cell",
     "reference_for",
+    "screening_path",
     "summarize_predictions",
 ]

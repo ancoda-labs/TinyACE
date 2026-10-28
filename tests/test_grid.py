@@ -11,6 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
 
 from edge_slm_ace.memory.playbook import Playbook
 from edge_slm_ace.adapt import frozen_lessons
@@ -152,46 +153,261 @@ class TestScreeningRule:
 
 class TestScreeningSurvivors:
     """
-    `screen.py` writes one row per model and task, and the grid scores Belebele.
+    The grid admits models from the Nepali Global-MMLU screen only.
 
-    Reading every passing row admitted a model that cleared Global-MMLU but not
-    Belebele, and listed a model that cleared both twice.
+    `screening.json` used to hold every language. An English screen written
+    afterwards replaced the Nepali result, and a Belebele pass was enough to
+    enter a grid whose primary task is Global-MMLU.
     """
 
-    def write(self, root, rows):
-        (root / "screening").mkdir(parents=True)
-        (root / "screening" / "screening.json").write_text(
-            json.dumps({"language": "ne", "models": rows}), encoding="utf-8"
+    def write(
+        self,
+        root,
+        benchmark,
+        language,
+        rows,
+        *,
+        payload_language=None,
+        payload_benchmark=None,
+    ):
+        directory = root / "screening"
+        directory.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "benchmark": benchmark if payload_benchmark is None else payload_benchmark,
+            "language": language if payload_language is None else payload_language,
+            "models": rows,
+        }
+        (directory / f"screening_{benchmark}_{language}.json").write_text(
+            json.dumps(payload), encoding="utf-8"
         )
         return root
 
-    def test_only_a_belebele_pass_admits_a_model(self, tmp_path):
-        root = self.write(
+    def test_an_english_screen_cannot_change_nepali_survivors(self, tmp_path):
+        """Written second, the English file used to be the only file."""
+        self.write(
             tmp_path,
+            "global_mmlu",
+            "ne",
             [
-                {"model": "a", "task": "belebele", "passes": True},
-                {"model": "b", "task": "belebele", "passes": False},
-                {"model": "b", "task": "global_mmlu", "passes": True},
+                {"model": "kept", "task": "global_mmlu", "passes": True},
+                {"model": "out", "task": "global_mmlu", "passes": False},
             ],
         )
-        assert survivors(root) == ["a"]
-
-    def test_a_model_passing_both_tasks_is_planned_once(self, tmp_path):
-        root = self.write(
+        before = survivors(tmp_path)
+        self.write(
             tmp_path,
+            "global_mmlu",
+            "en",
             [
-                {"model": "a", "task": "belebele", "passes": True},
+                {"model": "kept", "task": "global_mmlu", "passes": False},
+                {"model": "english-only", "task": "global_mmlu", "passes": True},
+            ],
+        )
+        assert survivors(tmp_path) == before == ["kept"]
+
+    def test_a_payload_with_the_wrong_language_raises(self, tmp_path):
+        """The filename is not enough: the body has to say Nepali too."""
+        self.write(
+            tmp_path,
+            "global_mmlu",
+            "ne",
+            [{"model": "a", "task": "global_mmlu", "passes": True}],
+            payload_language="en",
+        )
+        with pytest.raises(ValueError, match="language"):
+            survivors(tmp_path)
+
+    def test_a_payload_missing_its_language_raises(self, tmp_path):
+        directory = tmp_path / "screening"
+        directory.mkdir()
+        (directory / "screening_global_mmlu_ne.json").write_text(
+            json.dumps(
+                {
+                    "benchmark": "global_mmlu",
+                    "models": [{"model": "a", "task": "global_mmlu", "passes": True}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="language"):
+            survivors(tmp_path)
+
+    def test_a_payload_with_the_wrong_benchmark_raises(self, tmp_path):
+        self.write(
+            tmp_path,
+            "global_mmlu",
+            "ne",
+            [{"model": "a", "task": "global_mmlu", "passes": True}],
+            payload_benchmark="belebele",
+        )
+        with pytest.raises(ValueError, match="benchmark"):
+            survivors(tmp_path)
+
+    def test_belebele_only_passes_do_not_admit_a_model(self, tmp_path):
+        """A Belebele pass is a different task. There is no fallback to it."""
+        self.write(
+            tmp_path,
+            "belebele",
+            "ne",
+            [{"model": "belebele-only", "task": "belebele", "passes": True}],
+        )
+        with pytest.raises(FileNotFoundError):
+            survivors(tmp_path)
+
+        self.write(
+            tmp_path,
+            "global_mmlu",
+            "ne",
+            [
+                {"model": "belebele-only", "task": "global_mmlu", "passes": False},
+                {"model": "belebele-row", "task": "belebele", "passes": True},
+                {"model": "admitted", "task": "global_mmlu", "passes": True},
+            ],
+        )
+        assert survivors(tmp_path) == ["admitted"]
+
+    def test_a_model_is_listed_once(self, tmp_path):
+        self.write(
+            tmp_path,
+            "global_mmlu",
+            "ne",
+            [
+                {"model": "a", "task": "global_mmlu", "passes": True},
                 {"model": "a", "task": "global_mmlu", "passes": True},
             ],
         )
-        assert survivors(root) == ["a"]
+        assert survivors(tmp_path) == ["a"]
 
-    def test_rows_from_the_belebele_only_screener_still_count(self, tmp_path):
-        root = self.write(tmp_path, [{"model": "a", "passes": True}])
-        assert survivors(root) == ["a"]
+    def test_a_screen_that_passes_nobody_is_empty(self, tmp_path):
+        """An empty list means the screen ran. A missing file is a raise."""
+        self.write(
+            tmp_path,
+            "global_mmlu",
+            "ne",
+            [{"model": "a", "task": "global_mmlu", "passes": False}],
+        )
+        assert survivors(tmp_path) == []
 
-    def test_an_unscreened_root_has_no_survivors(self, tmp_path):
-        assert survivors(tmp_path) is None
+    def test_a_missing_screen_raises(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            survivors(tmp_path)
+
+    def test_the_old_screening_json_is_ignored(self, tmp_path):
+        """It has no language in the name, so it cannot be the Nepali gate."""
+        directory = tmp_path / "screening"
+        directory.mkdir()
+        (directory / "screening.json").write_text(
+            json.dumps(
+                {
+                    "language": "en",
+                    "models": [{"model": "legacy", "task": "belebele", "passes": True}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.write(
+            tmp_path,
+            "global_mmlu",
+            "ne",
+            [{"model": "kept", "task": "global_mmlu", "passes": True}],
+        )
+        with pytest.warns(UserWarning, match=r"screening\.json"):
+            assert survivors(tmp_path) == ["kept"]
+
+    def test_the_old_file_alone_does_not_admit_anyone(self, tmp_path):
+        directory = tmp_path / "screening"
+        directory.mkdir()
+        (directory / "screening.json").write_text(
+            json.dumps(
+                {"language": "ne", "models": [{"model": "a", "task": "belebele", "passes": True}]}
+            ),
+            encoding="utf-8",
+        )
+        with pytest.warns(UserWarning, match=r"screening\.json"):
+            with pytest.raises(FileNotFoundError):
+                survivors(tmp_path)
+
+
+class TestScreenWritesOneFilePerTaskAndLanguage:
+    """Each task and language keeps the manifest and the git state it ran under."""
+
+    def run(self, tmp_path, monkeypatch, language, tasks):
+        from scripts import screen
+
+        monkeypatch.setattr(
+            screen,
+            "run_frozen_eval",
+            lambda *a, **k: {
+                "tinyace": {
+                    "truncation_rate": 0.0,
+                    "tokens_dropped": 0,
+                    "truncated_prompts": 0,
+                }
+            },
+        )
+
+        def fake_items(results, language, expected_ids=None, **kwargs):
+            return {item_id: 1 for item_id in expected_ids}
+
+        monkeypatch.setattr(screen, "per_item_correctness", fake_items)
+        assert (
+            screen.main(
+                [
+                    "--models",
+                    "tiny-gpt2",
+                    "--tasks",
+                    *tasks,
+                    "--language",
+                    language,
+                    "--results-root",
+                    str(tmp_path),
+                    "--n",
+                    "2",
+                ]
+            )
+            == 0
+        )
+
+    def test_each_task_and_language_gets_its_own_file(self, tmp_path, monkeypatch):
+        from edge_slm_ace.data.splits import BELEBELE_SPLIT, GLOBAL_MMLU_ADAPT, load_manifest
+        from edge_slm_ace.utils import capture_environment
+
+        self.run(tmp_path, monkeypatch, "ne", ["belebele", "global_mmlu"])
+        self.run(tmp_path, monkeypatch, "en", ["global_mmlu"])
+
+        screening = tmp_path / "screening"
+        assert not (screening / "screening.json").exists()
+        ne_mmlu = json.loads(
+            (screening / "screening_global_mmlu_ne.json").read_text(encoding="utf-8")
+        )
+        en_mmlu = json.loads(
+            (screening / "screening_global_mmlu_en.json").read_text(encoding="utf-8")
+        )
+        ne_bel = json.loads((screening / "screening_belebele_ne.json").read_text(encoding="utf-8"))
+
+        adapt = load_manifest(GLOBAL_MMLU_ADAPT)
+        belebele = load_manifest(BELEBELE_SPLIT)
+        env = capture_environment()
+
+        assert ne_mmlu["benchmark"] == "global_mmlu"
+        assert ne_mmlu["language"] == "ne"
+        assert ne_mmlu["tasks"] == ["global_mmlu"]
+        assert ne_mmlu["manifest_name"] == adapt["name"]
+        assert ne_mmlu["manifest_checksum"] == adapt["ids_sha256"]
+        assert {row["task"] for row in ne_mmlu["models"]} == {"global_mmlu"}
+        assert en_mmlu["language"] == "en"
+        assert en_mmlu["benchmark"] == "global_mmlu"
+        # Both splits share belebele_split.json. Screening reads the adaptation
+        # ids, so the checksum that covers them is adaptation_ids_sha256.
+        assert ne_bel["benchmark"] == "belebele"
+        assert ne_bel["manifest_name"] == belebele["name"]
+        assert ne_bel["manifest_checksum"] == belebele["adaptation_ids_sha256"]
+        assert ne_bel["manifest_checksum"] != belebele["ids_sha256"]
+        assert {row["task"] for row in ne_bel["models"]} == {"belebele"}
+        for key in ("n", "seed", "rule", "models", "environment"):
+            assert key in ne_mmlu
+        assert ne_mmlu["environment"]["git_commit"] == env["git_commit"]
+        assert ne_mmlu["environment"]["git_dirty"] == env["git_dirty"]
 
 
 class TestLanguageOrdering:

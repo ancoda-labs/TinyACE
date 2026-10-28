@@ -67,9 +67,10 @@ items drawn from each task's adaptation split, and the lower bound of the Wilson
 interval must clear 30% (chance is 25%). Screening never touches the evaluation
 split — `scripts/screen.py` refuses to start if it would.
 
-Results are written to `results/screening/screening.json`, one row per model and
-task. `make grid` scores Belebele, so it takes the models that passed on
-Belebele.
+Results are written to `results/screening/screening_{task}_{language}.json`,
+one file per task and language. `make grid` admits models that passed the
+Nepali Global-MMLU screen. An English screen does not replace it, and a
+Belebele pass does not admit a model.
 
 ## 5. Run the grid
 
@@ -86,8 +87,8 @@ python -m scripts.run_grid --dry-run
 ```
 
 The plan's models are the screening survivors, so until `make screen` has
-written `screening.json` the dry run stops with "no models". Name one to preview
-anyway: `--models tiny-gpt2`.
+written `screening_global_mmlu_ne.json` the dry run stops with no models. Name
+one to preview anyway: `--models tiny-gpt2`.
 
 ## 6. Report
 
@@ -108,7 +109,7 @@ discordant pairs, and Holm-corrects every comparison as one family.
 
 ```
 results/
-  screening/screening.json
+  screening/screening_{task}_{language}.json
   {model}/{language}/{arm}/
     metrics.json          run-level summary, config and environment
     predictions.jsonl     one row per item: qid, is_correct, arm, model, language

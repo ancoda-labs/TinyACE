@@ -27,11 +27,12 @@ Usage:
 import argparse
 import json
 import sys
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from edge_slm_ace.reporting import cell_dir, get_arm
+from edge_slm_ace.reporting import cell_dir, get_arm, legacy_screening_path, screening_path
 from edge_slm_ace.utils import DEFAULT_SEED, capture_environment, resolve_model, set_seed
 
 
@@ -186,25 +187,73 @@ def parse_args(argv=None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def survivors(results_root: Path) -> Optional[List[str]]:
+def survivors(
+    results_root: Path,
+    benchmark: str = "global_mmlu",
+    language: str = "ne",
+) -> List[str]:
     """
-    Model keys that cleared the pre-registered Belebele screening floor, if screened.
+    Model keys that cleared the pre-registered floor on this task and language.
 
-    `scripts/screen.py` writes one row per model *and task*. The grid scores
-    Belebele, so only a Belebele pass admits a model: one that clears
-    Global-MMLU alone has not shown it can read the passages the grid is about,
-    and one that clears both would otherwise be planned twice. A row with no
-    `task` was written by the Belebele-only screener this one replaced.
+    The primary task is Global-MMLU and the pre-registered rule is a Nepali
+    result, so those are the defaults. This reads only
+    ``screening_{benchmark}_{language}.json`` and checks that the payload names
+    the same task and language. An English file written later cannot change
+    who is admitted, and a Belebele pass does not.
+
+    The pre-v3 ``screening.json`` has no language in its name. When it is
+    still on disk it is ignored.
+
+    Args:
+        results_root: Directory that contains ``screening/``.
+        benchmark: Task the grid is admitting models for.
+        language: Language the rule requires. There is no other language to try.
+
+    Returns:
+        Passing model keys, in file order, each once. Empty when the screen
+        ran and nobody cleared the floor.
+
+    Raises:
+        FileNotFoundError: ``screening_{benchmark}_{language}.json`` is absent.
+        ValueError: The payload's language or benchmark is missing or differs
+            from the file that was requested.
     """
-    path = results_root / "screening" / "screening.json"
+    path = screening_path(results_root, benchmark, language)
+    legacy = legacy_screening_path(results_root)
+    if legacy.exists():
+        # The name cannot say which language this is. Using it would let an
+        # English overwrite of the old file decide the Nepali gate.
+        warnings.warn(
+            f"ignoring {legacy}: it is the pre-v3 single screening.json, which "
+            f"has no language in its name. This grid reads {path.name}.",
+            stacklevel=2,
+        )
+
     if not path.exists():
-        return None
+        raise FileNotFoundError(
+            f"no screening result at {path}. The grid admits models from a "
+            f"{language} {benchmark} screen."
+        )
+
     payload = json.loads(path.read_text(encoding="utf-8"))
-    passed = [
-        row["model"]
-        for row in payload["models"]
-        if row.get("passes") and row.get("task", "belebele") == "belebele"
-    ]
+    got_language = payload.get("language")
+    got_benchmark = payload.get("benchmark")
+    if got_language != language or got_benchmark != benchmark:
+        raise ValueError(
+            f"{path.name}: payload is language={got_language!r} "
+            f"benchmark={got_benchmark!r}, expected language={language!r} "
+            f"benchmark={benchmark!r}."
+        )
+
+    passed = []
+    for row in payload["models"]:
+        if not row.get("passes"):
+            continue
+        # A row that names another task does not count, even inside this file.
+        # A missing task means the payload benchmark, which was just checked.
+        if row.get("task", benchmark) != benchmark:
+            continue
+        passed.append(row["model"])
     return list(dict.fromkeys(passed))
 
 
@@ -213,12 +262,19 @@ def main(argv=None) -> int:
     set_seed(args.seed)
     commit = capture_environment().get("git_commit")
 
-    models = args.models or survivors(args.results_root)
+    if args.models:
+        models = list(args.models)
+    else:
+        try:
+            models = survivors(args.results_root)
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
     if not models:
         print(
             "Error: no models. Run `make screen` first, or pass --models "
             "explicitly. Entering the grid is gated on the pre-registered "
-            "Nepali screening rule.",
+            "Nepali Global-MMLU screening rule.",
             file=sys.stderr,
         )
         return 1

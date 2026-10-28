@@ -37,6 +37,28 @@ def cell_dir(root: Union[str, Path], model: str, language: str, arm: str) -> Pat
     return Path(root) / model / language / arm
 
 
+def screening_path(root: Union[str, Path], benchmark: str, language: str) -> Path:
+    """
+    Where one task and language's screening result is written.
+
+    The task and the language are part of the filename. A shared
+    ``screening.json`` let a later English run replace the Nepali result, and
+    the grid then admitted models on the wrong language.
+    """
+    return Path(root) / "screening" / f"screening_{benchmark}_{language}.json"
+
+
+def legacy_screening_path(root: Union[str, Path]) -> Path:
+    """
+    The single screening file written before results were split by task and language.
+
+    It has no language in its name, so a reader cannot tell a Nepali result
+    from an English one that overwrote it. Callers detect it to warn, and do
+    not admit models from it.
+    """
+    return Path(root) / "screening" / "screening.json"
+
+
 def parse_cell(path: Union[str, Path]) -> Optional[Cell]:
     """
     Recover a cell's coordinates from its path relative to the results root.
