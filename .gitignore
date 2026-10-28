@@ -205,7 +205,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
-results/
+# `results/` as a directory rule cannot be undone for one child, so ignore
+# the contents and put the fertility table back. That table is the
+# measurement the README cites; every other run output stays local.
+results/*
+!results/fertility/
 
 # macOS
 .DS_Store
@@ -221,6 +225,9 @@ results_models/
 results_ablation/
 paper_snippets/
 *.csv
+# The blanket csv ignore would still drop the table the exception above
+# is there to keep.
+!results/fertility/*.csv
 # Generated run artifacts. Datasets are re-included below -- a blanket
 # *.jsonl silently swallowed any new dataset file added to data/tasks/.
 *.jsonl
