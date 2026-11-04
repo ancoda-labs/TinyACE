@@ -53,6 +53,15 @@ def set_seed(seed: int = DEFAULT_SEED, deterministic: bool = True) -> int:
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
+        # Same as CUDA: an unseeded XPU is a second RNG. is_available()
+        # raises when the Level Zero stack is missing. CPU and CUDA were
+        # seeded above; that raise must not undo them.
+        xpu = getattr(torch, "xpu", None)
+        try:
+            if xpu is not None and xpu.is_available():
+                xpu.manual_seed_all(seed)
+        except Exception:
+            pass
         if deterministic:
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
@@ -137,6 +146,33 @@ def _jetson_snapshot() -> Dict[str, Optional[str]]:
     return {"nv_tegra_release": release, "nvpmodel": nvpmodel}
 
 
+def _xpu_snapshot(torch_module) -> Dict[str, Any]:
+    """
+    Intel XPU identity, or unavailable when this torch cannot use one.
+
+    ``xpu_available`` is ``torch.xpu.is_available()``. ``xpu_device_name`` is
+    device 0's name when that is true, else None. A torch build with no
+    ``xpu`` attribute, and one whose runtime raises (a missing Level Zero
+    stack), both keep the keys at the unavailable values. This runs from
+    every entrypoint, so that raise must not stop a CPU run.
+    """
+    unavailable = {"xpu_available": False, "xpu_device_name": None}
+    xpu = getattr(torch_module, "xpu", None)
+    if xpu is None:
+        return unavailable
+    try:
+        available = bool(xpu.is_available())
+    except Exception:
+        return unavailable
+    if not available:
+        return unavailable
+    try:
+        name = xpu.get_device_name(0)
+    except Exception:
+        name = None
+    return {"xpu_available": True, "xpu_device_name": name}
+
+
 def capture_environment() -> Dict[str, Any]:
     """
     Snapshot everything needed to explain why a number came out the way it did.
@@ -157,6 +193,8 @@ def capture_environment() -> Dict[str, Any]:
         "cuda_version": None,
         "gpu_name": None,
         "gpu_count": 0,
+        "xpu_available": False,
+        "xpu_device_name": None,
         "lm_eval_version": None,
         "nv_tegra_release": None,
         "nvpmodel": None,
@@ -171,6 +209,9 @@ def capture_environment() -> Dict[str, Any]:
             env["cuda_version"] = torch.version.cuda
             env["gpu_count"] = torch.cuda.device_count()
             env["gpu_name"] = torch.cuda.get_device_name(0)
+        # Beside CUDA, not in place of it. An XPU-only machine used to record
+        # gpu_name=None, which is what a CPU machine records.
+        env.update(_xpu_snapshot(torch))
     except ImportError:
         pass
 

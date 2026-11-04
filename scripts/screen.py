@@ -84,7 +84,7 @@ def parse_args(argv=None) -> argparse.Namespace:
         "adaptation ids in manifest order; the seed does not choose or "
         "reorder them.",
     )
-    p.add_argument("--device", default=None, choices=["cpu", "cuda", "mps"])
+    p.add_argument("--device", default=None, choices=["cpu", "cuda", "mps", "xpu"])
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--dtype", default=None)
     p.add_argument("--n", type=int, default=SCREENING_N, help=f"Items (default: {SCREENING_N})")

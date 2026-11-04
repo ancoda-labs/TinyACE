@@ -63,6 +63,17 @@ def fertility_json(root: Union[str, Path]) -> Path:
     return Path(root) / "fertility" / "fertility.json"
 
 
+def device_check_path(root: Union[str, Path], device: str) -> Path:
+    """
+    Where one device's parity check is written.
+
+    The device is the filename, so a CPU reference and an XPU run cannot
+    overwrite each other. This is not a study cell: ``parse_cell`` requires
+    model/language/arm, and the aggregators read ``metrics.json`` only.
+    """
+    return Path(root) / "device_check" / f"{device}.json"
+
+
 def legacy_screening_path(root: Union[str, Path]) -> Path:
     """
     The single screening file written before results were split by task and language.

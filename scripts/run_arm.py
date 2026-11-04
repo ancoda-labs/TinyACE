@@ -64,7 +64,7 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="Seeds model and sampling RNGs, and the order adaptation walks "
         "the frozen adaptation ids. It does not choose which items are used.",
     )
-    p.add_argument("--device", default=None, choices=["cpu", "cuda", "mps"])
+    p.add_argument("--device", default=None, choices=["cpu", "cuda", "mps", "xpu"])
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument(
         "--dtype",

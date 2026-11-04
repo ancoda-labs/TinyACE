@@ -46,7 +46,7 @@ def hflm_kwargs(
     Args:
         model_id: Model key or HuggingFace id. Resolved to a ModelSpec.
         batch_size: Requests per forward batch, when this process builds the model.
-        device: "cuda", "mps", "cpu", or None to let the harness decide.
+        device: "cuda", "mps", "xpu", "cpu", or None to let the harness decide.
         dtype: Torch dtype name.
 
     Returns:
@@ -207,7 +207,7 @@ def run_frozen_eval(
         lessons: Frozen playbook lessons, or None for a control arm.
         include_scaffold: False evaluates the bare baseline prompt.
         seed: Forwarded to every RNG the harness seeds.
-        device: "cuda", "mps", "cpu", or None.
+        device: "cuda", "mps", "xpu", "cpu", or None.
         batch_size: Requests per forward batch.
         dtype: Torch dtype name.
         apply_chat_template: Instruction-tuned checkpoints must be prompted in

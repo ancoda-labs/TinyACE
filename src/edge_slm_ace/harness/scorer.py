@@ -48,7 +48,7 @@ class OptionScorer:
         """
         Args:
             model_id: HuggingFace model id.
-            device: "cuda", "mps", "cpu", or None to let the harness decide.
+            device: "cuda", "mps", "xpu", "cpu", or None to let the harness decide.
             batch_size: Requests per forward batch.
             lm: A pre-built LM, for tests. Bypasses model loading.
             apply_chat_template: Must match what the evaluation of this arm will

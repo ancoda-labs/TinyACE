@@ -226,6 +226,74 @@ class TestEnvironmentSnapshot:
         assert env["nv_tegra_release"] is None
         assert env["nvpmodel"] is None
 
+    def test_capture_environment_records_xpu_availability_and_name(self):
+        """The keys stay when this torch has an XPU namespace that is not usable."""
+        import torch
+
+        from edge_slm_ace.utils.repro import capture_environment
+
+        env = capture_environment()
+        xpu = getattr(torch, "xpu", None)
+        available = bool(xpu is not None and xpu.is_available())
+        assert env["xpu_available"] is available
+        if available:
+            assert env["xpu_device_name"] == xpu.get_device_name(0)
+        else:
+            assert env["xpu_device_name"] is None
+        # CUDA's own fields are unchanged by recording XPU beside them.
+        assert "cuda_available" in env
+        assert "gpu_name" in env
+
+    def test_an_available_xpu_records_its_device_name(self):
+        from edge_slm_ace.utils import repro
+
+        class XPU:
+            def is_available(self):
+                return True
+
+            def get_device_name(self, index):
+                assert index == 0
+                return "Intel Arc A770"
+
+        class Torch:
+            xpu = XPU()
+
+        assert repro._xpu_snapshot(Torch()) == {
+            "xpu_available": True,
+            "xpu_device_name": "Intel Arc A770",
+        }
+
+    def test_a_torch_without_xpu_records_unavailable(self):
+        from edge_slm_ace.utils import repro
+
+        class Torch:
+            pass
+
+        assert repro._xpu_snapshot(Torch()) == {
+            "xpu_available": False,
+            "xpu_device_name": None,
+        }
+
+    def test_a_broken_xpu_runtime_keeps_the_keys(self):
+        """is_available() can raise when the Level Zero stack is missing.
+
+        capture_environment runs on every entrypoint. That raise must not
+        stop a CPU run, and it must not drop the keys.
+        """
+        from edge_slm_ace.utils import repro
+
+        class XPU:
+            def is_available(self):
+                raise RuntimeError("level_zero missing")
+
+        class Torch:
+            xpu = XPU()
+
+        assert repro._xpu_snapshot(Torch()) == {
+            "xpu_available": False,
+            "xpu_device_name": None,
+        }
+
     def test_a_tegra_release_file_is_recorded(self, tmp_path, monkeypatch):
         from edge_slm_ace.utils import repro
 
